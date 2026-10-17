@@ -546,8 +546,16 @@ function toggleLayDownView() {
 let messages = [];       // Full messages for API context (includes raw code blocks)
 let displayMessages = []; // Cleaned messages for canvas display
 let isLoading = false;
-let selectedBackend = null; // 'claude' | 'fable' | 'openai' | 'openai-sol' | 'ollama' - set once /api/backends resolves
+let selectedBackend = null; // backend key from /api/backends (e.g. 'claude', 'openai-sol', 'ollama') - set once it resolves
 let backendLabels = {}; // id -> display label from /api/backends
+let backendProviders = {}; // id -> 'claude' | 'openai' | 'ollama' from /api/backends
+
+/** Provider for a backend key; falls back to the key prefix for older servers. */
+function backendProvider(id) {
+	if (backendProviders[id]) return backendProviders[id];
+	if (id === 'ollama') return 'ollama';
+	return /^openai/.test(id || '') ? 'openai' : 'claude';
+}
 
 /** Human-readable name for the currently selected model/provider. */
 function getActiveModelDisplayName() {
@@ -567,6 +575,11 @@ function getActiveModelDisplayName() {
 		fable: 'Claude Fable',
 		openai: 'GPT6 Astra',
 		'openai-sol': 'GPT6.1 Sol',
+		'openai-6-sol': 'GPT6 Sol',
+		'openai-luna': 'GPT6 Luna',
+		'claude-opus-55': 'Claude Opus 5.5',
+		'claude-sonnet-55': 'Claude Sonnet 5.5',
+		'claude-haiku-55': 'Claude Haiku 5.5',
 		ollama: 'Ollama'
 	};
 	return fallbacks[selectedBackend] || 'Assistant';
@@ -5617,13 +5630,14 @@ function buildUserContent(userMessage, attachments, backend) {
 	const images = attachments.filter(a => a.kind === 'image');
 	if (images.length === 0) return { content: text };
 
-	if (backend === 'ollama') {
+	const provider = backendProvider(backend);
+	if (provider === 'ollama') {
 		// Ollama's /api/chat takes images as a separate per-message field
 		// (raw base64, no "data:" prefix), not inline in content.
 		return { content: text || '(see attached image)', images: images.map(a => a.base64) };
 	}
 
-	if (backend === 'openai' || backend === 'openai-sol') {
+	if (provider === 'openai') {
 		const parts = [{ type: 'text', text: text || '(see attached image)' }];
 		for (const att of images) {
 			parts.push({ type: 'image_url', image_url: { url: `data:${att.mediaType};base64,${att.base64}` } });
@@ -5631,7 +5645,7 @@ function buildUserContent(userMessage, attachments, backend) {
 		return { content: parts };
 	}
 
-	// claude / fable (Anthropic content-block shape)
+	// Claude models (Anthropic content-block shape)
 	const parts = [{ type: 'text', text: text || '(see attached image)' }];
 	for (const att of images) {
 		parts.push({ type: 'image', source: { type: 'base64', media_type: att.mediaType, data: att.base64 } });
@@ -6150,8 +6164,10 @@ async function initModelSelect() {
 		// the server can't know, so it's applied on top of `available` here.
 		desktopModelSelect.innerHTML = '';
 		backendLabels = {};
+		backendProviders = {};
 		for (const [id, info] of Object.entries(backends)) {
 			backendLabels[id] = info.label || id;
+			if (info.provider) backendProviders[id] = info.provider;
 			const usable = info.available && (!info.local || IS_LOCAL_PAGE);
 			const opt = document.createElement('option');
 			opt.value = id;

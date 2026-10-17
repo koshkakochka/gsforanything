@@ -48,14 +48,30 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 // allows localhost origins by default; reaching it from the hosted
 // vrclaudeinterface.vercel.app origin requires the user to start Ollama
 // with OLLAMA_ORIGINS including that origin (or "*").
+// Backend key -> provider/model/label. Order here is dropdown order (newest/
+// best first within each provider). Keys are stable: saved/sent `backend`
+// values must keep resolving, so never rename an existing key.
+const BACKENDS = {
+	'claude-opus-55': { provider: 'claude', model: 'claude-opus-5-5', label: 'Claude Opus 5.5' },
+	'claude-sonnet-55': { provider: 'claude', model: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
+	'claude-haiku-55': { provider: 'claude', model: 'claude-haiku-5-5', label: 'Claude Haiku 5.5' },
+	fable: { provider: 'claude', model: 'claude-fable-5-1', label: 'Claude (Fable 5.1)' },
+	claude: { provider: 'claude', model: 'claude-sonnet-5', label: 'Claude (Sonnet 5)' },
+	'openai-sol': { provider: 'openai', model: OPENAI_SOL_MODEL, label: 'GPT6.1 Sol' },
+	'openai-6-sol': { provider: 'openai', model: 'gpt-6-sol', label: 'GPT6 Sol' },
+	'openai-luna': { provider: 'openai', model: 'gpt-6-luna', label: 'GPT6 Luna' },
+	// OPENAI_MODEL env override applies to this key only.
+	openai: { provider: 'openai', model: OPENAI_MODEL, label: 'GPT6 Astra' },
+	ollama: { provider: 'ollama', label: 'Ollama (runs in your browser, local)', local: true },
+};
+
 function getAvailableBackends() {
-	return {
-		claude: { label: 'Claude (Sonnet 5)', available: !!CLAUDE_API_KEY },
-		fable: { label: 'Claude (Fable 5.1)', available: !!CLAUDE_API_KEY },
-		openai: { label: 'GPT6 Astra', available: !!OPENAI_API_KEY },
-		'openai-sol': { label: 'GPT6.1 Sol', available: !!OPENAI_API_KEY },
-		ollama: { label: 'Ollama (runs in your browser, local)', available: true, local: true },
-	};
+	const out = {};
+	for (const [id, b] of Object.entries(BACKENDS)) {
+		const available = b.provider === 'ollama' ? true : b.provider === 'openai' ? !!OPENAI_API_KEY : !!CLAUDE_API_KEY;
+		out[id] = { label: b.label, provider: b.provider, available, ...(b.local ? { local: true } : {}) };
+	}
+	return out;
 }
 
 if (!CLAUDE_API_KEY && !OPENAI_API_KEY) {
@@ -221,7 +237,8 @@ function callClaudeAPI(systemPrompt, messages, maxTokens = 16384, model = 'claud
 			max_tokens: isFable ? maxTokens + FABLE_THINKING_BUDGET : maxTokens,
 			// Thinking is on by default on Sonnet 5; disable it to keep VR latency low.
 			...(model === 'claude-sonnet-5' ? { thinking: { type: 'disabled' } } : {}),
-			...(isFable ? { thinking: { type: 'enabled', budget_tokens: FABLE_THINKING_BUDGET } } : {}),
+			// Fable 5.1 rejects thinking.type "enabled"; adaptive + effort is required.
+			...(isFable ? { thinking: { type: 'adaptive' }, output_config: { effort: 'medium' } } : {}),
 			system: systemPrompt,
 			messages: messages
 		});
@@ -341,14 +358,15 @@ function callLLM(systemPrompt, messages, maxTokens = 16384, backend) {
 		return Promise.resolve({ error: true, status: 400, data: { error: { message: 'Ollama requests should go directly from the browser to localhost:11434, not through this server.' } } });
 	}
 
-	if (chosen === 'openai' || chosen === 'openai-sol') {
+	// Unknown keys fall back to Claude Sonnet 5 (the old default behavior).
+	const entry = BACKENDS[chosen] || BACKENDS.claude;
+	if (entry.provider === 'openai') {
 		if (!OPENAI_API_KEY) return Promise.resolve({ error: true, status: 400, data: { error: { message: 'OPENAI_API_KEY is not configured on the server.' } } });
-		const model = chosen === 'openai-sol' ? OPENAI_SOL_MODEL : OPENAI_MODEL;
-		return callOpenAIAPI(systemPrompt, messages, maxTokens, model);
+		return callOpenAIAPI(systemPrompt, messages, maxTokens, entry.model);
 	}
 
 	if (!CLAUDE_API_KEY) return Promise.resolve({ error: true, status: 400, data: { error: { message: 'CLAUDE_API_KEY is not configured on the server.' } } });
-	const model = chosen === 'fable' ? 'claude-fable-5-1' : 'claude-sonnet-5';
+	const model = entry.model;
 	return callClaudeAPI(systemPrompt, messages, maxTokens, model);
 }
 
