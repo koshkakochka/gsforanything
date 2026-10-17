@@ -168,6 +168,9 @@ orbitControls.enableDamping = true;
 orbitControls.dampingFactor = 0.08;
 orbitControls.minDistance = 0.5;
 orbitControls.maxDistance = 50;
+// No panning (right-drag, Shift/Ctrl-drag, two-finger touch): Orbit stays
+// centred on its target. Rotate + zoom only. Nothing re-enables this.
+orbitControls.enablePan = false;
 orbitControls.update();
 
 // Walk-in-AR only: finger-driven transform gizmos for arPlacementRoot (not WebXR).
@@ -1124,7 +1127,7 @@ function setArPlacementActive(active) {
 		arDragging = false;
 		arDragPointerId = null;
 		orbitControls.enableRotate = true;
-		orbitControls.enablePan = true;
+		orbitControls.enablePan = false; // panning stays off (Orbit has no pan)
 		orbitControls.enableZoom = true;
 		renderer.domElement.style.touchAction = 'none';
 	}
