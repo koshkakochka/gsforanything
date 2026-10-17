@@ -60,104 +60,139 @@
 			overscroll-behavior: contain;
 		}
 
-		/* Cardboard / WebXR VR entry buttons.
-		   High-contrast chips + mobile-friendly touch targets and safe-areas. */
-		.mobile-xr-btn,
-		#XRButton,
-		a#XRButton {
+		/* Bottom dock: Cardboard (phones), WebXR Enter VR, and the GS version
+		   button share one fixed bottom-center row so they can never overlap.
+		   main.js moves three's XRButton (#XRButton) in here; its inline
+		   position/left/zIndex/background are overridden below. Icons are
+		   ::before masks because XRButton rewrites textContent on session
+		   start/end, which would wipe any child icon element.
+		   z-index 998: below #desktop-chat (1000) so a chat window dragged
+		   over the bottom always wins clicks; modals (3000+) open above. */
+		#gs-dock {
 			position: fixed;
-			z-index: 999;
+			left: 50%;
+			transform: translateX(-50%);
+			bottom: max(10px, calc(env(safe-area-inset-bottom, 0px) + 6px));
+			z-index: 998;
+			display: flex;
+			flex-flow: row wrap;
+			align-items: center;
+			justify-content: center;
+			gap: 6px;
 			box-sizing: border-box;
-			min-height: 48px;
-			padding: 12px 16px;
-			border: 2px solid #12121a;
-			border-radius: 12px;
-			background: #f4f4f8;
-			color: #12121a;
-			font: 600 14px/1.25 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-			letter-spacing: 0.01em;
-			text-align: center;
+			/* max-content: left:50% alone would cap shrink-to-fit at half the
+			   viewport and wrap early on phones; wrap only past max-width. */
+			width: max-content;
+			max-width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+			padding: 5px;
+			border-radius: 14px;
+			background: rgba(22, 22, 32, 0.72);
+			border: 1px solid rgba(255, 255, 255, 0.10);
+			box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+			-webkit-backdrop-filter: blur(8px);
+			backdrop-filter: blur(8px);
+			pointer-events: auto;
+		}
+		/* Hidden during an immersive XR session and while Cardboard is active
+		   (Hold-to-Walk owns the bottom center then), and in share views. */
+		body.gs-xr-presenting #gs-dock,
+		body.gs-cardboard-active #gs-dock,
+		body.display-only #gs-dock { display: none !important; }
+
+		#gs-dock .gs-dock-btn,
+		#gs-dock #XRButton,
+		#gs-dock a#XRButton {
+			position: static !important;
+			left: auto !important;
+			bottom: auto !important;
+			transform: none !important;
+			z-index: auto !important;
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			gap: 7px;
+			box-sizing: border-box;
+			width: auto !important;
+			height: 36px !important;
+			min-width: 0;
+			max-width: none;
+			margin: 0;
+			padding: 0 12px !important;
+			border: 1px solid rgba(255, 255, 255, 0.14) !important;
+			border-radius: 10px !important;
+			background: rgba(255, 255, 255, 0.08) !important;
+			color: #fff !important;
+			font: 600 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+			letter-spacing: 0.02em;
+			white-space: nowrap;
 			text-decoration: none;
+			opacity: 1 !important;
+			box-shadow: none;
 			cursor: pointer;
 			-webkit-tap-highlight-color: transparent;
 			touch-action: manipulation;
 			user-select: none;
 			-webkit-user-select: none;
-			box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-			/* Keep clear of home-indicator / browser chrome so the full chip shows */
-			bottom: max(20px, calc(env(safe-area-inset-bottom, 0px) + 12px));
 		}
-		/* Short label: Cardboard */
-		.mobile-xr-btn {
-			overflow: hidden;
-			text-overflow: ellipsis;
-			white-space: nowrap;
-			max-width: min(42vw, 160px);
+		#gs-dock [hidden] { display: none !important; }
+		#gs-dock .gs-dock-btn:hover,
+		#gs-dock #XRButton[data-xr-state="enter"]:hover,
+		#gs-dock #XRButton[data-xr-state="exit"]:hover {
+			background: rgba(255, 255, 255, 0.16) !important;
 		}
-		.mobile-xr-btn:active,
-		#XRButton:active {
-			background: #e8e8ef;
+		#gs-dock .gs-dock-btn:active,
+		#gs-dock #XRButton:active { transform: scale(0.97) !important; }
+		#gs-dock .gs-dock-btn:focus-visible,
+		#gs-dock #XRButton:focus-visible {
+			outline: 2px solid #8b5cf6;
+			outline-offset: 2px;
 		}
-		.mobile-xr-btn:active {
-			transform: scale(0.98);
+		/* Usable VR entry gets the accent; "VR NOT SUPPORTED/ALLOWED" and the
+		   no-WebXR link stay muted (three sets cursor:auto inline on those). */
+		#gs-dock #XRButton[data-xr-state="enter"],
+		#gs-dock #XRButton[data-xr-state="exit"] {
+			background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+			border-color: rgba(255, 255, 255, 0.22) !important;
 		}
-		#cardboard-btn {
-			left: max(12px, env(safe-area-inset-left, 0px));
+		#gs-dock #XRButton[data-xr-state="unavailable"] { color: rgba(255, 255, 255, 0.62) !important; }
+
+		#gs-dock #XRButton::before,
+		#gs-dock .gs-dock-btn::before {
+			content: '';
+			flex: 0 0 auto;
+			width: 18px;
+			height: 18px;
+			background-color: currentColor;
+			-webkit-mask: var(--gs-dock-icon) center / contain no-repeat;
+			mask: var(--gs-dock-icon) center / contain no-repeat;
 		}
-		/* WebXR button is centered. Long status labels ("VR NOT SUPPORTED")
-		   must wrap and stay fully on-screen — no clip/ellipsis. */
-		#XRButton,
-		a#XRButton {
-			left: 50% !important;
-			transform: translateX(-50%);
-			width: auto !important;
-			min-width: 140px;
-			max-width: min(92vw, 280px);
-			height: auto !important;
-			overflow: visible;
-			white-space: normal;
-			word-break: normal;
-			hyphens: none;
-			line-height: 1.25;
-			padding: 12px 18px;
-			opacity: 1 !important;
+		/* VR headset */
+		#gs-dock #XRButton,
+		#gs-dock #cardboard-btn {
+			--gs-dock-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 7h16a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-4.2a2 2 0 0 1-1.7-.95l-1.25-2.05a1 1 0 0 0-1.7 0L9.9 16.05A2 2 0 0 1 8.2 17H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zm3.5 3.25a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5zm9 0a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5z'/%3E%3C/svg%3E");
 		}
-		#XRButton:active,
-		a#XRButton:active {
-			transform: translateX(-50%) scale(0.98);
+		/* Phone (Cardboard) */
+		#gs-dock #cardboard-btn {
+			--gs-dock-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm0 3v13h10V5H7zm5 14.25a1 1 0 1 0 0 2 1 1 0 0 0 0-2z'/%3E%3C/svg%3E");
+		}
+		/* Tag (version) */
+		#gs-dock #gs-version-btn {
+			--gs-dock-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 4.5A1.5 1.5 0 0 1 4.5 3h6.38a1.5 1.5 0 0 1 1.06.44l8.62 8.62a1.5 1.5 0 0 1 0 2.12l-6.38 6.38a1.5 1.5 0 0 1-2.12 0L3.44 11.94A1.5 1.5 0 0 1 3 10.88V4.5zM7.75 6a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5z'/%3E%3C/svg%3E");
 		}
 
 		@media (max-width: 420px) {
-			.mobile-xr-btn {
-				min-height: 44px;
-				padding: 10px 12px;
-				font-size: 12px;
-				border-radius: 10px;
-				max-width: min(34vw, 130px);
+			#gs-dock { gap: 4px; padding: 4px; border-radius: 12px; }
+			#gs-dock .gs-dock-btn,
+			#gs-dock #XRButton,
+			#gs-dock a#XRButton {
+				height: 34px !important;
+				padding: 0 9px !important;
+				gap: 5px;
+				font-size: 11px !important;
 			}
-			#XRButton,
-			a#XRButton {
-				min-height: 44px;
-				padding: 10px 14px;
-				font-size: 12px;
-				border-radius: 10px;
-				min-width: 120px;
-				max-width: min(94vw, 260px);
-			}
-		}
-
-		@media (max-width: 340px) {
-			.mobile-xr-btn {
-				padding: 10px 8px;
-				font-size: 11px;
-				max-width: 31vw;
-			}
-			#XRButton,
-			a#XRButton {
-				padding: 10px 12px;
-				font-size: 11px;
-				max-width: min(96vw, 240px);
-			}
+			#gs-dock #XRButton::before,
+			#gs-dock .gs-dock-btn::before { width: 16px; height: 16px; }
+			#gs-dock .gs-dock-prefix { display: none; }
 		}
 
 		/* In-session close X (Cardboard exit, and the same control if shown
@@ -1405,31 +1440,7 @@
 			background: linear-gradient(135deg, #6366f1, #8b5cf6);
 		}
 
-		/* GS version control (page chrome) */
-		#gs-version-btn {
-			position: fixed;
-			left: 50%;
-			bottom: 10px;
-			transform: translateX(-50%);
-			z-index: 2500;
-			border: none;
-			border-radius: 999px;
-			padding: 8px 14px;
-			font-size: 12px;
-			font-weight: 600;
-			letter-spacing: 0.02em;
-			color: #fff;
-			cursor: pointer;
-			background: rgba(30, 30, 40, 0.92);
-			box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
-			pointer-events: auto;
-			-webkit-tap-highlight-color: transparent;
-		}
-		#gs-version-btn:hover { background: rgba(50, 52, 70, 0.96); }
-		#gs-version-btn:focus-visible {
-			outline: 2px solid #8b5cf6;
-			outline-offset: 2px;
-		}
+		/* GS version control: the button lives in #gs-dock (styles above). */
 		#gs-version-modal {
 			display: none;
 			position: fixed;
@@ -1495,7 +1506,6 @@
 			flex-shrink: 0;
 		}
 		#gs-version-modal .share-rename-buttons { margin-top: 16px; }
-		body.display-only #gs-version-btn { display: none !important; }
 		body.display-only #gs-version-modal { display: none !important; }
 		.dchat-scene-actions {
 			display: flex;
@@ -1868,9 +1878,13 @@
 <body>
 	<div id="app"></div>
 
-	<!-- Cardboard (stereo + gyro) for phones without immersive-vr.
-	     Shown/hidden by refreshMobileXRButtons() in main.js. -->
-	<button id="cardboard-btn" class="mobile-xr-btn" hidden>Cardboard VR</button>
+	<!-- Bottom dock: Cardboard (phones without immersive-vr; shown/hidden by
+	     refreshMobileXRButtons()), three's XRButton (inserted by main.js
+	     before the version button), and the GS version button. -->
+	<div id="gs-dock" role="toolbar" aria-label="VR and version">
+		<button type="button" id="cardboard-btn" class="mobile-xr-btn gs-dock-btn" hidden>Cardboard VR</button>
+		<button type="button" id="gs-version-btn" class="gs-dock-btn" title="Choose GS version" aria-haspopup="dialog" aria-controls="gs-version-modal">GS v…</button>
+	</div>
 
 	<!-- Close X + hold-to-walk, shown only while Cardboard is active.
 	     The X is re-appended to the end of <body> when shown so it stays
@@ -2174,8 +2188,7 @@
 		<a id="editor-link" href="/">Open in editor</a>
 
 
-	<!-- GS version control -->
-	<button type="button" id="gs-version-btn" title="Choose GS version" aria-haspopup="dialog" aria-controls="gs-version-modal">GS v…</button>
+	<!-- GS version picker (button is in #gs-dock) -->
 	<div id="gs-version-modal" aria-hidden="true">
 		<div id="gs-version-modal-inner" role="dialog" aria-labelledby="gs-version-title">
 			<h3 id="gs-version-title">GS version</h3>

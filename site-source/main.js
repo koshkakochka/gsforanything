@@ -858,12 +858,27 @@ const _arCamPos = new THREE.Vector3();
 // XR Button Setup — immersive-vr only (Cardboard is separate, below).
 // immersive-ar is not requested.
 // ============================================================================
-document.body.appendChild(
-	XRButton.createButton(renderer, {
-		optionalFeatures: ['hit-test', 'dom-overlay'],
-		domOverlay: { root: overlayRoot }
-	})
-);
+const xrEntryButton = XRButton.createButton(renderer, {
+	optionalFeatures: ['hit-test', 'dom-overlay'],
+	domOverlay: { root: overlayRoot }
+});
+// No-WebXR fallback is an <a> without an id; give it the same id for styling.
+if (!xrEntryButton.id) xrEntryButton.id = 'XRButton';
+// Lives in the bottom #gs-dock next to the version button (see index.html).
+const gsDock = document.getElementById('gs-dock');
+if (gsDock) {
+	gsDock.insertBefore(xrEntryButton, document.getElementById('gs-version-btn'));
+} else {
+	document.body.appendChild(xrEntryButton);
+}
+// XRButton rewrites textContent (ENTER VR / EXIT VR / VR NOT SUPPORTED);
+// mirror that into data-xr-state so the dock can style usable vs. not.
+function syncXrEntryButtonState() {
+	const t = (xrEntryButton.textContent || '').toLowerCase();
+	xrEntryButton.dataset.xrState = t.includes('exit') ? 'exit' : t.includes('enter') ? 'enter' : 'unavailable';
+}
+syncXrEntryButtonState();
+new MutationObserver(syncXrEntryButtonState).observe(xrEntryButton, { childList: true, characterData: true, subtree: true });
 
 // ============================================================================
 // Mobile pseudo-XR: Google Cardboard (stereo + gyro) for phones that can't
@@ -985,6 +1000,7 @@ function isArUiTouchTarget(target) {
 		target.closest('#share-modal') ||
 		target.closest('#rename-modal') ||
 		target.closest('#XRButton') ||
+		target.closest('#gs-dock') ||
 		target.closest('.mobile-xr-btn')
 	);
 }
@@ -1175,6 +1191,7 @@ async function enterMobileXRMode(mode) {
 
 	orbitControls.enabled = false;
 	mobileXRMode = 'cardboard';
+	document.body.classList.add('gs-cardboard-active');
 	if (cardboardBtn) cardboardBtn.hidden = true;
 	mobileXRExitBtn.hidden = false;
 	raiseMobileXRExitButton();
@@ -1207,6 +1224,7 @@ function exitMobileXRMode() {
 
 	const wasAr = mobileXRMode === 'ar';
 	mobileXRMode = null;
+	document.body.classList.remove('gs-cardboard-active');
 	mobileMoveHeld = false;
 	if (wasAr) setArPlacementActive(false);
 	orbitControls.enabled = true;
@@ -3051,7 +3069,7 @@ function applyDisplayOnlyMode() {
 		desktopChat.classList.add('hidden');
 	}
 	// XRButton injects a bottom-centered <button> without a stable id.
-	for (const btn of document.querySelectorAll('#app button, body > button')) {
+	for (const btn of document.querySelectorAll('#app button, body > button, #gs-dock button')) {
 		const t = (btn.textContent || '').toLowerCase();
 		if (t.includes('enter') && (t.includes('ar') || t.includes('vr') || t.includes('xr'))) {
 			btn.style.display = 'none';
@@ -6863,7 +6881,11 @@ function initGsVersionPicker() {
 	const closeBtn = document.getElementById('gs-version-close');
 	if (!btn || !modal || !listEl) return;
 
-	btn.textContent = `GS v${GS_VERSION}`;
+	btn.innerHTML = '';
+	const prefix = document.createElement('span');
+	prefix.className = 'gs-dock-prefix';
+	prefix.textContent = 'GS ';
+	btn.append(prefix, `v${GS_VERSION}`);
 	btn.setAttribute('aria-label', `GS version ${GS_VERSION}. Choose version.`);
 
 	let versions = mergeVersionList(null);
@@ -7082,6 +7104,7 @@ function setImmersiveUiMode(immersive) {
 	// Mouse orbit/pan/zoom only makes sense windowed — the headset pose drives
 	// the camera during an XR session.
 	orbitControls.enabled = !immersive;
+	document.body.classList.toggle('gs-xr-presenting', !!immersive);
 	applyXrPanelVisibility(immersive);
 }
 
