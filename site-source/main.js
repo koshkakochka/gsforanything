@@ -11,6 +11,7 @@ import {
 	mergeVersionList,
 	isCurrentVersionEntry
 } from './version.js';
+import * as GSContext from './creationContext.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 
@@ -1400,17 +1401,20 @@ function renderChatToCanvas() {
 	} else {
 		for (const msg of displayMessages) {
 			const isUser = msg.role === 'user';
+			// Restored creation history is labelled and tinted amber (also in a headset).
 			allLines.push({
-				text: isUser ? 'You' : 'Claude',
-				color: isUser ? '#6366f1' : '#10b981',
+				text: msg.historyMarker ? 'Creation history' : (isUser ? 'You' : 'Claude') + (msg.history ? ' (history)' : ''),
+				color: msg.history ? '#f59e0b' : (isUser ? '#6366f1' : '#10b981'),
 				font: `bold ${MESSAGE_FONT_SIZE - 4}px -apple-system, BlinkMacSystemFont, sans-serif`,
 				heightScale: 0.7
 			});
-			const wrapped = wrapText(ctx, msg.content, maxWidth);
+			const wrapped = msg.history
+				? String(msg.content || '').split('\n').flatMap(part => wrapText(ctx, part, maxWidth))
+				: wrapText(ctx, msg.content, maxWidth);
 			for (const line of wrapped) {
 				allLines.push({
 					text: line,
-					color: '#e0e0e0',
+					color: msg.history ? '#c9c9c9' : '#e0e0e0',
 					font: `${MESSAGE_FONT_SIZE}px -apple-system, BlinkMacSystemFont, sans-serif`,
 					heightScale: 1.0
 				});
@@ -1519,6 +1523,7 @@ function renderDomChat() {
 		const bubble = document.createElement('div');
 		bubble.className = 'dchat-msg ' + (msg.role === 'user' ? 'user' : 'assistant');
 		bubble.textContent = msg.content;
+		if (msg.history) GSContext.decorateBubble(bubble, msg); // restored creation history
 		desktopChatMessages.appendChild(bubble);
 	}
 	if (isLoading) {
@@ -2766,6 +2771,7 @@ async function applyCodeFromEditor({ fromLive = false } = {}) {
 
 		const normalized = buildCodeEditorSource();
 		codeEditorLastApplied = normalized;
+		GSContext.recordCodeEdit({ code: normalized, source: fromLive ? 'live' : 'apply' });
 		// Keep caret-friendly: only rewrite textarea if markers/order changed meaningfully
 		if (!codeEditorDirty || dchatCodeEditor.value.trim() === text.trim()) {
 			dchatCodeEditor.value = normalized;
@@ -2916,12 +2922,13 @@ function buildSceneData(name) {
 	};
 }
 
-function doExport() {
+async function doExport() {
 	const name = exportNameInput.value.trim() || 'Untitled';
 	const ext = exportExtInput.value.trim().replace(/^\./, '') || 'vrscene';
 	sceneFileExtension = ext;
 
-	const sceneData = buildSceneData(name);
+	// Saved scenes carry their creation context (chat + info log, scrubbed).
+	const sceneData = await GSContext.withCreationContext(buildSceneData(name));
 
 	fetch('/api/save-scene', {
 		method: 'POST',
@@ -2942,12 +2949,12 @@ function doExport() {
 
 // Downloads the current scene as a local file (a real save-to-disk, unlike
 // "Export" above which only saves to this server's single scene slot).
-function doDownloadExport() {
+async function doDownloadExport() {
 	const name = exportNameInput.value.trim() || 'Untitled';
 	const ext = exportExtInput.value.trim().replace(/^\./, '') || 'vrscene';
 	sceneFileExtension = ext;
 
-	const sceneData = buildSceneData(name);
+	const sceneData = await GSContext.withCreationContext(buildSceneData(name));
 	const blob = new Blob([JSON.stringify(sceneData, null, 2)], { type: 'application/json' });
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement('a');
@@ -2990,6 +2997,7 @@ function addLoadedScene(data, fallbackName) {
 	loadSceneThumbnails();
 	renderScenePanel();
 	notifyCodeEditorExternalChange();
+	GSContext.restoreFromScene(data, { source: 'file' }).catch(err => console.warn('creation context restore failed:', err));
 	return sc;
 }
 
@@ -3165,12 +3173,18 @@ async function copyText(text) {
 	return ok;
 }
 
-function uploadCurrentSceneToCommunity() {
+async function uploadCurrentSceneToCommunity() {
 	if (displayOnlyMode) return;
 	const name = (loadedScenes.find(s => s.active)?.name) || 'My Scene';
-	const sceneData = buildSceneData(name);
+	let sceneData = buildSceneData(name);
 	if (sceneData.codeBlocks.length === 0) {
 		updateStatus('Nothing to upload - add or load something first', 'error');
+		return;
+	}
+	// Ask whether to publish the creation context (chat + files); null = cancelled.
+	sceneData = await GSContext.preparePublish(sceneData);
+	if (!sceneData) {
+		updateStatus('Upload cancelled', '');
 		return;
 	}
 	updateStatus('Uploading to community...', 'connecting');
@@ -3527,6 +3541,7 @@ function loadCommunityScene(cs, { mode = communityLoadMode } = {}) {
 				await runLoadedSceneCode(sc);
 				finishCommunityLoadUi();
 				updateStatus(`Loaded "${sc.name}"`, 'connected');
+				GSContext.restoreFromScene(data, { key: resolvedKey, source: 'community' }).catch(err => console.warn('creation context restore failed:', err));
 				return sc;
 			}
 			const existing = findLoadedByCommunityKey(resolvedKey);
@@ -3538,6 +3553,7 @@ function loadCommunityScene(cs, { mode = communityLoadMode } = {}) {
 			await runLoadedSceneCode(sc);
 			finishCommunityLoadUi();
 			updateStatus(`Layered "${sc.name}"`, 'connected');
+			GSContext.restoreFromScene(data, { key: resolvedKey, source: 'community' }).catch(err => console.warn('creation context restore failed:', err));
 			return sc;
 		}))
 		.catch(err => {
@@ -5698,6 +5714,9 @@ async function sendMessage(userMessage) {
 	renderAttachmentChips();
 
 	const { content: userContent, images: ollamaImages } = buildUserContent(userMessage, attachments, selectedBackend);
+	const turnBackend = selectedBackend;
+	const turnModel = getActiveModelDisplayName();
+	GSContext.recordUserTurn({ text: userMessage, attachments, backend: turnBackend, model: turnModel });
 
 	// Add user message to both arrays
 	messages.push({ role: 'user', content: userContent, ...(ollamaImages ? { images: ollamaImages } : {}) });
@@ -5760,6 +5779,7 @@ async function sendMessage(userMessage) {
 		// Store raw text for API context, cleaned text for display
 		messages.push({ role: 'assistant', content: rawText });
 		displayMessages.push({ role: 'assistant', content: displayText });
+		GSContext.recordAssistantTurn({ raw: rawText, display: displayText, backend: turnBackend, model: turnModel, codeBlockCount: codeBlocks.length });
 
 		if (codeBlocks.length > 0) {
 			let execCount = 0;
@@ -5788,11 +5808,13 @@ async function sendMessage(userMessage) {
 							role: 'assistant',
 							content: `[Fixed after ${fix.attempts} attempt${fix.attempts > 1 ? 's' : ''}]`
 						});
+						GSContext.recordNote(`[Code error: ${execErr.message}. Auto-fixed after ${fix.attempts} attempt${fix.attempts > 1 ? 's' : ''}; fixed code:]\n${fix.code}`);
 					} else {
 						displayMessages.push({
 							role: 'assistant',
 							content: `[Auto-fix failed: ${fix.error}]`
 						});
+						GSContext.recordNote(`[Code error: ${execErr.message}. Auto-fix failed: ${fix.error}]`);
 					}
 				}
 			}
@@ -5813,6 +5835,7 @@ async function sendMessage(userMessage) {
 		const errMsg = `Error: ${error.message}`;
 		messages.push({ role: 'assistant', content: errMsg });
 		displayMessages.push({ role: 'assistant', content: errMsg });
+		GSContext.recordAssistantTurn({ raw: errMsg, display: errMsg, backend: turnBackend, model: turnModel, error: true });
 	} finally {
 		isLoading = false;
 		sendButton.disabled = false;
@@ -5820,6 +5843,42 @@ async function sendMessage(userMessage) {
 		renderChatToCanvas();
 	}
 }
+
+// Creation context (chat log + info log saved with scenes): see creationContext.js.
+GSContext.initCreationContext({
+	appVersion: GS_VERSION,
+	getSettings: () => ({
+		environment: { ...sceneEnv, lib: currentSceneLib() },
+		dependencies: GS_DEPS ? GS_DEPS.list.map(d => ({ id: d.id, name: d.name, version: d.version, enabled: GS_DEPS.isEnabled(d.id) })) : [],
+		backend: selectedBackend,
+		model: getActiveModelDisplayName(),
+		locomotion: locomotionMode
+	}),
+	getSettingsNote: () => buildGsSettingsNote(),
+	getLibraryFiles: () => contextLibrary.map(f => ({ name: f.name, kind: f.kind, size: f.size || 0 })),
+	getSceneName: () => loadedScenes.find(s => s.active)?.name || 'Current session',
+	// Restored history goes into both arrays: `messages` is what the next
+	// /api/chat request sends, `displayMessages` is drawn on desktop and in VR.
+	appendChatHistory: (apiMsgs, displayMsgs) => {
+		if (apiMsgs.length) {
+			const last = messages[messages.length - 1];
+			if (last && last.role === 'user') messages.push({ role: 'assistant', content: '(Continuing below with the creation history of a loaded scene.)' });
+			messages.push(...apiMsgs);
+		}
+		displayMessages.push(...displayMsgs);
+		chatScrollOffset = 0;
+		renderChatToCanvas();
+	},
+	pushChatNote: (text) => {
+		displayMessages.push({ role: 'assistant', content: text, history: true, historyMarker: true });
+		chatScrollOffset = 0;
+		renderChatToCanvas();
+	},
+	updateStatus: (t, c) => updateStatus(t, c),
+	isXrActive: () => xrSessionActive() || !!mobileXRMode,
+	isDisplayOnly: () => displayOnlyMode
+});
+window.GSContext = GSContext; // console / test access
 
 function updateStatus(text, className) {
 	// Keep the text/class on #status for anything that reads it. The element

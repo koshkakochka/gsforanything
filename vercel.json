@@ -13,6 +13,7 @@
           "site-source/versions.json",
           "site-source/htmlInCanvas.js",
           "site-source/menuSystem.js",
+          "site-source/creationContext.js",
           "site-source/threejsAddons/**",
           "site-source/vendor_modules/**"
         ],

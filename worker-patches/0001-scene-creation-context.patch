@@ -1,0 +1,74 @@
+--- a/worker/index.js
++++ b/worker/index.js
+@@ -217,6 +217,32 @@
+   return { name, cssVars: cleaned, customCSS };
+ }
+ 
++// Creation context (chat log + info log) uploaded with a community scene as
++// `creationContext` = { format, version, encoding, data, summary }. Stored
++// under its own KV key so the scene record and list stay small; the record
++// keeps a stub pointing at GET /api/community-scenes/:id/context (lazy load).
++// KV values max out at 25 MiB; the client keeps the encoded context under 3 MB.
++const CONTEXT_FORMAT = "gs-creation-context";
++const CONTEXT_MAX_CHARS = 20 * 1024 * 1024;
++const contextKey = (id) => `scene:${id}:context`;
++
++function validCreationContext(cc) {
++  return !!(cc && typeof cc === "object" && cc.format === CONTEXT_FORMAT &&
++    (cc.encoding === "gzip-base64" ? typeof cc.data === "string" : cc.encoding === "json" && cc.data && typeof cc.data === "object"));
++}
++
++function contextStub(cc, id, extra = {}) {
++  return {
++    format: CONTEXT_FORMAT,
++    version: cc.version || 1,
++    encoding: cc.encoding,
++    stored: "separate",
++    url: `/api/community-scenes/${id}/context`,
++    summary: cc.summary && typeof cc.summary === "object" ? cc.summary : null,
++    ...extra,
++  };
++}
++
+ async function handleApi(request, env) {
+   const url = new URL(request.url);
+   const path = url.pathname.replace(/\/+$/, "") || "/";
+@@ -301,6 +327,21 @@
+   }
+ 
+   const sceneIdMatch = path.match(/^\/api\/community-scenes\/([^/]+)$/);
++  const sceneContextMatch = path.match(/^\/api\/community-scenes\/([^/]+)\/context$/);
++
++  if (sceneContextMatch && method === "GET") {
++    const missing = requireStore(env);
++    if (missing) return missing;
++    const id = decodeURIComponent(sceneContextMatch[1]);
++    if (!SCENE_ID_RE.test(id)) return json({ error: "Scene not found" }, 404);
++    const raw = await env.SCENES.get(contextKey(id));
++    if (raw) return new Response(raw, { headers: { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*" } });
++    // Older uploads from unpatched servers keep the context inline.
++    const record = await kvGetJson(env, `cs:${id}`);
++    if (!record) return json({ error: "Scene not found" }, 404);
++    if (record.creationContext && record.creationContext.data) return json(record.creationContext);
++    return json({ error: "This scene has no creation context" }, 404);
++  }
+   const themeIdMatch = path.match(/^\/api\/community-themes\/([^/]+)$/);
+ 
+   if (path === "/api/community-scenes" && method === "POST") {
+@@ -313,7 +354,15 @@
+     const id = newSceneId();
+     const name = sanitizeSceneName(sceneData.name);
+     const now = new Date().toISOString();
+-    const record = { ...sceneData, id, name, createdAt: sceneData.createdAt || now, updatedAt: now };
++    const { creationContext, ...sceneFields } = sceneData;
++    const record = { ...sceneFields, id, name, createdAt: sceneData.createdAt || now, updatedAt: now };
++    if (creationContext != null) {
++      if (!validCreationContext(creationContext)) return json({ error: "Invalid creationContext" }, 400);
++      const ctxEncoded = JSON.stringify(creationContext);
++      if (ctxEncoded.length > CONTEXT_MAX_CHARS) return json({ error: "Creation context is too large" }, 413);
++      await env.SCENES.put(contextKey(id), ctxEncoded);
++      record.creationContext = contextStub(creationContext, id, { key: contextKey(id), size: ctxEncoded.length });
++    }
+     const encoded = JSON.stringify(record);
+     await env.SCENES.put(`cs:${id}`, encoded);
+     const meta = { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: now, size: new TextEncoder().encode(encoded).length, pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json` };
