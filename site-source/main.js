@@ -13,6 +13,9 @@ import {
 } from './version.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
+// p5.js sketch import (paste / file / zip / URL -> panel in the scene). Self-contained;
+// it only uses the window.gs* hooks set up next to gsCreateP5Surface below.
+import './p5Import.js';
 
 // ============================================================================
 // Configuration
@@ -6545,6 +6548,31 @@ async function gsCreateP5Surface(sketch, opts = {}) {
 
 window.gsCreateCanvasSurface = gsCreateCanvasSurface;
 window.gsCreateP5Surface = gsCreateP5Surface;
+
+// Hooks for p5Import.js: where world content goes (AR placement root in
+// Walk-in-AR) and a way to add/remove session code blocks, so an imported
+// sketch is saved with the scene and shows up in the code window.
+window.gsGetWorldContentParent = getWorldContentParent;
+window.gsSessionCode = {
+	async add(code) {
+		await executeVrCode(code);
+		executedCodeBlocks.push(code);
+		notifyCodeEditorExternalChange();
+		renderScenePanel();
+	},
+	removeWhere(match) {
+		let removed = 0;
+		executedCodeBlocks = executedCodeBlocks.filter((c) => (match(c) ? (removed++, false) : true));
+		for (const sc of loadedScenes) {
+			if (!sc.active || !Array.isArray(sc.codeBlocks)) continue;
+			const before = sc.codeBlocks.length;
+			sc.codeBlocks = sc.codeBlocks.filter((c) => !match(c));
+			removed += before - sc.codeBlocks.length;
+		}
+		if (removed) { notifyCodeEditorExternalChange(); renderScenePanel(); }
+		return removed;
+	}
+};
 
 function buildGsSettingsNote() {
 	const lines = ['[GS editor settings: chosen by the user in the editor. Follow them unless this message asks for something else. Do not mention this note.]'];

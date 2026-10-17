@@ -395,6 +395,32 @@ app.get('/api/prompts', (req, res) => {
 	res.json({ systemPrompt: SYSTEM_PROMPT, fixCodePrompt: FIX_CODE_PROMPT, themePrompt: THEME_SYSTEM_PROMPT });
 });
 
+// Read-only relay for public p5.js web editor sketches. editor.p5js.org
+// doesn't send CORS headers to other sites, so the "Import p5 sketch" URL
+// option can't fetch editor.p5js.org/<user>/sketches/<id> from the browser.
+// This fetches only that one public project-JSON endpoint (username and id
+// are validated, nothing else is reachable) and returns its JSON.
+app.get('/api/p5-editor/:user/:id', async (req, res) => {
+	const { user, id } = req.params;
+	if (!/^[A-Za-z0-9_.-]{1,64}$/.test(user) || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+		return res.status(400).json({ error: 'Invalid p5 editor username or sketch id' });
+	}
+	try {
+		const upstream = await fetch(`https://editor.p5js.org/editor/${encodeURIComponent(user)}/projects/${encodeURIComponent(id)}`, {
+			headers: { Accept: 'application/json' },
+			signal: AbortSignal.timeout(15000)
+		});
+		if (upstream.status === 404) return res.status(404).json({ error: 'Sketch not found', notFound: true });
+		if (!upstream.ok) return res.status(502).json({ error: `p5 editor returned HTTP ${upstream.status}` });
+		const data = await upstream.json();
+		if (!data || !Array.isArray(data.files)) return res.status(404).json({ error: 'Sketch not found', notFound: true });
+		res.set('Cache-Control', 'public, max-age=60');
+		res.json({ name: data.name, files: data.files, user: data.user && { username: data.user.username } });
+	} catch (err) {
+		res.status(502).json({ error: `Could not reach the p5 editor: ${err.message}` });
+	}
+});
+
 // Proxy endpoint for the LLM chat backends
 app.post('/api/chat', async (req, res) => {
 	try {
