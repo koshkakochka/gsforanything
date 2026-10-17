@@ -1,9 +1,18 @@
 {
   "versions": [
     {
-      "id": "0.974",
-      "label": "GS 0.974 (this build)",
+      "id": "0.975",
+      "label": "GS 0.975 (this build)",
       "url": null,
+      "date": "2026-10-17",
+      "changes": [
+        "The desktop and phone view now shows everything the VR view shows. Both draw up to 100 m, but on desktop that used to be counted from the camera, which sits behind where you stand in VR (4 m by default, up to 50 m zoomed out), so faraway objects visible in VR could disappear. Desktop now counts from where you'd stand in VR. VR itself is unchanged."
+      ]
+    },
+    {
+      "id": "0.974",
+      "label": "GS 0.974",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-10-17",
       "changes": [
         "Added Merge scenes to the Community tab: pick two Community scenes (with the 🔀 button on each row or the Merge scenes bar), say how to combine them, and the AI blends their gameplay, controls and assets into a new scene.",
