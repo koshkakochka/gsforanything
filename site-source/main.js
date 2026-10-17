@@ -12,6 +12,7 @@ import {
 	isCurrentVersionEntry
 } from './version.js';
 import * as GSContext from './creationContext.js';
+import * as GSMerge from './communityMerge.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 
@@ -2918,7 +2919,8 @@ function buildSceneData(name) {
 		name,
 		createdAt: new Date().toISOString(),
 		thumbnail: pendingExportThumbnail || '',
-		codeBlocks
+		codeBlocks,
+		...GSMerge.sceneCredits(loadedScenes) // mergedFrom / credits of a merged scene
 	};
 }
 
@@ -2983,7 +2985,8 @@ function addLoadedScene(data, fallbackName) {
 		codeBlocks: data.codeBlocks,
 		active: true,
 		createdAt: data.createdAt || new Date().toISOString(),
-		_thumbImage: null
+		_thumbImage: null,
+		...(Array.isArray(data.mergedFrom) ? { mergedFrom: data.mergedFrom } : {})
 	};
 	loadedScenes.push(sc);
 
@@ -3334,6 +3337,7 @@ function renderCommunitySceneList(scenes) {
 		rename.addEventListener('click', () => showRenameModal(cs));
 
 		actions.append(load, share, rename);
+		GSMerge.decorateCommunityRow(actions, cs); // "Merge" pick button
 		item.append(nameRow, actions);
 		dchatCommunityList.appendChild(item);
 	}
@@ -3480,6 +3484,7 @@ function upsertCommunityLoadedScene(data, fallbackName, key) {
 	}
 	if (data.editorUrl) sc.editorUrl = data.editorUrl;
 	if (data.viewUrl) sc.viewUrl = data.viewUrl;
+	if (Array.isArray(data.mergedFrom)) sc.mergedFrom = data.mergedFrom;
 	return sc;
 }
 
@@ -5879,6 +5884,80 @@ GSContext.initCreationContext({
 	isDisplayOnly: () => displayOnlyMode
 });
 window.GSContext = GSContext; // console / test access
+
+// Community scene merge (see communityMerge.js). The AI call uses the same
+// backend path as the scene chat; the result is installed as a new scene.
+async function callSceneChatBackend(apiMessages) {
+	if (selectedBackend === 'ollama') {
+		const data = await callOllamaDirect(cachedPrompts?.systemPrompt || '', withGsSettingsNote(apiMessages), selectedOllamaModel);
+		return data.content[0]?.text || '';
+	}
+	const response = await fetch('/api/chat', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ messages: withGsSettingsNote(apiMessages), backend: selectedBackend })
+	});
+	const text = await response.text();
+	let data;
+	try { data = JSON.parse(text); } catch { throw new Error(`Server returned non-JSON (${response.status}): ${text.slice(0, 120)}`); }
+	if (!response.ok) throw new Error(data.error || `API error: ${response.status}`);
+	return data.content?.[0]?.text || '';
+}
+
+GSMerge.initCommunityMerge({
+	getCommunityScenes: () => communityScenesCache,
+	getModelSelect: () => desktopModelSelect,
+	getModelLabel: () => getActiveModelDisplayName(),
+	loadContext: (data) => GSContext.loadContextForScene(data),
+	isDisplayOnly: () => displayOnlyMode,
+	parseVrExecBlocks: (text) => parseVrExecBlocks(text),
+	callChat: async (apiMessages) => {
+		isLoading = true;
+		renderChatToCanvas();
+		try { return await callSceneChatBackend(apiMessages); } finally { isLoading = false; renderChatToCanvas(); }
+	},
+	// New working scene; neither original is touched. Failing blocks go
+	// through the normal auto-fix (asset tokens keep base64 out of the fix call).
+	installMergedScene: async ({ name, codeBlocks, mergedFrom, replaceWorld, tokenize, expand }) => {
+		const stamp = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+		if (replaceWorld) {
+			if (executedCodeBlocks.length) {
+				loadedScenes.push({ id: stamp(), name: 'Session before merge', thumbnail: '', codeBlocks: executedCodeBlocks.slice(), active: false, createdAt: new Date().toISOString(), _thumbImage: null });
+			}
+			blankLiveSceneForCommunityLoad();
+		}
+		const sc = { id: stamp(), name, thumbnail: '', codeBlocks: [], active: true, createdAt: new Date().toISOString(), _thumbImage: null, mergedFrom };
+		loadedScenes.push(sc);
+		let fixed = 0, failed = 0;
+		for (const code of codeBlocks) {
+			try {
+				await executeVrCode(code);
+				sc.codeBlocks.push(code);
+			} catch (err) {
+				console.error('merged block error:', err);
+				const fix = await attemptAutoFix(tokenize(code), err.message, err.stack);
+				if (fix.success) { sc.codeBlocks.push(expand(fix.code)); fixed++; } else failed++;
+			}
+		}
+		loadSceneThumbnails();
+		renderScenePanel();
+		notifyCodeEditorExternalChange();
+		return { sceneId: sc.id, fixed, failed };
+	},
+	appendChat: (apiMsgs, displayMsgs) => {
+		messages.push(...apiMsgs);
+		displayMessages.push(...displayMsgs);
+		chatScrollOffset = 0;
+		renderChatToCanvas();
+	},
+	recordMerge: (info) => {
+		GSContext.recordUserTurn({ text: info.userText, backend: selectedBackend, model: getActiveModelDisplayName() });
+		GSContext.recordAssistantTurn({ raw: info.raw, display: info.display, backend: selectedBackend, model: getActiveModelDisplayName() });
+		GSContext.recordMerge(info);
+	},
+	updateStatus: (t, c) => updateStatus(t, c)
+});
+window.GSMerge = GSMerge; // console / test access
 
 function updateStatus(text, className) {
 	// Keep the text/class on #status for anything that reads it. The element

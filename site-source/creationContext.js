@@ -54,6 +54,7 @@ let sessionStartedAt = new Date().toISOString();
 const chatLog = [];          // { id, role, kind, ts, text, display, raw, backend, model, attachments[], settings, origin }
 const files = new Map();     // fileId -> { id, name, kind, mediaType, size, text?, base64?, addedAt, origin }
 const edits = [];            // { ts, source, chars, code, origin }
+const merges = [];           // { ts, parents: [{ id, name }], prompt, picks, resultName, stats }
 const loadedContexts = [];   // { key, sceneName, payload, summary, loadedAt }
 const restoredKeys = new Set();
 
@@ -229,6 +230,18 @@ export function recordNote(text) {
 	chatLog.push({ id: uid(), role: 'assistant', kind: 'note', ts: nowIso(), display: String(text ?? '') });
 }
 
+/** A Community scene merge (communityMerge.js): both parents and the prompt. */
+export function recordMerge({ parents = [], prompt = '', picks = {}, resultName = '', stats = null } = {}) {
+	merges.push({
+		ts: nowIso(),
+		parents: parents.map(p => ({ id: p.id || null, name: String(p.name || 'Untitled') })),
+		prompt: String(prompt || ''),
+		picks: { ...picks },
+		resultName: String(resultName || ''),
+		...(stats ? { stats: { assets: stats.assets, blocks: stats.blocks, kept: stats.kept || [], summarized: stats.summarized || [] } } : {})
+	});
+}
+
 /** Code tab Apply / Live apply. */
 export function recordCodeEdit({ code, source = 'apply' } = {}) {
 	const str = String(code ?? '');
@@ -247,7 +260,7 @@ function compactSettings(s) {
 }
 
 export function hasSessionContent() {
-	return chatLog.length > 0 || edits.length > 0;
+	return chatLog.length > 0 || edits.length > 0 || merges.length > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -313,6 +326,7 @@ function buildPayload({ sceneName, includeFileContents = true, purpose = 'save' 
 		settingsNote,
 		libraryFiles,
 		editHistory: editList,
+		merges: merges.slice(),
 		origins: loadedContexts.map(c => ({ sceneName: c.sceneName, key: c.key, savedAt: c.payload?.savedAt || null })),
 		notes
 	};
@@ -404,6 +418,7 @@ function summarize(p, extra = {}) {
 		userMessages: msgs.filter(e => e.role === 'user').length,
 		files: (p.files || []).map(f => ({ name: f.name, kind: f.kind, size: f.size, included: !f.omitted, truncated: !!f.truncated })),
 		edits: (p.editHistory || []).length,
+		merges: (p.merges || []).map(m => ({ parents: m.parents, resultName: m.resultName })),
 		models: p.models || [],
 		savedAt: p.savedAt,
 		sessionStartedAt: p.sessionStartedAt,
@@ -513,6 +528,16 @@ function settingsLines(s) {
 	return lines;
 }
 
+function mergeLines(payload, data) {
+	const lines = [];
+	const credit = Array.isArray(data?.mergedFrom) && data.mergedFrom.length ? data.mergedFrom : null;
+	for (const m of payload?.merges || []) {
+		lines.push(`Merged from ${m.parents.map(p => `"${p.name}"`).join(' + ')}${m.prompt ? ` with the prompt "${m.prompt.slice(0, 200)}"` : ''}.`);
+	}
+	if (!lines.length && credit) lines.push(`Merged from ${credit.map(p => `"${p.name}"`).join(' + ')}.`);
+	return lines;
+}
+
 function userApiText(entry, payload) {
 	let text = entry.text || '';
 	for (const fid of entry.attachments || []) {
@@ -581,6 +606,7 @@ function adoptIntoSession(payload, origin) {
 	}
 	for (const e of payload.chat || []) if (!seenChat.has(e.id)) chatLog.push({ ...e, origin: e.origin || origin });
 	for (const e of payload.editHistory || []) if (!seenEdits.has(`${e.ts}|${e.chars}`)) edits.push({ ...e, origin: e.origin || origin });
+	for (const m of payload.merges || []) if (!merges.some(x => x.ts === m.ts && x.resultName === m.resultName)) merges.push({ ...m, origin: m.origin || origin });
 }
 
 function alreadyInSession(payload) {
@@ -598,6 +624,10 @@ export async function restoreFromScene(data, { key, source = 'file' } = {}) {
 	const sceneName = data.name || 'Untitled';
 	const k = sceneKeyFor(data, key);
 	if (!data.creationContext) {
+		if (Array.isArray(data.mergedFrom) && data.mergedFrom.length && !restoredKeys.has(k) && !data.creationContextOmitted) {
+			restoredKeys.add(k);
+			host?.pushChatNote?.(`🔀 "${sceneName}" was merged from ${data.mergedFrom.map(p => `"${p.name}"`).join(' + ')}.`);
+		}
 		if (data.creationContextOmitted && !restoredKeys.has(k)) {
 			restoredKeys.add(k);
 			host?.pushChatNote?.(`📜 "${sceneName}" was published without its creation context, so there is no earlier chat to restore.`);
@@ -630,6 +660,7 @@ export async function restoreFromScene(data, { key, source = 'file' } = {}) {
 	const sl = settingsLines(payload.settings);
 	const head = [
 		`📜 Creation history for "${sceneName}" — ${summary.messages ?? display.length} messages${payload.models?.length ? `, made with ${payload.models.join(', ')}` : ''}${payload.savedAt ? `, saved ${fmtDate(payload.savedAt)}` : ''}.`,
+		...mergeLines(payload, data),
 		fileNames.length ? `Files: ${fileNames.join(', ')}.` : 'Files: none.',
 		...sl.map(l => `${l}.`),
 		...(payload.notes?.length ? [`Notes: ${payload.notes.join(' ')}`] : []),
@@ -669,6 +700,10 @@ export function payloadToMarkdown(p) {
 	if (p.editHistory?.length) {
 		out.push('', '## Code edits', '');
 		for (const e of p.editHistory) out.push(`- ${e.ts} ${e.source}: ${e.chars} chars${e.dropped ? ' (code dropped)' : ''}`);
+	}
+	if (p.merges?.length) {
+		out.push('', '## Merges', '');
+		for (const m of p.merges) out.push(`- ${m.ts}: ${m.parents.map(x => `"${x.name}" (${x.id || '?'})`).join(' + ')} → "${m.resultName}"${m.prompt ? ` — prompt: ${m.prompt}` : ''}`);
 	}
 	if (p.notes?.length) out.push('', '## Notes', '', ...p.notes.map(n => `- ${n}`));
 	return out.join('\n');
@@ -881,6 +916,7 @@ export function openViewer(contextKey = null, { payload: forcedPayload = null, t
 				p.sessionStartedAt ? `Session started: ${p.sessionStartedAt}` : '',
 				p.savedAt ? `Saved: ${p.savedAt}` : '',
 				p.origins?.length ? `Continued from: ${p.origins.map(o => `"${o.sceneName}"`).join(', ')}` : '',
+				...(p.merges || []).map(m => `Merged from: ${m.parents.map(x => `"${x.name}"${x.id ? ` (${x.id})` : ''}`).join(' + ')} → "${m.resultName}" on ${m.ts}${m.prompt ? `\n  Prompt: ${m.prompt}` : ''}${Object.keys(m.picks || {}).length ? `\n  Picks: ${Object.entries(m.picks).map(([k, v]) => `${k}: ${v}`).join(', ')}` : ''}`),
 				...(p.notes?.length ? ['', 'Notes:', ...p.notes.map(n => `- ${n}`)] : []),
 				'',
 				'Editor settings note sent to the AI:',

@@ -37,7 +37,7 @@ Wrangler is typically authenticated on the **box** (`/workspace/carljr-cf` or si
 
 1. Ask user for version → same `version.js` / `versions.json` as Vercel (from `origin/main`).
 2. Sync **all** browser assets into `public/`:
-   - `index.html`, `main.js`, `version.js`, `versions.json`, `syntaxHighlight.js`, `htmlInCanvas.js`, `menuSystem.js`, `creationContext.js`
+   - `index.html`, `main.js`, `version.js`, `versions.json`, `syntaxHighlight.js`, `htmlInCanvas.js`, `menuSystem.js`, `creationContext.js`, `communityMerge.js`
    - `threejsAddons/`
    - **full `vendor_modules/`** — especially `vendor_modules/three/build/three.module.js`
 3. **Prior bug:** if `public/vendor_modules/three/build/` is missing, `/` and `/main.js` still return 200 but the import map 404s `three.module.js`, so the app never boots (blank canvas, empty Model dropdown, no welcome). Always restore `three/build` from git if the working tree deleted it, then sync again.
