@@ -38,6 +38,7 @@ Three moving parts:
 | `site-source/server.js` | Express server: static hosting + `/api/chat`, `/api/fix-code`, `/api/save-scene`, `/api/load-scene`. Holds the system prompts. |
 | `site-source/index.html` | DOM shell + styles: chat overlay (input/MIC/Send), status pill, `#ui-toggle`, export modal, and the WebXR `overlay-root`. |
 | `site-source/main.js` | The whole client app: scene setup, panels, input, speech, locomotion, and the vr-exec execution engine. |
+| `site-source/exporter.js` | Share tab + 3D export: collects user content (plus the scene code's directional/point/spot lights; not GS's default rig, ambient or hemisphere), GLB and self-contained .gltf (GLTFExporter, KHR_lights_punctual), binary FBX 7.4 writer, OBJ+MTL+textures .zip, Blender .zip (.glb + `open_in_blender.py`), the export dialog and the Share tab content. Share link reuses main.js `shareCurrentScene()` → the Community share modal / upload flow. VR: Scenes panel shortcuts (Share link, Save GLB/glTF/FBX/OBJ/Blender) download directly / copy the link. |
 | `site-source/threejsAddons/ARButton.js` | Enter-session button; requests the immersive WebXR session with `local-floor` + `dom-overlay`. |
 | `site-source/node_modules/three` | Three.js (loaded via the import map in `index.html`). |
 

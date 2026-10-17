@@ -13,6 +13,7 @@ import {
 } from './version.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
+import { initSceneExport } from './exporter.js';
 
 // ============================================================================
 // Configuration
@@ -333,8 +334,19 @@ const SCENES_BUTTONS = [
 	{ id: 'importFile', label: 'Import File', action: 'scenes:importFile' },
 	{ id: 'importFolder', label: 'Import Folder', action: 'scenes:importFolder' },
 	{ id: 'loadSaved', label: 'Load Saved', action: 'scenes:loadSaved', variant: 'success' },
-	{ id: 'clearScene', label: 'Clear scene', action: 'scenes:clear', variant: 'secondary' }
+	{ id: 'clearScene', label: 'Clear scene', action: 'scenes:clear', variant: 'secondary' },
+	// Share & 3D export (exporter.js). Desktop/phone: one shortcut to the Share
+	// tab. VR (no Share tab there): the Share options as panel buttons.
+	{ id: 'openShare', label: 'Share & Export 3D', action: 'scenes:openShareTab', variant: 'accent', desktopOnly: true },
+	{ id: 'shareLink', label: 'Share link', action: 'scenes:shareLink', variant: 'accent', xrOnly: true },
+	{ id: 'exportGlb', label: 'Save GLB', action: 'scenes:exportModel:glb', variant: 'accent', xrOnly: true },
+	{ id: 'exportGltf', label: 'Save glTF', action: 'scenes:exportModel:gltf', variant: 'accent', xrOnly: true },
+	{ id: 'exportFbx', label: 'Save FBX', action: 'scenes:exportModel:fbx', variant: 'accent', xrOnly: true },
+	{ id: 'exportObj', label: 'Save OBJ', action: 'scenes:exportModel:obj', variant: 'accent', xrOnly: true },
+	{ id: 'exportBlender', label: 'Save Blender', action: 'scenes:exportModel:blender', variant: 'accent', xrOnly: true }
 ];
+const SCENES_BUTTONS_DOM = SCENES_BUTTONS.filter((b) => !b.xrOnly);
+const SCENES_BUTTONS_XR = SCENES_BUTTONS.filter((b) => !b.desktopOnly);
 const EXPORT_COMBINED_BUTTON = [
 	{ id: 'exportCombined', label: 'Export Combined', action: 'scenes:exportCombined', variant: 'warning' }
 ];
@@ -412,6 +424,19 @@ function handleMenuAction(action) {
 			break;
 		case 'scenes:export':
 			showExportModal(false);
+			break;
+		case 'scenes:exportModel:glb':
+		case 'scenes:exportModel:gltf':
+		case 'scenes:exportModel:fbx':
+		case 'scenes:exportModel:obj':
+		case 'scenes:exportModel:blender':
+			sceneModelExport.open(action.split(':')[2]);
+			break;
+		case 'scenes:shareLink':
+			shareCurrentScene();
+			break;
+		case 'scenes:openShareTab':
+			document.querySelector('.dchat-tab[data-tab="share"]')?.click();
 			break;
 		case 'scenes:importFile':
 			fileInput.click();
@@ -2612,6 +2637,25 @@ const exportDownloadBtn = document.getElementById('export-download-btn');
 let pendingExportThumbnail = null;
 let pendingExportCombined = false;
 
+// GLB / FBX export (exporter.js). Roots = everything clearUserObjects would
+// remove: user content under the scene root and the Walk-in-AR placement group.
+const sceneModelExport = initSceneExport({
+	getRoots: () => {
+		const roots = scene.children.filter((c) => !systemObjectIds.has(c.uuid) && c !== player && c !== arPlacementRoot);
+		if (typeof arPlacementRoot !== 'undefined' && arPlacementRoot) {
+			for (const c of arPlacementRoot.children) {
+				if (c !== arPlacementMarker && !systemObjectIds.has(c.uuid)) roots.push(c);
+			}
+		}
+		return roots;
+	},
+	getSceneName: () => loadedScenes.filter((sc) => sc.active).map((sc) => sc.name).filter(Boolean).join(' + ') || 'GS scene',
+	notify: (text, kind) => updateStatus(text, kind),
+	isImmersive: () => renderer.xr.isPresenting
+});
+window.gsSceneExport = sceneModelExport;
+sceneModelExport.mountShareTab(document.getElementById('dchat-share'), { onShareLink: () => shareCurrentScene() });
+
 function snapshotSystemObjects() {
 	systemObjectIds.clear();
 	scene.traverse(obj => systemObjectIds.add(obj.uuid));
@@ -3344,15 +3388,15 @@ async function copyText(text) {
 }
 
 function uploadCurrentSceneToCommunity() {
-	if (displayOnlyMode) return;
+	if (displayOnlyMode) return Promise.resolve(null);
 	const name = (loadedScenes.find(s => s.active)?.name) || 'My Scene';
 	const sceneData = buildSceneData(name);
 	if (sceneData.codeBlocks.length === 0) {
 		updateStatus('Nothing to upload - add or load something first', 'error');
-		return;
+		return Promise.resolve(null);
 	}
 	updateStatus('Uploading to community...', 'connecting');
-	fetch('/api/community-scenes', {
+	return fetch('/api/community-scenes', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(sceneData)
@@ -3360,10 +3404,42 @@ function uploadCurrentSceneToCommunity() {
 		if (!ok || data.error) throw new Error(data.error || 'Upload failed');
 		updateStatus(`Uploaded "${data.scene?.name || name}" to community`, 'connected');
 		refreshCommunityScenes();
-		showShareModal(sharePayloadFromMeta(data.scene || { name, id: data.id }, data));
+		const share = sharePayloadFromMeta(data.scene || { name, id: data.id }, data);
+		lastUploadedShare = { sig: JSON.stringify(sceneData.codeBlocks), share };
+		showShareModal(share);
+		return share;
 	}).catch(err => {
 		updateStatus(`Upload error: ${err.message}`, 'error');
+		return null;
 	});
+}
+
+// Share tab / VR "Share link": the Community share link for the current
+// scene. An unchanged loaded Community scene (or one just uploaded) reuses its
+// id; anything else goes through uploadCurrentSceneToCommunity, the same flow
+// as Community → Upload Current Scene. Desktop gets the same share modal; in
+// VR (modal not visible) the editor link is copied instead.
+let lastUploadedShare = null;
+function shareCurrentScene() {
+	if (displayOnlyMode) return Promise.resolve(null);
+	const active = loadedScenes.filter(s => s.active);
+	const sig = JSON.stringify(buildSceneData('').codeBlocks);
+	let share = null;
+	if (active.length === 1 && active[0].communityId && executedCodeBlocks.length === 0
+		&& JSON.stringify(active[0].codeBlocks) === active[0].communitySig) {
+		share = sharePayloadFromMeta({ id: active[0].communityId, name: active[0].name }, active[0]);
+	} else if (lastUploadedShare && lastUploadedShare.sig === sig) {
+		share = lastUploadedShare.share;
+	}
+	const copyInXr = (s) => {
+		if (s && renderer.xr.isPresenting) {
+			copyText(s.editorUrl).then(ok => updateStatus(ok ? `Share link copied: ${s.editorUrl}` : `Share link: ${s.editorUrl}`, 'connected'));
+		}
+		return s;
+	};
+	if (!share) return uploadCurrentSceneToCommunity().then(copyInXr); // shows the share modal itself
+	if (!renderer.xr.isPresenting) showShareModal(share);
+	return Promise.resolve(copyInXr(share));
 }
 
 function refreshCommunityScenes() {
@@ -3642,6 +3718,7 @@ function upsertCommunityLoadedScene(data, fallbackName, key) {
 		sc.communityKey = key;
 		if (data.id) sc.communityId = data.id;
 	}
+	sc.communitySig = JSON.stringify(sc.codeBlocks); // shareCurrentScene: unchanged since load?
 	if (data.editorUrl) sc.editorUrl = data.editorUrl;
 	if (data.viewUrl) sc.viewUrl = data.viewUrl;
 	return sc;
@@ -4360,7 +4437,7 @@ function renderScenePanel({ dom = true } = {}) {
 	scenePanelButtonBoxes = [];
 
 	if (scenePanelSubTab === 'scenes') {
-		const btnLayout = buildButtonLayout(SCENES_BUTTONS, {
+		const btnLayout = buildButtonLayout(SCENES_BUTTONS_XR, {
 			width: w - 24, x: 12, y: contentTop, height: 44, minWidth: 100, gap: 8
 		});
 		scenePanelButtonBoxes = btnLayout.boxes;
@@ -8114,7 +8191,7 @@ document.addEventListener('keydown', (e) => {
 	if (phone) fitDesktopChatToViewport();
 });
 
-// Tabs: Chat (Scene|Theme) / Environment / Scenes / Files / Code / Community (Scenes|Themes) / Controls / Dependencies.
+// Tabs: Chat (Scene|Theme) / Environment / Scenes / Files / Code / Community (Scenes|Themes) / Controls / Dependencies / Share.
 document.querySelectorAll('.dchat-tab').forEach(tab => {
 	tab.addEventListener('click', () => {
 		document.querySelectorAll('.dchat-tab').forEach(t => t.classList.remove('active'));
@@ -8453,7 +8530,7 @@ dchatResetCameraBtn.addEventListener('click', resetCameraView);
 // EXPORT_COMBINED_BUTTON, COMMUNITY_BUTTONS) mounted once - their content
 // never changes, only EXPORT_COMBINED_BUTTON's visibility does (toggled in
 // renderDomSceneList via the .visible class on its mount div).
-mountButtonsToDOM(dchatScenesButtonsMount, SCENES_BUTTONS, { width: 384, height: 44, gap: 8, minWidth: 100, fontSize: 12 }, handleMenuAction);
+mountButtonsToDOM(dchatScenesButtonsMount, SCENES_BUTTONS_DOM, { width: 384, height: 44, gap: 8, minWidth: 100, fontSize: 12 }, handleMenuAction);
 mountButtonsToDOM(dchatExportCombinedMount, EXPORT_COMBINED_BUTTON, { width: 384, height: 44, gap: 8, perRow: 1, fontSize: 13 }, handleMenuAction);
 renderCommunityDesktopButtons();
 renderCommunityLoadModeControls();

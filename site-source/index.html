@@ -421,11 +421,11 @@
 		}
 
 		/* Environment / Dependencies show their short labels ("Env" / "Deps")
-		   only in the 4-column layout. */
+		   only in the narrow two-row layout. */
 		.dchat-tab-short { display: none; }
 
-		/* Narrow chat panel (phone / resized / default 380px): eight tabs as
-		   two rows of 4, pill tabs. */
+		/* Narrow chat panel (phone / resized / default 380px): nine tabs as
+		   two rows (5 + 4, the second row stretches), pill tabs. */
 		@container desktop-chat (max-width: 760px) {
 			#desktop-chat-tabs {
 				flex-wrap: wrap;
@@ -435,8 +435,8 @@
 			.dchat-tab-full { display: none; }
 			.dchat-tab-short { display: inline; }
 			.dchat-tab {
-				flex: 1 1 calc(25% - 4px);
-				min-width: calc(25% - 4px);
+				flex: 1 1 calc(20% - 4px);
+				min-width: calc(20% - 4px);
 				max-width: none;
 				padding: 8px 4px;
 				font-size: 11px;
@@ -466,8 +466,8 @@
 			.dchat-tab-full { display: none; }
 			.dchat-tab-short { display: inline; }
 			.dchat-tab {
-				flex: 1 1 calc(25% - 4px);
-				min-width: calc(25% - 4px);
+				flex: 1 1 calc(20% - 4px);
+				min-width: calc(20% - 4px);
 				max-width: none;
 				padding: 8px 4px;
 				font-size: 11px;
@@ -745,6 +745,9 @@
 			color: rgba(255, 255, 255, 0.45);
 			margin-top: 8px;
 		}
+
+		/* --- Share tab (content built by exporter.js) --- */
+		#dchat-share { overflow-y: auto; padding: 14px 16px; font-size: 13px; overscroll-behavior: contain; }
 
 		/* --- Dependencies tab (page libraries: THREE.js / ammo.js / p5.js) --- */
 		#dchat-deps {
@@ -2164,6 +2167,7 @@
 			<button class="dchat-tab" data-tab="community">🌐 Community</button>
 			<button class="dchat-tab" data-tab="controls">🎮 Controls</button>
 			<button class="dchat-tab" data-tab="deps">📦 <span class="dchat-tab-full">Dependencies</span><span class="dchat-tab-short">Deps</span></button>
+			<button class="dchat-tab" data-tab="share">🔗 Share</button>
 		</div>
 
 		<div id="dchat-panel-chat" class="dchat-panel active">
@@ -2425,6 +2429,11 @@
 				<div id="dchat-deps-list"></div>
 				<div id="dchat-deps-note" class="dchat-controls-help" style="color:rgba(255,255,255,0.4)"></div>
 			</div>
+		</div>
+
+		<!-- Share: scene link (same as Community → Share) + 3D export; filled by exporter.js -->
+		<div id="dchat-panel-share" class="dchat-panel">
+			<div id="dchat-share"></div>
 		</div>
 
 		<div class="dchat-resize edge-n" data-dir="n"></div>
