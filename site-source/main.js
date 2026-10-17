@@ -6164,6 +6164,7 @@ function applyFreeLook(dx, dy) {
 // the default spawn at (0, 1.6, 0) — step back 4 m along the current heading
 // so the orbit does not start by staring straight down.
 function centerOrbitOnOrigin() {
+	flushOrbitMomentum();
 	camera.getWorldPosition(_orbitCamWorld);
 	camera.getWorldQuaternion(_freeQuat);
 	if (player) { player.position.set(0, 0, 0); player.rotation.set(0, 0, 0); }
@@ -6177,6 +6178,33 @@ function centerOrbitOnOrigin() {
 	}
 	camera.position.copy(_orbitCamWorld);
 	orbitControls.target.set(0, 0, 0);
+	orbitControls.update();
+}
+
+// Start / "Reset Camera View" pose. Orbit: 4 m back from the origin, orbiting
+// it. Free-roam / Off, headset and Cardboard: the original spawn (eye height
+// at the origin, facing -Z).
+// OrbitControls damping keeps applying leftover drag/zoom momentum for a
+// second or so; flush it first so a reset/re-centre lands exactly.
+function flushOrbitMomentum() {
+	const damping = orbitControls.enableDamping;
+	orbitControls.enableDamping = false;
+	orbitControls.update();
+	orbitControls.enableDamping = damping;
+}
+
+function resetCameraView() {
+	flushOrbitMomentum();
+	if (player) { player.position.set(0, 0, 0); player.rotation.set(0, 0, 0); }
+	if (viewOffset) { viewOffset.rotation.set(0, 0, 0); viewOffset.position.set(0, 0, 0); }
+	camera.quaternion.identity();
+	if (cameraControlMode === 'orbit' && !cameraControlsSuspended()) {
+		camera.position.set(0, 1.6, 4);
+		orbitControls.target.set(0, 0, 0);
+	} else {
+		camera.position.set(0, 1.6, 0);
+		orbitControls.target.set(0, 1.4, -CHAT_PANEL_DISTANCE);
+	}
 	orbitControls.update();
 }
 
@@ -6210,7 +6238,9 @@ function setCameraControlMode(mode, { persist = true, initial = false } = {}) {
 	_keysDown.clear();
 	document.body.classList.toggle('gs-camera-free', mode === 'free');
 	refreshOrbitEnabled();
-	if (mode === 'orbit' && !initial && !cameraControlsSuspended()) centerOrbitOnOrigin();
+	if (mode === 'orbit' && !cameraControlsSuspended()) {
+		if (initial) resetCameraView(); else centerOrbitOnOrigin();
+	}
 	if (persist) {
 		try { localStorage.setItem(CAMERA_CONTROL_STORAGE_KEY, mode); } catch { /* storage blocked */ }
 	}
@@ -7210,14 +7240,7 @@ dchatBrightness.addEventListener('input', () => {
 	applyEnvironmentMode();
 	renderSidePanel();
 });
-dchatResetCameraBtn.addEventListener('click', () => {
-	if (player) player.position.set(0, 0, 0);
-	if (viewOffset) { viewOffset.rotation.set(0, 0, 0); viewOffset.position.set(0, 0, 0); }
-	camera.position.set(0, 1.6, 0);
-	camera.quaternion.identity();
-	orbitControls.target.set(0, 1.4, -CHAT_PANEL_DISTANCE);
-	orbitControls.update();
-});
+dchatResetCameraBtn.addEventListener('click', resetCameraView);
 
 // Scenes / Community tabs: shared button specs (SCENES_BUTTONS,
 // EXPORT_COMBINED_BUTTON, COMMUNITY_BUTTONS) mounted once - their content
