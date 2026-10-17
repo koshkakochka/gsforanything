@@ -1,0 +1,10 @@
+{
+  "name": "gs-render-distance-test",
+  "private": true,
+  "type": "module",
+  "description": "Headless check that the desktop/phone view draws what VR draws (IWER-emulated Meta Quest 3).",
+  "dependencies": {
+    "iwer": "^2.6.0",
+    "puppeteer-core": "^24.0.0"
+  }
+}
