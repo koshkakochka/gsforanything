@@ -766,6 +766,33 @@ async function readCommunitySceneRecord(meta) {
 	};
 }
 
+// Creation context (chat log + info log, see creationContext.js) rides in
+// the upload as `creationContext` = { format, version, encoding, data, summary }.
+// It is stored in its own blob so listing/opening a scene stays small, and the
+// scene record keeps a stub that points at GET /api/community-scenes/:id/context.
+// Vercel caps function request bodies at 4.5 MB; the client keeps the encoded
+// context under 3 MB so scene + context fit in one upload.
+const CONTEXT_PREFIX = 'community-scene-context/';
+const CONTEXT_FORMAT = 'gs-creation-context';
+const CONTEXT_MAX_CHARS = 20 * 1024 * 1024;
+
+function validCreationContext(cc) {
+	return !!(cc && typeof cc === 'object' && cc.format === CONTEXT_FORMAT &&
+		(cc.encoding === 'gzip-base64' ? typeof cc.data === 'string' : cc.encoding === 'json' && cc.data && typeof cc.data === 'object'));
+}
+
+function contextStub(cc, id, extra = {}) {
+	return {
+		format: CONTEXT_FORMAT,
+		version: cc.version || 1,
+		encoding: cc.encoding,
+		stored: 'separate',
+		url: `/api/community-scenes/${id}/context`,
+		summary: cc.summary && typeof cc.summary === 'object' ? cc.summary : null,
+		...extra
+	};
+}
+
 app.post('/api/community-scenes', async (req, res) => {
 	if (!requireBlob(res)) return;
 	try {
@@ -776,13 +803,25 @@ app.post('/api/community-scenes', async (req, res) => {
 		const id = newSceneId();
 		const name = sanitizeSceneName(sceneData.name);
 		const now = new Date().toISOString();
+		const { creationContext, ...sceneFields } = sceneData;
 		const record = {
-			...sceneData,
+			...sceneFields,
 			id,
 			name,
 			createdAt: sceneData.createdAt || now,
 			updatedAt: now
 		};
+		if (creationContext != null) {
+			if (!validCreationContext(creationContext)) {
+				return res.status(400).json({ error: 'Invalid creationContext' });
+			}
+			const encoded = JSON.stringify(creationContext);
+			if (encoded.length > CONTEXT_MAX_CHARS) {
+				return res.status(413).json({ error: 'Creation context is too large' });
+			}
+			const ctxBlob = await blobPut(`${CONTEXT_PREFIX}${id}.json`, encoded, 'application/json');
+			record.creationContext = contextStub(creationContext, id, { blobUrl: ctxBlob.url, size: encoded.length });
+		}
 		const pathname = communityPathname(id, name);
 		const blob = await blobPut(pathname, JSON.stringify(record), 'application/json');
 		res.json({
@@ -829,6 +868,28 @@ app.get('/api/community-scenes/:id', async (req, res) => {
 		res.json({ ...record, ...sceneUrls(req, meta.id) });
 	} catch (error) {
 		console.error('Community get error:', error);
+		res.status(500).json({ error: error.message });
+	}
+});
+
+// Lazily loaded creation context for a community scene. Returns the full
+// envelope { format, version, encoding, data, summary }. Records uploaded
+// before the separate blob existed may still carry it inline.
+app.get('/api/community-scenes/:id/context', async (req, res) => {
+	if (!requireBlob(res)) return;
+	try {
+		const meta = await findCommunityBlob(req.params.id);
+		if (!meta) return res.status(404).json({ error: 'Scene not found' });
+		const record = await readCommunitySceneRecord(meta);
+		const cc = record.creationContext;
+		if (!cc) return res.status(404).json({ error: 'This scene has no creation context' });
+		if (cc.data) return res.json(cc);
+		if (!cc.blobUrl) return res.status(404).json({ error: 'Creation context missing' });
+		const ctxRes = await fetch(cc.blobUrl);
+		if (!ctxRes.ok) return res.status(502).json({ error: `Failed to fetch creation context: ${ctxRes.status}` });
+		res.json(await ctxRes.json());
+	} catch (error) {
+		console.error('Community context get error:', error);
 		res.status(500).json({ error: error.message });
 	}
 });

@@ -37,11 +37,12 @@ Wrangler is typically authenticated on the **box** (`/workspace/carljr-cf` or si
 
 1. Ask user for version → same `version.js` / `versions.json` as Vercel (from `origin/main`).
 2. Sync **all** browser assets into `public/`:
-   - `index.html`, `main.js`, `version.js`, `versions.json`, `syntaxHighlight.js`, `htmlInCanvas.js`, `menuSystem.js`, `exporter.js`
+   - `index.html`, `main.js`, `version.js`, `versions.json`, `syntaxHighlight.js`, `htmlInCanvas.js`, `menuSystem.js`, `exporter.js`, `creationContext.js`
    - `threejsAddons/`
    - **full `vendor_modules/`** — especially `vendor_modules/three/build/three.module.js`
 3. **Prior bug:** if `public/vendor_modules/three/build/` is missing, `/` and `/main.js` still return 200 but the import map 404s `three.module.js`, so the app never boots (blank canvas, empty Model dropdown, no welcome). Always restore `three/build` from git if the working tree deleted it, then sync again.
 4. `wrangler.jsonc`: keep **`SCENES` KV** binding; **do not touch secrets**.
+   - Worker API changes that live in this repo as patches: apply every file in `worker-patches/` to `worker/index.js` (see `worker-patches/README.md`) before deploying.
 5. Deploy: `npx wrangler deploy` (Node ≥ 22 if required by your Wrangler version). Writable cache if needed (`XDG_CACHE_HOME` under the project).
 6. Verify (below).
 
