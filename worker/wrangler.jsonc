@@ -2,7 +2,7 @@
   // Cloudflare Worker "gs" (https://gs.krossruiz.workers.dev).
   // Secrets (CLAUDE_API_KEY, OPENAI_API_KEY, ...) are stored in Cloudflare with
   // `wrangler secret put` and are NOT in this repo; deploys keep them.
-  "$schema": "../node_modules/wrangler/config-schema.json",
+  "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "gs",
   "main": "index.js",
   "compatibility_date": "2026-10-04",
