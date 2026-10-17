@@ -38,6 +38,7 @@ Three moving parts:
 | `site-source/server.js` | Express server: static hosting + `/api/chat`, `/api/fix-code`, `/api/save-scene`, `/api/load-scene`. Holds the system prompts. |
 | `site-source/index.html` | DOM shell + styles: chat overlay (input/MIC/Send), status pill, `#ui-toggle`, export modal, and the WebXR `overlay-root`. |
 | `site-source/main.js` | The whole client app: scene setup, panels, input, speech, locomotion, and the vr-exec execution engine. |
+| `site-source/exporter.js` | GLB / FBX scene export: collects user content, GLB via three's GLTFExporter, binary FBX 7.4 writer, and the Export 3D model dialog (Scenes tab → Export GLB / Export FBX; direct download in VR). |
 | `site-source/threejsAddons/ARButton.js` | Enter-session button; requests the immersive WebXR session with `local-floor` + `dom-overlay`. |
 | `site-source/node_modules/three` | Three.js (loaded via the import map in `index.html`). |
 

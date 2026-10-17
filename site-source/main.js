@@ -13,6 +13,7 @@ import {
 } from './version.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
+import { initSceneExport } from './exporter.js';
 
 // ============================================================================
 // Configuration
@@ -324,7 +325,10 @@ const SCENES_BUTTONS = [
 	{ id: 'importFile', label: 'Import File', action: 'scenes:importFile' },
 	{ id: 'importFolder', label: 'Import Folder', action: 'scenes:importFolder' },
 	{ id: 'loadSaved', label: 'Load Saved', action: 'scenes:loadSaved', variant: 'success' },
-	{ id: 'clearScene', label: 'Clear scene', action: 'scenes:clear', variant: 'secondary' }
+	{ id: 'clearScene', label: 'Clear scene', action: 'scenes:clear', variant: 'secondary' },
+	// 3D model export (exporter.js): dialog on desktop/phone, direct download in VR.
+	{ id: 'exportGlb', label: 'Export GLB', action: 'scenes:exportModel:glb', variant: 'accent' },
+	{ id: 'exportFbx', label: 'Export FBX', action: 'scenes:exportModel:fbx', variant: 'accent' }
 ];
 const EXPORT_COMBINED_BUTTON = [
 	{ id: 'exportCombined', label: 'Export Combined', action: 'scenes:exportCombined', variant: 'warning' }
@@ -399,6 +403,10 @@ function handleMenuAction(action) {
 			break;
 		case 'scenes:export':
 			showExportModal(false);
+			break;
+		case 'scenes:exportModel:glb':
+		case 'scenes:exportModel:fbx':
+			sceneModelExport.open(action.endsWith(':fbx') ? 'fbx' : 'glb');
 			break;
 		case 'scenes:importFile':
 			fileInput.click();
@@ -2588,6 +2596,24 @@ const exportDownloadBtn = document.getElementById('export-download-btn');
 
 let pendingExportThumbnail = null;
 let pendingExportCombined = false;
+
+// GLB / FBX export (exporter.js). Roots = everything clearUserObjects would
+// remove: user content under the scene root and the Walk-in-AR placement group.
+const sceneModelExport = initSceneExport({
+	getRoots: () => {
+		const roots = scene.children.filter((c) => !systemObjectIds.has(c.uuid) && c !== player && c !== arPlacementRoot);
+		if (typeof arPlacementRoot !== 'undefined' && arPlacementRoot) {
+			for (const c of arPlacementRoot.children) {
+				if (c !== arPlacementMarker && !systemObjectIds.has(c.uuid)) roots.push(c);
+			}
+		}
+		return roots;
+	},
+	getSceneName: () => loadedScenes.filter((sc) => sc.active).map((sc) => sc.name).filter(Boolean).join(' + ') || 'GS scene',
+	notify: (text, kind) => updateStatus(text, kind),
+	isImmersive: () => renderer.xr.isPresenting
+});
+window.gsSceneExport = sceneModelExport;
 
 function snapshotSystemObjects() {
 	systemObjectIds.clear();
