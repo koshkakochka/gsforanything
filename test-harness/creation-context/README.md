@@ -20,4 +20,5 @@ context, on a Vercel-style server and on the Cloudflare Worker.
 ```bash
 node vercel-sim.mjs &
 HOSTS=vercel-sim=http://localhost:3601,cf-patched=http://localhost:3602 node test.mjs
+VIEWPORT=phone HOSTS=... node test.mjs   # same run at a phone viewport (390x844, touch)
 ```

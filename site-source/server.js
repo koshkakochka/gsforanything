@@ -103,6 +103,15 @@ The scene is a Three.js WebXR application. You have access to these globals when
 - \`renderer\` — the THREE.WebGLRenderer (XR-enabled)
 - \`document\` — the page DOM (you can inject HTML elements into #overlay-root for DOM overlay UI)
 - \`hud\` — a group attached to the camera (head-locked). Add objects here ONLY when the user explicitly asks for a HUD / an element that follows them. Never use it by default.
+- \`gs\` — hot-reload helpers for this block (see "Hot reload" below).
+
+## Hot reload (keep state when code is edited)
+
+The user can edit any block in the Code tab; on Apply / Live updates only the changed block is torn down and re-run, and the rest of the scene keeps running. Write blocks so that works:
+- Keep score, counters, timers and other mutable state in \`gs.state\` (per block) or \`window.gsState\` (shared): initialise with \`gs.state.score ??= 0;\` so a reload keeps the value.
+- Register per-frame code with \`gs.onUpdate((time) => { ... })\` (same as pushing onto \`window._vrAnimations\`, but cleanly replaced on reload).
+- Give every object you create a unique, stable \`name\` (\`mesh.name = 'ball'\`). Position, rotation, scale and \`mesh.userData.velocity\` (a THREE.Vector3) of named objects carry over a reload unless the code's start value changed. For ammo.js, set \`mesh.userData.physicsBody = body\` so the body's transform and velocity carry over too, and reuse the world with \`window.physicsWorld ??= new Ammo.btDiscreteDynamicsWorld(...)\`.
+- Use \`gs.on(target, 'event', fn)\` for event listeners and plain \`setTimeout\` / \`setInterval\` (they are scoped to the block); \`gs.onDispose(fn)\` runs before the block is replaced. \`gs.hot\` is true on a reload.
 
 ## Libraries, editor settings and page helpers
 
@@ -110,6 +119,7 @@ The page also provides these window globals:
 - \`gsRequire(name)\` — async; resolves to a library from the Dependencies tab: \`'ammo'\` (ammo.js / Bullet physics, already initialised — use \`const Ammo = await gsRequire('ammo');\`, never call \`Ammo()\` yourself), \`'p5'\` (the p5.js constructor, instance mode only) or \`'three'\`.
 - \`gsCreateCanvasSurface({ context: '2d' | 'webgl2', width, height, widthMeters, position })\` — a canvas shown on a panel in the scene (works in a headset), re-uploaded every frame. Returns \`{ canvas, ctx, gl, mesh, texture, dispose() }\`.
 - \`await gsCreateP5Surface((p) => { p.setup = ...; p.draw = ...; }, opts)\` — a p5.js sketch shown on such a panel; the app drives \`p.draw\` every frame.
+- Pointer input on these panels works everywhere, including in a headset: pointing a VR controller (or hand) at the panel and pulling the trigger / pinching, or clicking / tapping it in the 3D view, sends pointer and mouse events to the canvas at the matching pixel. p5's \`mouseX\`, \`mouseY\`, \`mouseIsPressed\`, \`mousePressed()\`, \`mouseReleased()\`, \`mouseDragged()\` and \`mouseClicked()\` work, as do \`canvas.addEventListener('pointerdown' | 'mousedown' | 'click', ...)\` with \`e.offsetX/e.offsetY\` in canvas pixels.
 - \`gsGamepad\` — game controllers (Xbox / PlayStation / other USB or Bluetooth pads via the Gamepad API): \`connected\`, \`axis('leftX' | 'leftY' | 'rightX' | 'rightY')\`, \`button(name)\`, \`pressed(name)\`, \`justPressed(name)\`, \`onButton(name, fn)\`, \`rumble(ms, strength)\`, and \`captureCamera = true\` to stop the sticks moving the editor camera. Headset (WebXR) controllers are separate.
 
 When the scene needs physics (gravity, collisions, rigid bodies), use ammo.js through \`gsRequire('ammo')\`: one \`btDiscreteDynamicsWorld\` stored on \`window\`, stepped in a \`window._vrAnimations\` callback, copying each body's transform onto its mesh every frame.
@@ -184,7 +194,7 @@ document.getElementById('overlay-root').appendChild(panel);
 
 1. Always use \`vr-exec\` code blocks for code that should be executed in the scene. Regular code blocks are displayed but NOT executed.
 2. You can include multiple \`vr-exec\` blocks in a single response — they execute in order.
-3. You can use animation by hooking into the render loop: store functions on \`window._vrAnimations\` (an array) — the app calls each one per frame.
+3. You can use animation by hooking into the render loop: \`gs.onUpdate(fn)\` (preferred, hot-reload safe) or push functions onto \`window._vrAnimations\` — the app calls each one per frame.
 4. Keep explanations concise. Lead with the code, explain after.
 5. When removing objects, use \`scene.remove(obj)\` and \`obj.geometry.dispose(); obj.material.dispose();\` to free memory.
 6. To reference objects you've previously added, attach them to \`window\` (e.g., \`window.myCube = cube;\`).
@@ -200,7 +210,7 @@ A vr-exec code block failed to execute. Your job is to fix the code and return O
 
 ## Environment
 
-The code runs inside an \`AsyncFunction('THREE', 'scene', 'camera', 'renderer', 'document', code)\`, so these are the ONLY variables available:
+The code runs inside an \`AsyncFunction('THREE', 'scene', 'camera', 'renderer', 'document', 'hud', 'gs', code)\`, so these are the ONLY variables available:
 - \`THREE\` — the Three.js library (use THREE.* for all Three.js classes/utilities)
 - \`scene\` — THREE.Scene instance
 - \`camera\` — THREE.PerspectiveCamera
@@ -208,6 +218,7 @@ The code runs inside an \`AsyncFunction('THREE', 'scene', 'camera', 'renderer', 
 - \`document\` — the page DOM
 - \`window\` — the global window object (use window.* to access/store persistent references)
 - \`window._vrAnimations\` — array of per-frame animation callbacks
+- \`gs\` — hot-reload helpers: \`gs.state\` (persistent per-block object), \`gs.onUpdate(fn)\`, \`gs.on(target, type, fn)\`, \`gs.onDispose(fn)\`, \`gs.hot\`; also \`window.gsState\`. Valid — keep using them, and keep stable \`name\`s on objects.
 - \`window.gsRequire(name)\` (async; \`'ammo'\` → initialised ammo.js, \`'p5'\` → p5 constructor), \`window.gsCreateCanvasSurface(opts)\`, \`window.gsCreateP5Surface(sketch, opts)\` and \`window.gsGamepad\` — page helpers; these are valid, keep using them. Never call \`Ammo()\` directly: use \`const Ammo = await gsRequire('ammo');\`
 
 Top-level \`await\` IS allowed because the function is async.
@@ -393,6 +404,32 @@ app.get('/api/backends', (req, res) => {
 // them instead of a duplicated copy baked into main.js.
 app.get('/api/prompts', (req, res) => {
 	res.json({ systemPrompt: SYSTEM_PROMPT, fixCodePrompt: FIX_CODE_PROMPT, themePrompt: THEME_SYSTEM_PROMPT });
+});
+
+// Read-only relay for public p5.js web editor sketches. editor.p5js.org
+// doesn't send CORS headers to other sites, so the "Import p5 sketch" URL
+// option can't fetch editor.p5js.org/<user>/sketches/<id> from the browser.
+// This fetches only that one public project-JSON endpoint (username and id
+// are validated, nothing else is reachable) and returns its JSON.
+app.get('/api/p5-editor/:user/:id', async (req, res) => {
+	const { user, id } = req.params;
+	if (!/^[A-Za-z0-9_.-]{1,64}$/.test(user) || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+		return res.status(400).json({ error: 'Invalid p5 editor username or sketch id' });
+	}
+	try {
+		const upstream = await fetch(`https://editor.p5js.org/editor/${encodeURIComponent(user)}/projects/${encodeURIComponent(id)}`, {
+			headers: { Accept: 'application/json' },
+			signal: AbortSignal.timeout(15000)
+		});
+		if (upstream.status === 404) return res.status(404).json({ error: 'Sketch not found', notFound: true });
+		if (!upstream.ok) return res.status(502).json({ error: `p5 editor returned HTTP ${upstream.status}` });
+		const data = await upstream.json();
+		if (!data || !Array.isArray(data.files)) return res.status(404).json({ error: 'Sketch not found', notFound: true });
+		res.set('Cache-Control', 'public, max-age=60');
+		res.json({ name: data.name, files: data.files, user: data.user && { username: data.user.username } });
+	} catch (err) {
+		res.status(502).json({ error: `Could not reach the p5 editor: ${err.message}` });
+	}
 });
 
 // Proxy endpoint for the LLM chat backends

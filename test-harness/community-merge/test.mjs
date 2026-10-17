@@ -129,6 +129,10 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 900 }, { name: 'phone'
   const run = await p.evaluate((b64) => ({ ok: window.mergeOk, cat: window.catFiles?.['assets/cat.png']?.base64 === b64, fixedLen: window.fixedLen, hud: window.runnerHud }), B64);
   ok(`${H} merged scene ran: kept A block, assets re-substituted byte-exact, fix ran`, run.ok === true && run.cat && run.fixedLen === ('data:image/png;base64,' + B64).length, JSON.stringify(run));
   ok(`${H} only the requested A block was kept`, run.hud === undefined);
+  await p.click('.dchat-tab[data-tab="code"]'); await sleep(500); await p.click('#dchat-code-apply'); await sleep(1500);
+  const hot = await p.evaluate(() => document.getElementById('dchat-code-status')?.textContent || '');
+  ok(`${H} merged blocks run under scene block keys (Apply = no code changes)`, /no code changes/.test(hot), hot);
+  await p.click('.dchat-tab[data-tab="chat"]'); await sleep(400);
   const objs = await p.evaluate(() => { const names = []; const root = document.querySelector('canvas'); return names; });
   const chat = await chatText(p);
   ok(`${H} chat shows the merge turn and summary`, chat.some(t => /🔀 Merge "Runner" \(A\) \+ "Cat Garden" \(B\)/.test(t)) && chat.some(t => /\[Merged scene "Runner \+ Cat Garden \(merged\)" loaded: \d+ blocks, \d+ reused as-is \(A1.*\), \d+ embedded assets? carried over, 1 auto-fixed\. Originals unchanged\.\]/.test(t)), chat.slice(-1)[0]?.slice(-200));

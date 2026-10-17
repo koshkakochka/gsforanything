@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 	<meta charset="UTF-8" />
+	<link rel="icon" href="data:," />
 	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 	<base href="/" />
 	<title>Claude VR Chat</title>
@@ -421,11 +422,11 @@
 		}
 
 		/* Environment / Dependencies show their short labels ("Env" / "Deps")
-		   only in the 4-column layout. */
+		   only in the narrow two-row layout. */
 		.dchat-tab-short { display: none; }
 
-		/* Narrow chat panel (phone / resized / default 380px): eight tabs as
-		   two rows of 4, pill tabs. */
+		/* Narrow chat panel (phone / resized / default 380px): nine tabs as
+		   two rows (5 + 4, the second row stretches), pill tabs. */
 		@container desktop-chat (max-width: 760px) {
 			#desktop-chat-tabs {
 				flex-wrap: wrap;
@@ -435,8 +436,8 @@
 			.dchat-tab-full { display: none; }
 			.dchat-tab-short { display: inline; }
 			.dchat-tab {
-				flex: 1 1 calc(25% - 4px);
-				min-width: calc(25% - 4px);
+				flex: 1 1 calc(20% - 4px);
+				min-width: calc(20% - 4px);
 				max-width: none;
 				padding: 8px 4px;
 				font-size: 11px;
@@ -466,8 +467,8 @@
 			.dchat-tab-full { display: none; }
 			.dchat-tab-short { display: inline; }
 			.dchat-tab {
-				flex: 1 1 calc(25% - 4px);
-				min-width: calc(25% - 4px);
+				flex: 1 1 calc(20% - 4px);
+				min-width: calc(20% - 4px);
 				max-width: none;
 				padding: 8px 4px;
 				font-size: 11px;
@@ -746,6 +747,9 @@
 			margin-top: 8px;
 		}
 
+		/* --- Share tab (content built by exporter.js) --- */
+		#dchat-share { overflow-y: auto; padding: 14px 16px; font-size: 13px; overscroll-behavior: contain; }
+
 		/* --- Dependencies tab (page libraries: THREE.js / ammo.js / p5.js) --- */
 		#dchat-deps {
 			overflow-y: auto;
@@ -814,6 +818,16 @@
 			gap: 6px;
 		}
 		#dchat-camera-mode .dchat-btn { padding: 10px 6px; }
+		#dchat-window-anchor {
+			display: grid;
+			grid-template-columns: repeat(2, 1fr);
+			gap: 6px;
+		}
+		#dchat-window-anchor .dchat-btn { padding: 10px 6px; }
+		#dchat-window-anchor .dchat-btn.active {
+			background: linear-gradient(135deg, #6366f1, #8b5cf6);
+			box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25) inset;
+		}
 		#dchat-camera-mode .dchat-btn.active {
 			background: linear-gradient(135deg, #6366f1, #8b5cf6);
 			box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25) inset;
@@ -2154,6 +2168,7 @@
 			<button class="dchat-tab" data-tab="community">🌐 Community</button>
 			<button class="dchat-tab" data-tab="controls">🎮 Controls</button>
 			<button class="dchat-tab" data-tab="deps">📦 <span class="dchat-tab-full">Dependencies</span><span class="dchat-tab-short">Deps</span></button>
+			<button class="dchat-tab" data-tab="share">🔗 Share</button>
 		</div>
 
 		<div id="dchat-panel-chat" class="dchat-panel active">
@@ -2312,9 +2327,10 @@
 					</label>
 					<button type="button" id="dchat-code-apply" class="dchat-btn accent">Apply</button>
 					<button type="button" id="dchat-code-revert" class="dchat-btn secondary">Revert</button>
+					<button type="button" id="dchat-code-reset" class="dchat-btn secondary" title="Clear the scene and re-run every block from scratch (resets state)">Full reset</button>
 					<span id="dchat-code-status"></span>
 				</div>
-				<div id="dchat-code-hint">Generated VR program (active scenes + session blocks). Edit and Apply to rebuild the scene.</div>
+				<div id="dchat-code-hint">Generated VR program (active scenes + session blocks). Apply (or Live) hot reloads only the blocks you changed and keeps positions, scores and other state; Full reset rebuilds everything from scratch.</div>
 				<div class="dchat-code-editor-wrap">
 					<pre class="dchat-code-highlight" aria-hidden="true"><code id="dchat-code-highlight"></code></pre>
 					<textarea id="dchat-code-editor" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="// vr-exec blocks appear here after chat generates them…"></textarea>
@@ -2386,6 +2402,18 @@
 						Headset controllers in VR are separate and keep their own mapping.
 					</div>
 				</div>
+				<div>
+					<div class="dchat-section-label" style="margin:6px 0 8px">VR windows</div>
+					<div id="dchat-window-anchor" role="radiogroup" aria-label="VR windows">
+						<button type="button" class="dchat-btn secondary" data-window-anchor="fixed" role="radio">Fixed in place</button>
+						<button type="button" class="dchat-btn secondary" data-window-anchor="follow" role="radio">Follow headset</button>
+					</div>
+					<div class="dchat-controls-help" style="margin-top:6px">
+						Fixed keeps the windows where they open. Follow headset lets them catch up gently when you turn
+						or walk away, staying upright in front of you. Also on the Environment panel in VR
+						(<b>Windows: Fixed / Follow head</b>).
+					</div>
+				</div>
 				<div class="dchat-controls-help" style="color:rgba(255,255,255,0.4)">
 					Desktop and phone only. In a headset, the thumbsticks still move you (see Environment &rarr; Navigation).
 				</div>
@@ -2402,6 +2430,11 @@
 				<div id="dchat-deps-list"></div>
 				<div id="dchat-deps-note" class="dchat-controls-help" style="color:rgba(255,255,255,0.4)"></div>
 			</div>
+		</div>
+
+		<!-- Share: scene link (same as Community → Share) + 3D export; filled by exporter.js -->
+		<div id="dchat-panel-share" class="dchat-panel">
+			<div id="dchat-share"></div>
 		</div>
 
 		<div class="dchat-resize edge-n" data-dir="n"></div>
