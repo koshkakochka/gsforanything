@@ -43,7 +43,7 @@ Wrangler is typically authenticated on the **box**, not always on the PC.
 
 1. Ask user for version → same `version.js` / `versions.json` as Vercel (from `origin/main`).
 2. `cd worker && ./sync-public.sh` — copies **all** browser assets into `worker/public/` (gitignored):
-   - `index.html`, `main.js`, `version.js`, `versions.json`, `syntaxHighlight.js`, `htmlInCanvas.js`, `p5Import.js`, `menuSystem.js`, `exporter.js`, `creationContext.js`
+   - `index.html`, `main.js`, `version.js`, `versions.json`, `syntaxHighlight.js`, `htmlInCanvas.js`, `p5Import.js`, `menuSystem.js`, `exporter.js`, `creationContext.js`, `communityMerge.js`
    - `threejsAddons/`
    - **full `vendor_modules/`** — especially `vendor_modules/three/build/three.module.js` (the script fails if it is missing)
    - Add any new browser file to `sync-public.sh` **and** `vercel.json` `includeFiles`.

@@ -1,9 +1,20 @@
 {
   "versions": [
     {
-      "id": "0.973",
-      "label": "GS 0.973 (this build)",
+      "id": "0.974",
+      "label": "GS 0.974 (this build)",
       "url": null,
+      "date": "2026-10-17",
+      "changes": [
+        "Added Merge scenes to the Community tab: pick two Community scenes (with the 🔀 button on each row or the Merge scenes bar), say how to combine them, and the AI blends their gameplay, controls and assets into a new scene.",
+        "You can choose where each part comes from (gameplay, controls, assets, environment and lighting, UI) and write a prompt. Images and other large assets are carried over exactly without being sent to the AI.",
+        "The merge never changes either original. The new scene credits both parents, keeps their history, works with Code tab hot reload, and can be refined by chatting and then published or shared like any other scene."
+      ]
+    },
+    {
+      "id": "0.973",
+      "label": "GS 0.973",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-10-17",
       "changes": [
         "Added a Share tab with a link to the current scene (the same Community share and View-only link) and 3D model export to GLB, glTF, FBX, OBJ and Blender. GLB, glTF and Blender keep the scene's lights. The same buttons are in the VR Scenes panel.",

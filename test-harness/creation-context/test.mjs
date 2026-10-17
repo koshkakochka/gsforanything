@@ -33,7 +33,7 @@ async function newPage(base, tag) {
     if (u.endsWith('/api/backends')) return req.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ backends: { 'claude-sonnet-55': { label: 'Claude Sonnet 5.5', provider: 'claude', available: true } }, default: 'claude-sonnet-55' }) });
     req.continue();
   });
-  await p.setViewport({ width: 1280, height: 900 });
+  await p.setViewport(process.env.VIEWPORT === 'phone' ? { width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 } : { width: 1280, height: 900 });
   await p.goto(base + (tag || '/'), { waitUntil: 'networkidle2', timeout: 60000 });
   await sleep(2000);
   return p;

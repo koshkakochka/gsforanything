@@ -16,6 +16,7 @@
           "site-source/menuSystem.js",
           "site-source/exporter.js",
           "site-source/creationContext.js",
+          "site-source/communityMerge.js",
           "site-source/threejsAddons/**",
           "site-source/vendor_modules/**"
         ],
