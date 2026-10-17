@@ -104,6 +104,18 @@ The scene is a Three.js WebXR application. You have access to these globals when
 - \`document\` — the page DOM (you can inject HTML elements into #overlay-root for DOM overlay UI)
 - \`hud\` — a group attached to the camera (head-locked). Add objects here ONLY when the user explicitly asks for a HUD / an element that follows them. Never use it by default.
 
+## Libraries, editor settings and page helpers
+
+The page also provides these window globals:
+- \`gsRequire(name)\` — async; resolves to a library from the Dependencies tab: \`'ammo'\` (ammo.js / Bullet physics, already initialised — use \`const Ammo = await gsRequire('ammo');\`, never call \`Ammo()\` yourself), \`'p5'\` (the p5.js constructor, instance mode only) or \`'three'\`.
+- \`gsCreateCanvasSurface({ context: '2d' | 'webgl2', width, height, widthMeters, position })\` — a canvas shown on a panel in the scene (works in a headset), re-uploaded every frame. Returns \`{ canvas, ctx, gl, mesh, texture, dispose() }\`.
+- \`await gsCreateP5Surface((p) => { p.setup = ...; p.draw = ...; }, opts)\` — a p5.js sketch shown on such a panel; the app drives \`p.draw\` every frame.
+- \`gsGamepad\` — game controllers (Xbox / PlayStation / other USB or Bluetooth pads via the Gamepad API): \`connected\`, \`axis('leftX' | 'leftY' | 'rightX' | 'rightY')\`, \`button(name)\`, \`pressed(name)\`, \`justPressed(name)\`, \`onButton(name, fn)\`, \`rumble(ms, strength)\`, and \`captureCamera = true\` to stop the sticks moving the editor camera. Headset (WebXR) controllers are separate.
+
+When the scene needs physics (gravity, collisions, rigid bodies), use ammo.js through \`gsRequire('ammo')\`: one \`btDiscreteDynamicsWorld\` stored on \`window\`, stepped in a \`window._vrAnimations\` callback, copying each body's transform onto its mesh every frame.
+
+A user message may start with a "[GS editor settings: ...]" note. It carries the user's chosen Environment (2D with p5.js or a blank canvas, or 3D with THREE.js or raw WebGL) and which Dependencies are on. Follow it unless the message itself asks for something else, and don't mention the note.
+
 ## Coordinate system (IMPORTANT)
 
 This session requests a \`local-floor\` reference space. In WebXR, the floor position is accessed by requesting a \`local-floor\` or \`bounded-floor\` reference space. These spaces initialize the origin at floor level, where the y-axis is 0 at the ground, x is horizontal, and z is depth. \`local-floor\` provides a stable ground reference, while \`bounded-floor\` includes physical boundaries.
@@ -196,6 +208,7 @@ The code runs inside an \`AsyncFunction('THREE', 'scene', 'camera', 'renderer', 
 - \`document\` — the page DOM
 - \`window\` — the global window object (use window.* to access/store persistent references)
 - \`window._vrAnimations\` — array of per-frame animation callbacks
+- \`window.gsRequire(name)\` (async; \`'ammo'\` → initialised ammo.js, \`'p5'\` → p5 constructor), \`window.gsCreateCanvasSurface(opts)\`, \`window.gsCreateP5Surface(sketch, opts)\` and \`window.gsGamepad\` — page helpers; these are valid, keep using them. Never call \`Ammo()\` directly: use \`const Ammo = await gsRequire('ammo');\`
 
 Top-level \`await\` IS allowed because the function is async.
 
@@ -410,7 +423,7 @@ app.post('/api/chat', async (req, res) => {
 // Error-correction endpoint: takes failing code + error and returns fixed code
 app.post('/api/fix-code', async (req, res) => {
 	try {
-		const { failingCode, errorMessage, errorStack, attempt, priorFixes, backend } = req.body;
+		const { failingCode, errorMessage, errorStack, attempt, priorFixes, backend, sceneContext } = req.body;
 
 		if (!failingCode || !errorMessage) {
 			return res.status(400).json({ error: 'failingCode and errorMessage are required' });
@@ -435,6 +448,11 @@ app.post('/api/fix-code', async (req, res) => {
 		}
 
 		userContent += `\nFix this code. Return ONLY a single \`vr-exec\` code block.`;
+		// Editor settings (Environment 2D/3D, Dependencies, gamepad helper)
+		// from the client, capped so a bad client can't bloat the request.
+		if (typeof sceneContext === 'string' && sceneContext.trim()) {
+			userContent += `\n\n${sceneContext.slice(0, 8000)}`;
+		}
 
 		const fixMessages = [{ role: 'user', content: userContent }];
 		const data = await callLLM(FIX_CODE_PROMPT, fixMessages, 8192, backend);

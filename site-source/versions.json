@@ -1,30 +1,71 @@
 {
   "versions": [
     {
+      "id": "0.972",
+      "label": "GS 0.972 (this build)",
+      "url": null,
+      "date": "2026-10-17",
+      "changes": [
+        "Added ammo.js physics to the page. It is on by default, and scenes that need gravity or collisions use it.",
+        "Added a Dependencies tab listing THREE.js, ammo.js and p5.js, with a toggle for each library.",
+        "Added a 2D / 3D choice in the Environment tab: 2D uses p5.js or a blank canvas, 3D uses THREE.js (the default) or plain WebGL. The AI follows your choice.",
+        "Added game controller support (Xbox Series X|S and other USB or Bluetooth pads): sticks move and look, triggers zoom, Y switches camera mode, and generated scenes can read the controller.",
+        "Added a changelog for every version to this version list."
+      ]
+    },
+    {
       "id": "0.971",
-      "label": "GS 0.971 (this build)",
-      "url": null
+      "label": "GS 0.971",
+      "url": "https://vrclaudeinterface.vercel.app",
+      "date": "2026-10-17",
+      "changes": [
+        "Added a Controls tab for the desktop and phone camera: Orbit (the default), Free-roam (WASD to move, mouse to look, Q/E up and down, Shift to go faster) and Off.",
+        "Orbit now circles the scene origin from the first load.",
+        "Turned off panning in Orbit mode."
+      ]
     },
     {
       "id": "0.970",
       "label": "GS 0.970",
-      "url": "https://vrclaudeinterface.vercel.app"
+      "url": "https://vrclaudeinterface.vercel.app",
+      "date": "2026-10-17",
+      "changes": [
+        "Added a dock at the bottom of the screen that holds the Enter VR button and the version button, so they no longer overlap."
+      ]
     },
     {
       "id": "0.969",
       "label": "GS 0.969",
-      "url": "https://vrclaudeinterface.vercel.app"
+      "url": "https://vrclaudeinterface.vercel.app",
+      "date": "2026-10-17",
+      "changes": [
+        "Added Claude Opus 5.5, Claude Sonnet 5.5, Claude Haiku 5.5, GPT6 Sol and GPT6 Luna to the model dropdown."
+      ]
     },
     {
       "id": "0.968",
       "label": "GS 0.968",
-      "url": "https://vrclaudeinterface.vercel.app"
+      "url": "https://vrclaudeinterface.vercel.app",
+      "date": "2026-10-05",
+      "changes": [
+        "Fixed the Community Scenes layout on desktop."
+      ]
     },
     {
       "id": "0.967",
       "label": "GS 0.967",
-      "url": "https://vrclaudeinterface.vercel.app"
+      "url": "https://vrclaudeinterface.vercel.app",
+      "date": "2026-10-05",
+      "changes": [
+        "Added the GS version button and version picker.",
+        "First numbered build. It includes all earlier work, most recently:",
+        "Code editor syntax highlighting, a 360 / HDRI environment option and a desktop WASD fix.",
+        "An HTML-in-canvas menu in VR.",
+        "GPT6.1 Sol in the model dropdown.",
+        "Loading a community scene clears the world first, with a Layer option and no duplicate loads.",
+        "The chat window fits on phones, keeps its header inside the visible Safari viewport, and defaults to a see-through panel with a solid border."
+      ]
     }
   ],
-  "note": "Add older or preview builds here after publishing. Each entry: { id, label, url }. url null = this deployment; otherwise a full https URL (Vercel preview, pinned Worker, etc.)."
+  "note": "Newest first. Each entry: { id, label, url, date, changes[] }. url null = this deployment; otherwise a full https URL (Vercel preview, pinned Worker, etc.). changes are shown as the changelog in the version picker."
 }
