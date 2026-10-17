@@ -26,7 +26,7 @@ Local HTTPS test serve (box): often `/workspace/gs-serve-gh` on `https://localho
 ## Vercel
 
 1. Ask user for version → update `version.js` + `versions.json`.
-2. Ensure `vercel.json` `includeFiles` lists every client module the browser imports (`main.js`, `syntaxHighlight.js`, `version.js`, `versions.json`, `htmlInCanvas.js`, `menuSystem.js`, `exporter.js`, `threejsAddons/**`, `vendor_modules/**`, etc.).
+2. Ensure `vercel.json` `includeFiles` lists every client module the browser imports (`main.js`, `syntaxHighlight.js`, `version.js`, `versions.json`, `htmlInCanvas.js`, `menuSystem.js`, `exporter.js`, `creationContext.js`, `p5Import.js`, `threejsAddons/**`, `vendor_modules/**`, etc.).
 3. Commit only the intended files; push `origin/main`.
 4. **GitHub auto-deploy** usually ships Production for `vrclaudeinterface` / `carljr`. If the PC is online and logged into Vercel CLI: `npx vercel --prod --yes` from the repo root.
 5. Verify (below).
@@ -37,7 +37,7 @@ Wrangler is typically authenticated on the **box** (`/workspace/carljr-cf` or si
 
 1. Ask user for version → same `version.js` / `versions.json` as Vercel (from `origin/main`).
 2. Sync **all** browser assets into `public/`:
-   - `index.html`, `main.js`, `version.js`, `versions.json`, `syntaxHighlight.js`, `htmlInCanvas.js`, `menuSystem.js`, `exporter.js`, `creationContext.js`
+   - `index.html`, `main.js`, `version.js`, `versions.json`, `syntaxHighlight.js`, `htmlInCanvas.js`, `p5Import.js`, `menuSystem.js`, `exporter.js`, `creationContext.js`
    - `threejsAddons/`
    - **full `vendor_modules/`** — especially `vendor_modules/three/build/three.module.js`
 3. **Prior bug:** if `public/vendor_modules/three/build/` is missing, `/` and `/main.js` still return 200 but the import map 404s `three.module.js`, so the app never boots (blank canvas, empty Model dropdown, no welcome). Always restore `three/build` from git if the working tree deleted it, then sync again.

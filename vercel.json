@@ -8,6 +8,7 @@
         "includeFiles": [
           "site-source/index.html",
           "site-source/main.js",
+          "site-source/p5Import.js",
           "site-source/syntaxHighlight.js",
           "site-source/version.js",
           "site-source/versions.json",
