@@ -420,11 +420,12 @@
 			color: var(--dchat-tab-active-color);
 		}
 
-		/* Environment shows its short label ("Env") only in the 4-column layout. */
+		/* Environment / Dependencies show their short labels ("Env" / "Deps")
+		   only in the 4-column layout. */
 		.dchat-tab-short { display: none; }
 
-		/* Narrow chat panel (phone / resized / default 380px): seven tabs as
-		   two rows, 4 + 3 (the second row stretches to thirds), pill tabs. */
+		/* Narrow chat panel (phone / resized / default 380px): eight tabs as
+		   two rows of 4, pill tabs. */
 		@container desktop-chat (max-width: 760px) {
 			#desktop-chat-tabs {
 				flex-wrap: wrap;
@@ -725,6 +726,78 @@
 		.dchat-btn.secondary { background: #3a3c4e; }
 		.dchat-btn.accent { background: linear-gradient(135deg, #6366f1, #8b5cf6); }
 
+		/* --- Environment tab: 2D / 3D scene type (steers the AI + page) --- */
+		.dchat-seg {
+			display: grid;
+			grid-template-columns: repeat(2, 1fr);
+			gap: 6px;
+		}
+		.dchat-seg .dchat-btn { padding: 10px 6px; }
+		.dchat-seg .dchat-btn.active {
+			background: linear-gradient(135deg, #6366f1, #8b5cf6);
+			box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25) inset;
+		}
+		#dchat-dim-sub { margin-top: 6px; }
+		#dchat-dim-sub .dchat-btn { font-size: 12px; padding: 8px 6px; }
+		.dchat-env-note {
+			font-size: 12px;
+			line-height: 1.45;
+			color: rgba(255, 255, 255, 0.45);
+			margin-top: 8px;
+		}
+
+		/* --- Dependencies tab (page libraries: THREE.js / ammo.js / p5.js) --- */
+		#dchat-deps {
+			overflow-y: auto;
+			padding: 16px;
+			display: flex;
+			flex-direction: column;
+			gap: 10px;
+			font-size: 13px;
+			overscroll-behavior: contain;
+		}
+		.dchat-dep {
+			display: flex;
+			flex-direction: column;
+			gap: 4px;
+			padding: 10px 12px;
+			border-radius: 10px;
+			background: rgba(255, 255, 255, 0.06);
+			border: 1px solid rgba(255, 255, 255, 0.08);
+		}
+		.dchat-dep-head {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+		.dchat-dep-name { font-weight: 700; }
+		.dchat-dep-version { font-size: 11px; color: rgba(255, 255, 255, 0.45); }
+		.dchat-dep-toggle {
+			margin-left: auto;
+			display: flex;
+			align-items: center;
+			gap: 6px;
+			font-size: 12px;
+			color: rgba(255, 255, 255, 0.7);
+			cursor: pointer;
+			user-select: none;
+		}
+		.dchat-dep-toggle input { accent-color: #8b5cf6; }
+		.dchat-dep-desc { font-size: 12px; line-height: 1.4; color: rgba(255, 255, 255, 0.6); }
+		.dchat-dep-meta {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 4px 10px;
+			font-size: 11px;
+			color: rgba(255, 255, 255, 0.4);
+		}
+		.dchat-dep-meta a { color: rgba(167, 139, 250, 0.9); text-decoration: none; word-break: break-all; }
+		.dchat-dep-meta a:hover { text-decoration: underline; }
+		.dchat-dep-status { font-weight: 700; }
+		.dchat-dep-status[data-state="loaded"] { color: #34d399; }
+		.dchat-dep-status[data-state="loading"] { color: #fbbf24; }
+		.dchat-dep-status[data-state="error"] { color: #f87171; }
+
 		/* --- Controls tab (desktop camera: orbit / free-roam / off) --- */
 		#dchat-controls {
 			overflow-y: auto;
@@ -760,6 +833,25 @@
 			text-align: center;
 		}
 		#dchat-controls-status { font-size: 11px; color: rgba(255, 255, 255, 0.4); }
+		#dchat-gamepad-status.connected { color: #34d399; font-weight: 600; }
+		/* Gamepad connect / disconnect toast (created by main.js) */
+		#gs-gamepad-toast {
+			position: fixed;
+			left: 50%;
+			bottom: calc(84px + env(safe-area-inset-bottom, 0px)); /* above the GS dock */
+			transform: translate(-50%, 12px);
+			padding: 8px 14px;
+			border-radius: 999px;
+			background: rgba(22, 22, 32, 0.92);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			color: #fff;
+			font: 600 13px -apple-system, BlinkMacSystemFont, sans-serif;
+			z-index: 10050;
+			pointer-events: none;
+			opacity: 0;
+			transition: opacity 0.2s, transform 0.2s;
+		}
+		#gs-gamepad-toast.show { opacity: 1; transform: translate(-50%, 0); }
 		/* Free-roam pointer lock: no orbit cursor hints */
 		body.gs-camera-free canvas { cursor: crosshair; }
 
@@ -2042,6 +2134,7 @@
 			<button class="dchat-tab" data-tab="code">📝 Code</button>
 			<button class="dchat-tab" data-tab="community">🌐 Community</button>
 			<button class="dchat-tab" data-tab="controls">🎮 Controls</button>
+			<button class="dchat-tab" data-tab="deps">📦 <span class="dchat-tab-full">Dependencies</span><span class="dchat-tab-short">Deps</span></button>
 		</div>
 
 		<div id="dchat-panel-chat" class="dchat-panel active">
@@ -2097,6 +2190,20 @@
 
 		<div id="dchat-panel-env" class="dchat-panel">
 			<div id="dchat-env">
+				<div id="dchat-dim">
+					<div class="dchat-section-label" style="margin-bottom:8px">2D / 3D</div>
+					<div id="dchat-dim-mode" class="dchat-seg" role="radiogroup" aria-label="Scene type">
+						<button type="button" class="dchat-btn secondary" data-dim="2d" role="radio">2D</button>
+						<button type="button" class="dchat-btn secondary" data-dim="3d" role="radio">3D</button>
+					</div>
+					<div id="dchat-dim-sub" class="dchat-seg" role="radiogroup" aria-label="Rendering library">
+						<button type="button" class="dchat-btn secondary" data-dim-lib="p5" data-for-dim="2d" role="radio">p5.js</button>
+						<button type="button" class="dchat-btn secondary" data-dim-lib="canvas" data-for-dim="2d" role="radio">Blank canvas</button>
+						<button type="button" class="dchat-btn secondary" data-dim-lib="three" data-for-dim="3d" role="radio">THREE.js</button>
+						<button type="button" class="dchat-btn secondary" data-dim-lib="webgl" data-for-dim="3d" role="radio">WebGL</button>
+					</div>
+					<div id="dchat-dim-note" class="dchat-env-note"></div>
+				</div>
 				<div>
 					<div class="dchat-section-label" style="margin-bottom:6px">Environment</div>
 					<div id="dchat-env-mode"></div>
@@ -2247,9 +2354,34 @@
 					Camera input is off. The camera stays where it is until you pick another mode.
 				</div>
 				<div id="dchat-controls-status"></div>
+				<div>
+					<div class="dchat-section-label" style="margin:6px 0 8px">Game controller</div>
+					<div id="dchat-gamepad-status" class="dchat-controls-help" role="status"></div>
+					<div class="dchat-controls-help" style="margin-top:6px">
+						Xbox Series X|S, Xbox One, PlayStation and other USB or Bluetooth pads.
+						Left stick moves &middot; right stick orbits (Orbit) or looks (Free-roam) &middot;
+						<kbd>LB</kbd>/<kbd>RB</kbd> down/up &middot; <kbd>LT</kbd>/<kbd>RT</kbd> zoom (Orbit) &middot;
+						hold <kbd>RT</kbd> or click the left stick to go faster (Free-roam) &middot;
+						<kbd>Y</kbd> switches Orbit/Free-roam &middot; <kbd>View</kbd> resets the view.
+						Press any button after connecting so the browser picks it up.
+						Headset controllers in VR are separate and keep their own mapping.
+					</div>
+				</div>
 				<div class="dchat-controls-help" style="color:rgba(255,255,255,0.4)">
 					Desktop and phone only. In a headset, the thumbsticks still move you (see Environment &rarr; Navigation).
 				</div>
+			</div>
+		</div>
+
+		<div id="dchat-panel-deps" class="dchat-panel">
+			<div id="dchat-deps">
+				<div class="dchat-section-label">Dependencies</div>
+				<div class="dchat-controls-help">
+					Libraries this page loads for generated scenes. The AI is told which ones are on,
+					and scene code can load any of them on demand with <code>await gsRequire('name')</code>.
+				</div>
+				<div id="dchat-deps-list"></div>
+				<div id="dchat-deps-note" class="dchat-controls-help" style="color:rgba(255,255,255,0.4)"></div>
 			</div>
 		</div>
 
@@ -2284,6 +2416,166 @@
 			"three/examples/jsm/": "./vendor_modules/three/examples/jsm/"
 		}
 	}
+	</script>
+	<!--
+		GS dependencies (see the Dependencies tab). This classic script runs
+		before main.js and injects the <script> tag for every library that is
+		switched on (ammo.js is on by default). Local copies are tried first,
+		then a pinned CDN copy. Scene code gets libraries with gsRequire():
+		  const Ammo = await gsRequire('ammo');  // initialised ammo.js (Bullet physics)
+		  const p5 = await gsRequire('p5');      // p5.js constructor (instance mode)
+		main.js adds the other page helpers scene code can use:
+		  gsCreateCanvasSurface({ context: '2d' | 'webgl2' })  // canvas on a panel in the scene
+		  await gsCreateP5Surface((p) => { ... })               // p5 sketch on a panel
+		  gsGamepad.axis('leftX') / .button('A') / .justPressed('A')  // game controllers
+	-->
+	<script>
+	(function () {
+		'use strict';
+		var STORAGE_KEY = 'gs.dependencies';
+		var LIST = [
+			{
+				id: 'three', name: 'THREE.js', version: 'r180', builtIn: true,
+				description: '3D engine the app and every 3D scene run on. Always loaded (import map above).',
+				src: './vendor_modules/three/build/three.module.js',
+				homepage: 'https://threejs.org'
+			},
+			{
+				id: 'ammo', name: 'ammo.js', version: 'Bullet physics, WebAssembly build from three r180', defaultEnabled: true,
+				description: 'Rigid-body physics: gravity, collisions, constraints. The AI uses it when a scene needs physics.',
+				src: './vendor_modules/three/examples/jsm/libs/ammo.wasm.js',
+				fallbackSrc: 'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/libs/ammo.wasm.js',
+				homepage: 'https://github.com/kripken/ammo.js'
+			},
+			{
+				id: 'p5', name: 'p5.js', version: '1.11.13', defaultEnabled: false,
+				description: 'Creative-coding library for 2D sketches. Used by the 2D \u2192 p5.js environment.',
+				src: 'https://cdn.jsdelivr.net/npm/p5@1.11.13/lib/p5.min.js',
+				fallbackSrc: 'https://unpkg.com/p5@1.11.13/lib/p5.min.js',
+				homepage: 'https://p5js.org'
+			}
+		];
+		var byId = {};
+		LIST.forEach(function (d) { byId[d.id] = d; });
+
+		var saved = {};
+		try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') || {}; } catch (e) { saved = {}; }
+		var enabled = {};
+		LIST.forEach(function (d) {
+			enabled[d.id] = d.builtIn ? true : (typeof saved[d.id] === 'boolean' ? saved[d.id] : !!d.defaultEnabled);
+		});
+
+		var status = {};   // id -> 'idle' | 'loading' | 'loaded' | 'error'
+		var loading = {};  // id -> Promise (script loaded)
+		var ready = {};    // id -> Promise (library value)
+		var modules = {};  // id -> library value once ready
+		var listeners = [];
+		LIST.forEach(function (d) { status[d.id] = d.builtIn ? 'loaded' : 'idle'; });
+
+		function emit() {
+			listeners.slice().forEach(function (fn) { try { fn(); } catch (e) { console.error(e); } });
+		}
+		function setStatus(id, s) { status[id] = s; emit(); }
+
+		function injectScript(src) {
+			return new Promise(function (resolve, reject) {
+				var el = document.createElement('script');
+				el.src = src;
+				el.async = false; // keep order when several are injected during page parse
+				el.dataset.gsDependency = '1';
+				el.onload = function () { resolve(src); };
+				el.onerror = function () { el.remove(); reject(new Error('Failed to load ' + src)); };
+				(document.head || document.documentElement).appendChild(el);
+			});
+		}
+
+		function loadScript(id) {
+			var d = byId[id];
+			if (!d) return Promise.reject(new Error('Unknown dependency "' + id + '"'));
+			if (d.builtIn) return Promise.resolve();
+			if (loading[id]) return loading[id];
+			setStatus(id, 'loading');
+			loading[id] = injectScript(d.src).catch(function (err) {
+				if (!d.fallbackSrc) throw err;
+				console.warn('[GS] ' + err.message + ', trying CDN copy');
+				return injectScript(d.fallbackSrc);
+			}).then(function (src) {
+				d.loadedFrom = src;
+				setStatus(id, 'loaded');
+			}, function (err) {
+				delete loading[id];
+				setStatus(id, 'error');
+				throw err;
+			});
+			return loading[id];
+		}
+
+		// Resolves to the ready-to-use library. ammo.js is a factory that has
+		// to be initialised exactly once (each Ammo() call builds a new WASM
+		// heap), so the initialised instance is cached and also left on
+		// window.Ammo, the same way ammo.js does itself.
+		function gsRequire(id) {
+			if (ready[id]) return ready[id];
+			var d = byId[id];
+			if (!d) return Promise.reject(new Error('Unknown dependency "' + id + '". Known: ' + LIST.map(function (x) { return x.id; }).join(', ')));
+			if (id === 'three') {
+				ready[id] = modules.three ? Promise.resolve(modules.three) : import('three').then(function (m) { return (modules.three = m); });
+				return ready[id];
+			}
+			ready[id] = loadScript(id).then(function () {
+				if (id === 'ammo') {
+					var factory = window.Ammo;
+					if (typeof factory !== 'function') {
+						if (factory && factory.btVector3) return factory; // already initialised
+						throw new Error('ammo.js loaded but window.Ammo is missing');
+					}
+					return factory().then(function (lib) { window.Ammo = lib; return lib; });
+				}
+				if (id === 'p5') {
+					if (typeof window.p5 !== 'function') throw new Error('p5.js loaded but window.p5 is missing');
+					return window.p5;
+				}
+				return undefined;
+			}).then(function (lib) {
+				modules[id] = lib;
+				return lib;
+			}, function (err) {
+				delete ready[id];
+				throw err;
+			});
+			return ready[id];
+		}
+
+		function persist() {
+			var out = {};
+			LIST.forEach(function (d) { if (!d.builtIn) out[d.id] = !!enabled[d.id]; });
+			try { localStorage.setItem(STORAGE_KEY, JSON.stringify(out)); } catch (e) { /* storage blocked */ }
+		}
+
+		window.GS_DEPS = {
+			list: LIST,
+			get: function (id) { return byId[id]; },
+			isEnabled: function (id) { return !!enabled[id]; },
+			status: function (id) { return status[id]; },
+			modules: modules,
+			setEnabled: function (id, on) {
+				var d = byId[id];
+				if (!d || d.builtIn) return;
+				enabled[id] = !!on;
+				persist();
+				emit();
+				if (on) loadScript(id).catch(function (err) { console.error('[GS]', err); });
+			},
+			load: loadScript,
+			require: gsRequire,
+			onChange: function (fn) { listeners.push(fn); }
+		};
+		window.gsRequire = gsRequire;
+
+		LIST.forEach(function (d) {
+			if (!d.builtIn && enabled[d.id]) loadScript(d.id).catch(function (err) { console.error('[GS]', err); });
+		});
+	})();
 	</script>
 	<script type="module" src="./main.js"></script>
 </body>

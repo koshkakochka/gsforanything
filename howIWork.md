@@ -69,6 +69,36 @@ Three moving parts:
    `/api/fix-code` (a second Claude call with `FIX_CODE_PROMPT`) and retries up to
    3 times, reporting the outcome in chat.
 
+### Environment, Dependencies & game controllers
+
+- **Dependencies tab** lists THREE.js r180 (built in), **ammo.js** (on by
+  default) and **p5.js 1.11.13** (off by default). The loader is a classic
+  `<script>` in `index.html` that runs before `main.js` and injects a script
+  tag for each library that is on (choices saved in `localStorage`
+  `gs.dependencies`). ammo.js comes from the vendored
+  `vendor_modules/three/examples/jsm/libs/ammo.wasm.js` with a jsDelivr
+  fallback; p5.js from jsDelivr with an unpkg fallback.
+- Scene code gets libraries with `await gsRequire('ammo' | 'p5' | 'three')`
+  (ammo.js is initialised once and cached), so saved scenes still work if a
+  library is switched off.
+- **Environment → 2D / 3D** (`gs.sceneEnvironment`): 2D → p5.js or blank
+  canvas, 3D → THREE.js (default) or raw WebGL. 2D/WebGL content goes on an
+  in-scene panel via `gsCreateCanvasSurface()` / `gsCreateP5Surface()`, so it
+  also shows in a headset.
+- Every `/api/chat` request adds a short "[GS editor settings]" note to the
+  newest user message (only on the copy that is sent), with the environment,
+  which dependencies are on, the ammo.js physics recipe and the `gsGamepad`
+  API. `/api/fix-code` sends the same note as `sceneContext`. This works on
+  hosts whose system prompt has not been updated yet.
+- **Game controllers** (Gamepad API, `window.gsGamepad`): Xbox Series X|S
+  and other standard pads over USB or Bluetooth drive the desktop/phone
+  camera per the Controls tab mode (left stick move, right stick orbit/look,
+  LB/RB down/up, LT/RT zoom in Orbit, RT or L3 sprint in Free-roam, Y
+  switches mode, View resets). Scenes read the pad with `gsGamepad.axis()`,
+  `button()`, `justPressed()`, `onButton()`, and set
+  `gsGamepad.captureCamera = true` to take the sticks over. WebXR headset
+  controllers are separate (XR `inputSources`).
+
 ### Anchoring rules (important)
 
 - Objects added via `scene.add(...)` are anchored to the **room/world**, not the

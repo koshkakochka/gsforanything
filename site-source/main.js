@@ -815,6 +815,9 @@ window.scene = scene;
 window.camera = camera;
 window.renderer = renderer;
 window._vrAnimations = [];
+// Canvas surfaces made by gsCreateCanvasSurface / gsCreateP5Surface (see the
+// Environment + Dependencies section); disposed when the scene is cleared.
+const gsSurfaces = new Set();
 
 // Head-locked anchor for HUD elements the user *explicitly* asks to follow them.
 // It is a child of the camera, so its origin matches the camera's translation.
@@ -2800,6 +2803,12 @@ function revertCodeEditor() {
 }
 
 function clearUserObjects() {
+	// Stop p5 sketches / drop canvas surfaces and scene-owned gamepad hooks
+	// before the meshes and _vrAnimations they live in are thrown away.
+	for (const surf of [...gsSurfaces]) {
+		try { surf.dispose(); } catch (e) { console.error('surface dispose failed:', e); }
+	}
+	if (typeof gsGamepad !== 'undefined') gsGamepad._reset();
 	for (let i = scene.children.length - 1; i >= 0; i--) {
 		const child = scene.children[i];
 		if (!systemObjectIds.has(child.uuid)) {
@@ -5145,6 +5154,7 @@ async function attemptAutoFix(failingCode, errorMessage, errorStack) {
 					userContent += `\nThe prior fixes did not work. Try a different approach.\n`;
 				}
 				userContent += `\nFix this code. Return ONLY a single \`vr-exec\` code block.`;
+				userContent += `\n\n${buildGsSettingsNote()}`;
 
 				data = await callOllamaDirect(
 					cachedPrompts?.fixCodePrompt || '',
@@ -5162,6 +5172,7 @@ async function attemptAutoFix(failingCode, errorMessage, errorStack) {
 						errorStack,
 						attempt,
 						priorFixes,
+						sceneContext: buildGsSettingsNote(),
 						backend: selectedBackend
 					})
 				});
@@ -5709,7 +5720,7 @@ async function sendMessage(userMessage) {
 		if (selectedBackend === 'ollama') {
 			data = await callOllamaDirect(
 				cachedPrompts?.systemPrompt || '',
-				messages.map(m => ({ role: m.role, content: m.content, ...(m.images ? { images: m.images } : {}) })),
+				withGsSettingsNote(messages.map(m => ({ role: m.role, content: m.content, ...(m.images ? { images: m.images } : {}) }))),
 				selectedOllamaModel
 			);
 		} else {
@@ -5719,10 +5730,12 @@ async function sendMessage(userMessage) {
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify({
-					messages: messages.map(m => ({
+					// The editor settings note (Environment 2D/3D, Dependencies,
+					// gamepad helper) rides on the newest user message only.
+					messages: withGsSettingsNote(messages.map(m => ({
 						role: m.role,
 						content: m.content
-					})),
+					}))),
 					backend: selectedBackend
 				})
 			});
@@ -6287,6 +6300,519 @@ document.addEventListener('pointerlockchange', renderCameraControlsUi);
 	try { saved = localStorage.getItem(CAMERA_CONTROL_STORAGE_KEY); } catch { /* storage blocked */ }
 	setCameraControlMode(CAMERA_CONTROL_MODES.includes(saved) ? saved : 'orbit', { persist: false, initial: true });
 }
+
+// ============================================================================
+// Environment (2D / 3D) + Dependencies (THREE.js / ammo.js / p5.js)
+// ============================================================================
+// The dependency loader itself lives in index.html (it has to run before this
+// module so ammo.js is already downloading). This section adds:
+//   - the Environment tab's 2D/3D choice (2D: p5.js | blank canvas,
+//     3D: THREE.js | raw WebGL), saved in localStorage;
+//   - the Dependencies tab (which libraries load on startup);
+//   - buildGsSettingsNote(): the short "editor settings" note that is sent
+//     with each chat request so the AI knows the chosen environment and the
+//     libraries it may use (see sendMessage / attemptAutoFix).
+// Scene code gets libraries with `await gsRequire('ammo' | 'p5' | 'three')`,
+// so saved/shared scenes still work if a viewer has a library switched off.
+const GS_DEPS = window.GS_DEPS || null;
+if (GS_DEPS) GS_DEPS.modules.three = THREE;
+
+const SCENE_ENV_STORAGE_KEY = 'gs.sceneEnvironment';
+const SCENE_ENV_DEFAULT = { dim: '3d', lib2d: 'p5', lib3d: 'three' };
+const SCENE_ENV_LIBS = { '2d': ['p5', 'canvas'], '3d': ['three', 'webgl'] };
+let sceneEnv = { ...SCENE_ENV_DEFAULT };
+try {
+	const saved = JSON.parse(localStorage.getItem(SCENE_ENV_STORAGE_KEY) || 'null');
+	if (saved && typeof saved === 'object') {
+		if (saved.dim === '2d' || saved.dim === '3d') sceneEnv.dim = saved.dim;
+		if (SCENE_ENV_LIBS['2d'].includes(saved.lib2d)) sceneEnv.lib2d = saved.lib2d;
+		if (SCENE_ENV_LIBS['3d'].includes(saved.lib3d)) sceneEnv.lib3d = saved.lib3d;
+	}
+} catch { /* storage blocked or bad JSON: keep defaults */ }
+
+function currentSceneLib() {
+	return sceneEnv.dim === '2d' ? sceneEnv.lib2d : sceneEnv.lib3d;
+}
+
+const SCENE_ENV_NOTES = {
+	p5: 'The AI writes p5.js sketches (instance mode) and shows them on a panel in the scene, so they also work in a headset. Turns p5.js on in Dependencies.',
+	canvas: 'The AI draws with the plain HTML canvas 2D API on a panel in the scene, with no extra library.',
+	three: 'The AI builds 3D scenes with THREE.js. This is the default.',
+	webgl: 'The AI writes raw WebGL (its own shaders and buffers) on a canvas shown in the scene, instead of THREE.js meshes.'
+};
+
+function setSceneEnv(patch, { persist = true } = {}) {
+	sceneEnv = { ...sceneEnv, ...patch };
+	if (persist) {
+		try { localStorage.setItem(SCENE_ENV_STORAGE_KEY, JSON.stringify(sceneEnv)); } catch { /* storage blocked */ }
+	}
+	// 2D -> p5.js needs p5 on the page: switch it on (and start loading it).
+	if (sceneEnv.dim === '2d' && sceneEnv.lib2d === 'p5' && GS_DEPS && !GS_DEPS.isEnabled('p5')) {
+		GS_DEPS.setEnabled('p5', true);
+	}
+	renderSceneEnvUi();
+}
+
+function renderSceneEnvUi() {
+	document.querySelectorAll('#dchat-dim-mode [data-dim]').forEach((btn) => {
+		const on = btn.dataset.dim === sceneEnv.dim;
+		btn.classList.toggle('active', on);
+		btn.setAttribute('aria-checked', on ? 'true' : 'false');
+	});
+	const lib = currentSceneLib();
+	document.querySelectorAll('#dchat-dim-sub [data-dim-lib]').forEach((btn) => {
+		btn.hidden = btn.dataset.forDim !== sceneEnv.dim;
+		const on = btn.dataset.dimLib === lib;
+		btn.classList.toggle('active', on);
+		btn.setAttribute('aria-checked', on ? 'true' : 'false');
+	});
+	const note = document.getElementById('dchat-dim-note');
+	if (note) note.textContent = SCENE_ENV_NOTES[lib] || '';
+}
+
+document.querySelectorAll('#dchat-dim-mode [data-dim]').forEach((btn) => {
+	btn.addEventListener('click', () => setSceneEnv({ dim: btn.dataset.dim }));
+});
+document.querySelectorAll('#dchat-dim-sub [data-dim-lib]').forEach((btn) => {
+	btn.addEventListener('click', () => {
+		setSceneEnv(btn.dataset.forDim === '2d' ? { lib2d: btn.dataset.dimLib } : { lib3d: btn.dataset.dimLib });
+	});
+});
+
+const DEP_STATUS_LABELS = { idle: 'Not loaded', loading: 'Loading…', loaded: 'Loaded', error: 'Failed to load' };
+
+function escapeDepText(s) {
+	return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function renderDependenciesUi() {
+	const list = document.getElementById('dchat-deps-list');
+	if (!list || !GS_DEPS) return;
+	list.innerHTML = GS_DEPS.list.map((d) => {
+		const enabled = GS_DEPS.isEnabled(d.id);
+		const state = GS_DEPS.status(d.id) || 'idle';
+		const src = d.loadedFrom || d.src;
+		const shownSrc = /^https?:/.test(src) ? src : new URL(src, location.href).pathname;
+		return `<div class="dchat-dep" data-dep="${escapeDepText(d.id)}">
+			<div class="dchat-dep-head">
+				<span class="dchat-dep-name">${escapeDepText(d.name)}</span>
+				<span class="dchat-dep-version">${escapeDepText(d.version)}</span>
+				<label class="dchat-dep-toggle" title="${d.builtIn ? 'Always loaded' : 'Load on startup and tell the AI it can use this'}">
+					<input type="checkbox" data-dep-toggle="${escapeDepText(d.id)}" ${enabled ? 'checked' : ''} ${d.builtIn ? 'disabled' : ''} />
+					${d.builtIn ? 'Built in' : 'On'}
+				</label>
+			</div>
+			<div class="dchat-dep-desc">${escapeDepText(d.description)}</div>
+			<div class="dchat-dep-meta">
+				<span class="dchat-dep-status" data-state="${state}">${DEP_STATUS_LABELS[state] || state}</span>
+				<span>${escapeDepText(shownSrc)}</span>
+				<a href="${escapeDepText(d.homepage)}" target="_blank" rel="noopener">Docs</a>
+			</div>
+		</div>`;
+	}).join('');
+	const note = document.getElementById('dchat-deps-note');
+	if (note) {
+		const offButLoaded = GS_DEPS.list.filter((d) => !GS_DEPS.isEnabled(d.id) && GS_DEPS.status(d.id) === 'loaded');
+		note.textContent = offButLoaded.length
+			? `${offButLoaded.map((d) => d.name).join(', ')} stays loaded until you reload the page.`
+			: 'Turning a library off takes effect on the next page load.';
+	}
+}
+
+document.getElementById('dchat-deps-list')?.addEventListener('change', (e) => {
+	const input = e.target.closest('[data-dep-toggle]');
+	if (!input || !GS_DEPS) return;
+	GS_DEPS.setEnabled(input.dataset.depToggle, input.checked);
+});
+if (GS_DEPS) GS_DEPS.onChange(renderDependenciesUi);
+renderDependenciesUi();
+renderSceneEnvUi();
+if (sceneEnv.dim === '2d' && sceneEnv.lib2d === 'p5') setSceneEnv({}, { persist: false });
+
+// Canvas surfaces: a <canvas> shown on a plane in the 3D scene so 2D (p5 /
+// canvas) and raw-WebGL content is visible on desktop, phone and in a
+// headset alike. The texture is re-uploaded every frame.
+function gsCreateCanvasSurface(opts = {}) {
+	const {
+		width = 1024,
+		height = 768,
+		context = '2d',
+		contextAttributes = {},
+		widthMeters = 1.6,
+		position = [0, 1.4, -2],
+		name = 'gs-canvas-surface',
+		addToScene = true
+	} = opts;
+	const canvas = opts.canvas || document.createElement('canvas');
+	if (!opts.canvas) { canvas.width = width; canvas.height = height; }
+	let ctx = null;
+	if (context) {
+		// preserveDrawingBuffer: the texture upload may happen after the
+		// browser has presented the WebGL canvas, which would otherwise be blank.
+		const attrs = context === '2d' ? contextAttributes : { preserveDrawingBuffer: true, antialias: true, ...contextAttributes };
+		ctx = canvas.getContext(context, attrs);
+		if (!ctx) throw new Error(`Could not create a "${context}" canvas context`);
+	}
+	const texture = new THREE.CanvasTexture(canvas);
+	texture.colorSpace = THREE.SRGBColorSpace;
+	const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, toneMapped: false });
+	const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
+	mesh.name = name;
+	mesh.position.set(position[0] || 0, position[1] || 0, position[2] || 0);
+	const surface = {
+		canvas, ctx, gl: context && context !== '2d' ? ctx : null, mesh, texture,
+		autoUpdate: true,
+		widthMeters,
+		_aspect: 0,
+		setSource(nextCanvas) {
+			if (!nextCanvas || surface.canvas === nextCanvas) return;
+			surface.canvas = nextCanvas;
+			texture.image = nextCanvas;
+			texture.needsUpdate = true;
+		},
+		update() {
+			const c = surface.canvas;
+			if (!c || !c.width || !c.height) return;
+			const aspect = c.height / c.width;
+			if (aspect !== surface._aspect) {
+				surface._aspect = aspect;
+				mesh.scale.set(surface.widthMeters, surface.widthMeters * aspect, 1);
+			}
+			if (surface.autoUpdate) texture.needsUpdate = true;
+		},
+		dispose() {
+			gsSurfaces.delete(surface);
+			const i = window._vrAnimations.indexOf(surface._tick);
+			if (i >= 0) window._vrAnimations.splice(i, 1);
+			if (surface.p5) { try { surface.p5.remove(); } catch { /* already removed */ } }
+			surface.host?.remove();
+			mesh.parent?.remove(mesh);
+			mesh.geometry.dispose();
+			material.dispose();
+			texture.dispose();
+		}
+	};
+	surface._tick = () => surface.update();
+	surface.update();
+	window._vrAnimations.push(surface._tick);
+	gsSurfaces.add(surface);
+	if (addToScene) getWorldContentParent().add(mesh);
+	return surface;
+}
+
+// p5.js sketch (instance mode) shown on a canvas surface. p5 normally drives
+// itself with window.requestAnimationFrame, which stops during an immersive
+// XR session, so the app's render loop calls p.redraw() instead.
+async function gsCreateP5Surface(sketch, opts = {}) {
+	if (typeof sketch !== 'function') throw new Error('gsCreateP5Surface(sketch): sketch must be a function (p) => { p.setup = ...; p.draw = ... }');
+	if (typeof window.gsRequire !== 'function') throw new Error('gsRequire is unavailable (dependency loader missing from index.html)');
+	const P5 = await window.gsRequire('p5');
+	const host = document.createElement('div');
+	host.className = 'gs-p5-host';
+	host.style.cssText = 'position:fixed;left:-10000px;top:0;width:1px;height:1px;overflow:hidden;pointer-events:none;';
+	document.body.appendChild(host);
+	const placeholder = document.createElement('canvas');
+	placeholder.width = opts.width || 800;
+	placeholder.height = opts.height || 600;
+	const surface = gsCreateCanvasSurface({ ...opts, canvas: placeholder, context: null, name: opts.name || 'gs-p5-surface' });
+	surface.host = host;
+	surface.looping = true;
+	let lastTime = 0;
+	const wrapped = (p) => {
+		const nativeNoLoop = p.noLoop.bind(p);
+		p.loop = () => { surface.looping = true; };
+		p.noLoop = () => { surface.looping = false; };
+		sketch(p);
+		nativeNoLoop(); // p5 draws once after setup, then the app drives frames
+	};
+	const instance = new P5(wrapped, host);
+	surface.p5 = instance;
+	const baseTick = surface._tick;
+	surface._tick = (time) => {
+		if (instance.canvas && surface.canvas !== instance.canvas) surface.setSource(instance.canvas);
+		if (surface.looping && instance._setupDone !== false && typeof instance.draw === 'function') {
+			const t = typeof time === 'number' ? time : performance.now();
+			instance.deltaTime = lastTime ? t - lastTime : 16.7;
+			lastTime = t;
+			try { instance.redraw(); } catch (e) { console.error('p5 sketch error:', e); surface.looping = false; }
+		}
+		baseTick();
+	};
+	const i = window._vrAnimations.indexOf(baseTick);
+	if (i >= 0) window._vrAnimations[i] = surface._tick;
+	return surface;
+}
+
+window.gsCreateCanvasSurface = gsCreateCanvasSurface;
+window.gsCreateP5Surface = gsCreateP5Surface;
+
+function buildGsSettingsNote() {
+	const lines = ['[GS editor settings: chosen by the user in the editor. Follow them unless this message asks for something else. Do not mention this note.]'];
+	const lib = currentSceneLib();
+	if (lib === 'three') {
+		lines.push('Environment: 3D, THREE.js (default). Build with THREE as usual.');
+	} else if (lib === 'webgl') {
+		lines.push("Environment: 3D, raw WebGL. Write plain WebGL (your own shaders, buffers and gl.draw* calls) instead of THREE meshes and materials. Get a context with `const surf = gsCreateCanvasSurface({ context: 'webgl2', width: 1024, height: 768 }); const gl = surf.gl;` (it shows the canvas on a panel in the scene and re-uploads it every frame) and draw in a window._vrAnimations callback.");
+	} else if (lib === 'p5') {
+		lines.push('Environment: 2D, p5.js. Write a p5.js sketch in instance mode and show it with `window.mySketch = await gsCreateP5Surface((p) => { p.setup = () => { p.createCanvas(800, 600); }; p.draw = () => { p.background(20); /* ... */ }; });`. Call every p5 function on `p` (never global mode). The app drives p.draw every frame, also in a headset. Mouse/keyboard events do not reach the sketch; use gsGamepad or your own window listeners for input.');
+	} else if (lib === 'canvas') {
+		lines.push('Environment: 2D, blank HTML canvas (no library). Draw with the Canvas 2D API: `const surf = gsCreateCanvasSurface({ width: 1024, height: 768 }); const ctx = surf.ctx;` and animate in a window._vrAnimations callback.');
+	}
+	if (lib !== 'three') {
+		lines.push('Canvas surface options: width, height (pixels), widthMeters (panel width, default 1.6), position [x, y, z] (default [0, 1.4, -2]). The returned object has { canvas, ctx, gl, mesh, texture, dispose() }; keep it on window to reuse it in later blocks.');
+	}
+	if (GS_DEPS) {
+		const deps = GS_DEPS.list.map((d) => `${d.name} ${d.builtIn ? '(always loaded)' : GS_DEPS.isEnabled(d.id) ? '(on)' : '(off)'}`);
+		lines.push(`Dependencies on this page: ${deps.join(', ')}. Get a library with \`await gsRequire('ammo' | 'p5' | 'three')\`.`);
+		if (GS_DEPS.isEnabled('ammo')) {
+			lines.push("Physics: when the scene needs gravity, collisions, rigid bodies, ragdolls, vehicles or other physics, use ammo.js: `const Ammo = await gsRequire('ammo');` (already initialised and cached; never call Ammo() yourself). Create one btDiscreteDynamicsWorld (btDefaultCollisionConfiguration, btCollisionDispatcher, btDbvtBroadphase, btSequentialImpulseConstraintSolver), store it on window (e.g. window.physicsWorld) so later blocks reuse it, step it with world.stepSimulation(dt, 10) in a window._vrAnimations callback, and copy each body's motion-state transform onto its THREE mesh every frame. Free temporary Ammo objects with Ammo.destroy(). Units are metres; the floor is y = 0.");
+		} else {
+			lines.push('ammo.js is switched off in Dependencies: only use it if the user asks for real physics; simple hand-written motion is fine otherwise.');
+		}
+	}
+	lines.push("Game controllers (Xbox, PlayStation, other USB/Bluetooth pads): `gsGamepad.connected`, `gsGamepad.axis('leftX' | 'leftY' | 'rightX' | 'rightY')` (-1..1, deadzone applied, up is negative), `gsGamepad.button('A' | 'B' | 'X' | 'Y' | 'LB' | 'RB' | 'LT' | 'RT' | 'View' | 'Menu' | 'LS' | 'RS' | 'Up' | 'Down' | 'Left' | 'Right')` (0..1), `gsGamepad.pressed(name)`, `gsGamepad.justPressed(name)` (true for one frame), `gsGamepad.onButton(name, fn)`, `gsGamepad.rumble(ms, strength)`. The sticks move the editor camera by default; set `gsGamepad.captureCamera = true` when the scene uses the sticks itself (a game character, a vehicle). Headset (WebXR) controllers are separate and are not covered by gsGamepad.");
+	return lines.join('\n');
+}
+
+// Adds the settings note to the newest user message of an outgoing request
+// (only the copy that is sent; the stored chat history stays clean).
+function withGsSettingsNote(outgoing) {
+	let note;
+	try { note = buildGsSettingsNote(); } catch (e) { console.error('settings note failed:', e); return outgoing; }
+	for (let i = outgoing.length - 1; i >= 0; i--) {
+		const m = outgoing[i];
+		if (m.role !== 'user') continue;
+		const copy = { ...m };
+		if (typeof copy.content === 'string') {
+			copy.content = `${note}\n\n${copy.content}`;
+		} else if (Array.isArray(copy.content)) {
+			copy.content = [{ type: 'text', text: note }, ...copy.content];
+		}
+		const out = outgoing.slice();
+		out[i] = copy;
+		return out;
+	}
+	return outgoing;
+}
+
+// ============================================================================
+// Game controllers (browser Gamepad API): Xbox Series X|S, Xbox One,
+// DualSense / DualShock, Switch Pro and other pads, over USB or Bluetooth.
+// Separate from WebXR headset controllers, which come through the XR
+// session's inputSources (see updateLocomotion).
+//   Orbit:     left stick moves (like WASD), right stick orbits,
+//              LT / RT zoom out / in, LB / RB down / up.
+//   Free-roam: left stick moves, right stick looks, LB / RB down / up,
+//              hold RT or click the left stick to go faster.
+//   Both:      Y switches Orbit <-> Free-roam, View (Back) resets the view.
+//   Off:       the controller does not move the camera.
+// Browsers only reveal a pad after a button is pressed on it.
+// ============================================================================
+const GAMEPAD_BUTTON_NAMES = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'LS', 'RS', 'Up', 'Down', 'Left', 'Right', 'Home'];
+const GAMEPAD_BUTTON_ALIASES = { Back: 'View', Select: 'View', Start: 'Menu', L1: 'LB', R1: 'RB', L2: 'LT', R2: 'RT', L3: 'LS', R3: 'RS', Cross: 'A', Circle: 'B', Square: 'X', Triangle: 'Y', DUp: 'Up', DDown: 'Down', DLeft: 'Left', DRight: 'Right', Guide: 'Home' };
+const GAMEPAD_STICK_DEADZONE = THUMBSTICK_DEADZONE;
+const GAMEPAD_LOOK_SPEED = 2.4;   // radians/second at full right-stick deflection
+const GAMEPAD_ZOOM_SPEED = 1.5;   // orbit radius factor per second at full trigger
+const _padSpherical = new THREE.Spherical();
+const _padOffset = new THREE.Vector3();
+
+function gamepadButtonIndex(name) {
+	const key = GAMEPAD_BUTTON_ALIASES[name] || name;
+	return GAMEPAD_BUTTON_NAMES.indexOf(key);
+}
+
+// Radial deadzone, rescaled so movement starts at 0 just past the edge.
+function applyStickDeadzone(x, y, dz = GAMEPAD_STICK_DEADZONE) {
+	const mag = Math.hypot(x, y);
+	if (mag < dz) return [0, 0];
+	const scaled = Math.min(1, (mag - dz) / (1 - dz)) / mag;
+	return [x * scaled, y * scaled];
+}
+
+const gsGamepad = {
+	connected: false,
+	index: -1,          // navigator.getGamepads() index of the active pad
+	id: '',
+	mapping: '',
+	pads: [],           // every connected pad: { index, id, mapping }
+	captureCamera: false,
+	deadzone: GAMEPAD_STICK_DEADZONE,
+	_axes: { leftX: 0, leftY: 0, rightX: 0, rightY: 0 },
+	_buttons: new Array(GAMEPAD_BUTTON_NAMES.length).fill(0),
+	_prev: new Array(GAMEPAD_BUTTON_NAMES.length).fill(0),
+	_listeners: [],
+	axis(name) { return this._axes[name] || 0; },
+	button(name) { const i = gamepadButtonIndex(name); return i >= 0 ? this._buttons[i] || 0 : 0; },
+	pressed(name) { return this.button(name) > 0.5; },
+	justPressed(name) { const i = gamepadButtonIndex(name); return i >= 0 && this._buttons[i] > 0.5 && !(this._prev[i] > 0.5); },
+	justReleased(name) { const i = gamepadButtonIndex(name); return i >= 0 && !(this._buttons[i] > 0.5) && this._prev[i] > 0.5; },
+	onButton(name, fn) {
+		const entry = { name: GAMEPAD_BUTTON_ALIASES[name] || name, fn };
+		this._listeners.push(entry);
+		return () => { const i = this._listeners.indexOf(entry); if (i >= 0) this._listeners.splice(i, 1); };
+	},
+	raw() { return this.index >= 0 ? (navigator.getGamepads?.() || [])[this.index] || null : null; },
+	rumble(ms = 120, strength = 0.6) {
+		const gp = this.raw();
+		const act = gp?.vibrationActuator;
+		if (!act?.playEffect) return Promise.resolve(false);
+		const s = Math.max(0, Math.min(1, strength));
+		return act.playEffect('dual-rumble', { duration: ms, strongMagnitude: s, weakMagnitude: s }).then(() => true, () => false);
+	},
+	_reset() {
+		this.captureCamera = false;
+		this._listeners = [];
+	}
+};
+window.gsGamepad = gsGamepad;
+
+function gamepadDisplayName(id) {
+	const s = String(id || 'Game controller');
+	// Chrome: "Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)"
+	return s.replace(/\s*\((?:STANDARD GAMEPAD|Vendor:)[^)]*\)\s*$/i, '').replace(/^[0-9a-f]{4}-[0-9a-f]{4}-/i, '').trim() || 'Game controller';
+}
+
+let _gamepadToastTimer = null;
+function showGamepadToast(text) {
+	let el = document.getElementById('gs-gamepad-toast');
+	if (!el) {
+		el = document.createElement('div');
+		el.id = 'gs-gamepad-toast';
+		el.setAttribute('role', 'status');
+		document.body.appendChild(el);
+	}
+	el.textContent = text;
+	el.classList.add('show');
+	clearTimeout(_gamepadToastTimer);
+	_gamepadToastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+function renderGamepadUi() {
+	const status = document.getElementById('dchat-gamepad-status');
+	if (status) {
+		status.textContent = gsGamepad.pads.length
+			? gsGamepad.pads.map((p) => `🎮 ${gamepadDisplayName(p.id)}${p.mapping === 'standard' ? '' : ' (non-standard layout)'}`).join(' · ')
+			: 'No controller detected. Connect one by USB or Bluetooth, then press any button on it.';
+		status.classList.toggle('connected', gsGamepad.pads.length > 0);
+	}
+	document.body.classList.toggle('gs-gamepad-connected', gsGamepad.connected);
+}
+
+function refreshGamepadList() {
+	const pads = Array.from(navigator.getGamepads?.() || []).filter((g) => g && g.connected);
+	gsGamepad.pads = pads.map((g) => ({ index: g.index, id: g.id, mapping: g.mapping }));
+	// Prefer the current pad, then any standard-mapping pad, then anything.
+	const active = pads.find((g) => g.index === gsGamepad.index) || pads.find((g) => g.mapping === 'standard') || pads[0];
+	gsGamepad.connected = !!active;
+	gsGamepad.index = active ? active.index : -1;
+	gsGamepad.id = active ? active.id : '';
+	gsGamepad.mapping = active ? active.mapping : '';
+	if (!active) {
+		gsGamepad._buttons.fill(0);
+		gsGamepad._prev.fill(0);
+		for (const k of Object.keys(gsGamepad._axes)) gsGamepad._axes[k] = 0;
+	}
+	renderGamepadUi();
+}
+
+window.addEventListener('gamepadconnected', (e) => {
+	refreshGamepadList();
+	showGamepadToast(`🎮 ${gamepadDisplayName(e.gamepad.id)} connected`);
+});
+window.addEventListener('gamepaddisconnected', (e) => {
+	refreshGamepadList();
+	showGamepadToast(`🎮 ${gamepadDisplayName(e.gamepad.id)} disconnected`);
+});
+
+function pollGamepads() {
+	if (!navigator.getGamepads) return;
+	if (!gsGamepad.connected) {
+		// Some browsers skip gamepadconnected for pads already awake at load.
+		if (Array.from(navigator.getGamepads()).some((g) => g && g.connected)) refreshGamepadList();
+		if (!gsGamepad.connected) return;
+	}
+	const gp = gsGamepad.raw();
+	if (!gp || !gp.connected) { refreshGamepadList(); return; }
+	const prev = gsGamepad._prev;
+	const cur = gsGamepad._buttons;
+	for (let i = 0; i < cur.length; i++) prev[i] = cur[i];
+	for (let i = 0; i < cur.length; i++) {
+		const b = gp.buttons[i];
+		// Digital buttons report value 1 when pressed; a few pads only set .pressed.
+		cur[i] = !b ? 0 : typeof b === 'number' ? b : (b.pressed && !b.value ? 1 : b.value || 0);
+	}
+	const ax = gp.axes || [];
+	const [lx, ly] = applyStickDeadzone(ax[0] || 0, ax[1] || 0, gsGamepad.deadzone);
+	const [rx, ry] = applyStickDeadzone(ax[2] || 0, ax[3] || 0, gsGamepad.deadzone);
+	gsGamepad._axes.leftX = lx; gsGamepad._axes.leftY = ly;
+	gsGamepad._axes.rightX = rx; gsGamepad._axes.rightY = ry;
+	for (const { name, fn } of gsGamepad._listeners.slice()) {
+		if (gsGamepad.justPressed(name)) {
+			try { fn(name); } catch (e) { console.error('gsGamepad.onButton handler error:', e); }
+		}
+	}
+}
+
+// Moves the desktop/phone camera from the pad, matching the Controls tab mode.
+function updateGamepadCamera(dt) {
+	if (!gsGamepad.connected || dt <= 0) return;
+	if (cameraControlsSuspended() || gsGamepad.captureCamera) return;
+	if (cameraControlMode === 'off') return;
+	if (gsGamepad.justPressed('Y')) {
+		setCameraControlMode(cameraControlMode === 'orbit' ? 'free' : 'orbit');
+		return;
+	}
+	if (gsGamepad.justPressed('View')) { resetCameraView(); return; }
+
+	const lx = gsGamepad.axis('leftX'), ly = gsGamepad.axis('leftY');
+	const rx = gsGamepad.axis('rightX'), ry = gsGamepad.axis('rightY');
+	const vertical = gsGamepad.button('RB') - gsGamepad.button('LB');
+
+	if (cameraControlMode === 'free') {
+		if (rx || ry) applyFreeLook(rx * GAMEPAD_LOOK_SPEED * dt / FREE_LOOK_SENSITIVITY, ry * GAMEPAD_LOOK_SPEED * dt / FREE_LOOK_SENSITIVITY);
+		if (!player || (!lx && !ly && !vertical)) return;
+		const fast = gsGamepad.button('RT') > 0.5 || gsGamepad.pressed('LS');
+		camera.getWorldQuaternion(_freeQuat);
+		_freeFwd.set(0, 0, -1).applyQuaternion(_freeQuat);
+		_freeRight.set(1, 0, 0).applyQuaternion(_freeQuat);
+		_freeRight.y = 0;
+		if (_freeRight.lengthSq() < 1e-8) _freeRight.set(1, 0, 0);
+		_freeRight.normalize();
+		_freeMove.set(0, 0, 0)
+			.addScaledVector(_freeFwd, -ly)
+			.addScaledVector(_freeRight, lx)
+			.addScaledVector(_LOCO_UP, vertical);
+		if (_freeMove.lengthSq() > 1) _freeMove.normalize();
+		_freeMove.multiplyScalar(FREE_ROAM_SPEED * (fast ? FREE_ROAM_FAST_MULT : 1) * dt);
+		player.position.add(_freeMove);
+		return;
+	}
+
+	// Orbit
+	if (lx || ly || vertical) applyLocomotionInput(dt, camera, lx, ly, 0, vertical);
+	const zoom = gsGamepad.button('LT') - gsGamepad.button('RT'); // RT = in
+	if (rx || ry || zoom) {
+		_padOffset.copy(camera.position).sub(orbitControls.target);
+		_padSpherical.setFromVector3(_padOffset);
+		_padSpherical.theta -= rx * GAMEPAD_LOOK_SPEED * dt;
+		_padSpherical.phi -= ry * GAMEPAD_LOOK_SPEED * dt;
+		_padSpherical.phi = Math.max(Math.max(0.01, orbitControls.minPolarAngle), Math.min(Math.min(Math.PI - 0.01, orbitControls.maxPolarAngle), _padSpherical.phi));
+		if (zoom) {
+			_padSpherical.radius *= Math.pow(GAMEPAD_ZOOM_SPEED, zoom * dt * 2);
+			_padSpherical.radius = Math.max(Math.max(0.1, orbitControls.minDistance), Math.min(orbitControls.maxDistance, _padSpherical.radius));
+		}
+		_padOffset.setFromSpherical(_padSpherical);
+		camera.position.copy(orbitControls.target).add(_padOffset);
+		orbitControls.update();
+	}
+}
+
+function updateGamepads(dt) {
+	pollGamepads();
+	updateGamepadCamera(dt);
+}
+
+refreshGamepadList();
 
 // ============================================================================
 // Event Handlers
@@ -6929,7 +7455,7 @@ document.addEventListener('keydown', (e) => {
 	if (phone) fitDesktopChatToViewport();
 });
 
-// Tabs: Chat (Scene|Theme) / Environment / Scenes / Files / Code / Community (Scenes|Themes).
+// Tabs: Chat (Scene|Theme) / Environment / Scenes / Files / Code / Community (Scenes|Themes) / Controls / Dependencies.
 document.querySelectorAll('.dchat-tab').forEach(tab => {
 	tab.addEventListener('click', () => {
 		document.querySelectorAll('.dchat-tab').forEach(t => t.classList.remove('active'));
@@ -7741,6 +8267,10 @@ renderer.setAnimationLoop((time) => {
 		// Desktop keyboard locomotion (WASD move/strafe, Q/E vertical).
 		updateKeyboardLocomotion(dt);
 	}
+
+	// Game controllers (Gamepad API): poll once per frame before scene code
+	// runs, so gsGamepad.justPressed() is fresh inside _vrAnimations.
+	updateGamepads(dt);
 
 	// Run user-injected animations from vr-exec code
 	for (const animFn of window._vrAnimations) {
