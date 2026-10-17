@@ -1594,8 +1594,9 @@
 			background: rgba(30, 30, 40, 0.98);
 			border-radius: 16px;
 			padding: 24px;
-			width: min(420px, 92vw);
-			max-height: min(70vh, 520px);
+			width: min(520px, 92vw);
+			max-height: min(80vh, 680px);
+			box-sizing: border-box;
 			overflow: auto;
 			box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
 			color: #fff;
@@ -1642,6 +1643,24 @@
 			font-weight: 500;
 			opacity: 0.7;
 			flex-shrink: 0;
+		}
+		.gs-version-item {
+			display: flex;
+			flex-direction: column;
+			gap: 6px;
+		}
+		.gs-version-changes {
+			margin: 0 0 6px;
+			padding: 0 6px 0 22px;
+			font-size: 13px;
+			line-height: 1.45;
+			color: rgba(255, 255, 255, 0.78);
+			overflow-wrap: anywhere;
+		}
+		.gs-version-changes li + li { margin-top: 3px; }
+		@media (max-width: 480px) {
+			#gs-version-modal-inner { padding: 18px 16px; max-height: 86vh; }
+			.gs-version-changes { font-size: 12.5px; padding-left: 18px; }
 		}
 		#gs-version-modal .share-rename-buttons { margin-top: 16px; }
 		body.display-only #gs-version-modal { display: none !important; }
@@ -2400,8 +2419,8 @@
 	<!-- GS version picker (button is in #gs-dock) -->
 	<div id="gs-version-modal" aria-hidden="true">
 		<div id="gs-version-modal-inner" role="dialog" aria-labelledby="gs-version-title">
-			<h3 id="gs-version-title">GS version</h3>
-			<p id="gs-version-modal-note">Pick a published build. Older versions appear here when listed in versions.json.</p>
+			<h3 id="gs-version-title">GS versions &amp; changelog</h3>
+			<p id="gs-version-modal-note">What changed in each version, newest first. Tap a version to open that build.</p>
 			<div id="gs-version-list"></div>
 			<div class="share-rename-buttons">
 				<button type="button" id="gs-version-close" class="btn-secondary">Close</button>

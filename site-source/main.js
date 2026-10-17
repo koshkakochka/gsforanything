@@ -7629,12 +7629,18 @@ function initGsVersionPicker() {
 	function show() {
 		modal.classList.add('visible');
 		modal.setAttribute('aria-hidden', 'false');
-		closeBtn?.focus();
+		// Open at the top so the newest changelog entry is what you see first.
+		closeBtn?.focus({ preventScroll: true });
+		const inner = document.getElementById('gs-version-modal-inner');
+		if (inner) inner.scrollTop = 0;
 	}
 
 	function renderList() {
 		listEl.innerHTML = '';
 		for (const entry of versions) {
+			// One card per version: the open/switch row, then its changelog.
+			const item = document.createElement('div');
+			item.className = 'gs-version-item';
 			const row = document.createElement('button');
 			row.type = 'button';
 			row.className = 'gs-version-row';
@@ -7644,9 +7650,20 @@ function initGsVersionPicker() {
 			label.textContent = entry.label || `GS ${entry.id}`;
 			const meta = document.createElement('span');
 			meta.className = 'gs-version-meta';
-			meta.textContent = current ? 'Current' : (entry.url ? 'Open' : entry.id);
+			meta.textContent = [entry.date, current ? 'Current' : (entry.url ? 'Open' : entry.id)].filter(Boolean).join(' · ');
 			row.appendChild(label);
 			row.appendChild(meta);
+			item.appendChild(row);
+			if (entry.changes?.length) {
+				const ul = document.createElement('ul');
+				ul.className = 'gs-version-changes';
+				for (const change of entry.changes) {
+					const li = document.createElement('li');
+					li.textContent = change;
+					ul.appendChild(li);
+				}
+				item.appendChild(ul);
+			}
 			row.addEventListener('click', () => {
 				if (current || entry.url == null || entry.url === '') {
 					hide();
@@ -7664,7 +7681,7 @@ function initGsVersionPicker() {
 					updateStatus(`Invalid version URL for ${entry.id}`, 'error');
 				}
 			});
-			listEl.appendChild(row);
+			listEl.appendChild(item);
 		}
 	}
 

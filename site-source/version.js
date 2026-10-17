@@ -6,7 +6,7 @@
 
 export const GS_VERSION = '0.971';
 
-/** @typedef {{ id: string, label?: string, url?: string|null }} GsVersionEntry */
+/** @typedef {{ id: string, label?: string, url?: string|null, date?: string, changes?: string[] }} GsVersionEntry */
 
 /**
  * Built-in fallback when /versions.json is missing or empty.
@@ -58,7 +58,12 @@ export function mergeVersionList(manifest, currentId = GS_VERSION) {
 		cleaned.push({
 			id,
 			label: (typeof raw.label === 'string' && raw.label.trim()) ? raw.label.trim() : `GS ${id}`,
-			url: raw.url == null || raw.url === '' ? null : String(raw.url)
+			url: raw.url == null || raw.url === '' ? null : String(raw.url),
+			date: typeof raw.date === 'string' ? raw.date.trim() : '',
+			// Changelog lines for this version (shown under it in the picker).
+			changes: Array.isArray(raw.changes)
+				? raw.changes.filter(c => typeof c === 'string' && c.trim()).map(c => c.trim())
+				: []
 		});
 	}
 	if (!seen.has(currentId)) {
