@@ -1,0 +1,5 @@
+public/
+.wrangler/
+.cache/
+node_modules
+.dev.vars

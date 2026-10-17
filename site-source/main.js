@@ -2880,6 +2880,8 @@ async function hotReloadFromEditor({ fromLive = false } = {}) {
 			return;
 		}
 		codeEditorLastApplied = buildCodeEditorSource();
+		// Creation context: a hot-reloaded edit is a code edit like a full Apply.
+		GSContext.recordCodeEdit({ code: codeEditorLastApplied, source: fromLive ? 'live' : 'apply' });
 		codeEditorDirty = false;
 		const n = changed.length;
 		setCodeEditorStatus(
@@ -7350,21 +7352,47 @@ window.gsCreateP5Surface = gsCreateP5Surface;
 // Walk-in-AR) and a way to add/remove session code blocks, so an imported
 // sketch is saved with the scene and shows up in the code window.
 window.gsGetWorldContentParent = getWorldContentParent;
+// Blocks run under their session/scene key (like chat blocks) so Code-tab hot
+// reload knows them: an unchanged import isn't re-run, and an edited one is
+// torn down (iframe + panel) before it runs again.
+function rekeyBlockRuntimes(pairs) {
+	const moved = [];
+	for (const [from, to] of pairs) {
+		if (from === to) continue;
+		const rt = _blockRuntimes.get(from);
+		if (rt) { _blockRuntimes.delete(from); moved.push([to, rt, _blockStates.get(from)]); _blockStates.delete(from); }
+	}
+	for (const [to, rt, st] of moved) { rt.key = to; _blockRuntimes.set(to, rt); if (st) _blockStates.set(to, st); }
+}
 window.gsSessionCode = {
 	async add(code) {
-		await executeVrCode(code);
+		await executeVrCode(code, sessionBlockKey(executedCodeBlocks.length));
 		executedCodeBlocks.push(code);
 		notifyCodeEditorExternalChange();
 		renderScenePanel();
 	},
 	removeWhere(match) {
 		let removed = 0;
-		executedCodeBlocks = executedCodeBlocks.filter((c) => (match(c) ? (removed++, false) : true));
+		const keep = (list, keyOf) => {
+			const pairs = [];
+			const out = [];
+			list.forEach((c, i) => {
+				if (match(c)) {
+					removed++;
+					const rt = _blockRuntimes.get(keyOf(i));
+					if (rt) teardownBlock(rt);
+				} else {
+					pairs.push([keyOf(i), keyOf(out.length)]);
+					out.push(c);
+				}
+			});
+			rekeyBlockRuntimes(pairs);
+			return out;
+		};
+		executedCodeBlocks = keep(executedCodeBlocks, sessionBlockKey);
 		for (const sc of loadedScenes) {
 			if (!sc.active || !Array.isArray(sc.codeBlocks)) continue;
-			const before = sc.codeBlocks.length;
-			sc.codeBlocks = sc.codeBlocks.filter((c) => !match(c));
-			removed += before - sc.codeBlocks.length;
+			sc.codeBlocks = keep(sc.codeBlocks, (i) => sceneBlockKey(sc, i));
 		}
 		if (removed) { notifyCodeEditorExternalChange(); renderScenePanel(); }
 		return removed;

@@ -68,7 +68,11 @@ for (const [hostName, base] of HOSTS) {
   ok(`${H} first chat sent with attachment`, /--- File: design-notes\.md ---/.test(JSON.stringify(b1.messages)));
   await send(a, 'now add a blue cube');
   // Code tab apply -> edit history
-  await tab(a, 'code'); await a.click('#dchat-code-apply'); await sleep(1200);
+  // Since 0.973 Apply hot-reloads only changed blocks (an unchanged Apply is a no-op),
+  // so make a real edit before applying.
+  await tab(a, 'code');
+  await a.evaluate(() => { const ed = document.getElementById('dchat-code-editor'); ed.value = ed.value.replace("m.name='cube2'; m.position.set(0,0.25,-2)", "m.name='cube2'; m.position.set(0.6,0.25,-2)"); ed.dispatchEvent(new Event('input', { bubbles: true })); });
+  await a.click('#dchat-code-apply'); await sleep(1200);
   const dbg = await a.evaluate(() => GSContext._debugState());
   ok(`${H} session log recorded`, dbg.chatLog >= 4 && dbg.files === 1 && dbg.edits >= 1, JSON.stringify(dbg));
 

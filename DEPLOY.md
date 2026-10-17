@@ -33,18 +33,26 @@ Local HTTPS test serve (box): often `/workspace/gs-serve-gh` on `https://localho
 
 ## Cloudflare Workers (`gs`)
 
-Wrangler is typically authenticated on the **box** (`/workspace/carljr-cf` or similar), not always on the PC.
+Since 0.973 the Worker source lives in this repo under **`worker/`** (see `worker/README.md`):
+`index.js` (API: chat, backends, community scenes + creation context, p5 editor relay, `/s/*`, `/e/*`),
+`prompts.js` (generated from `site-source/server.js`), `wrangler.jsonc` (name `gs`, `SCENES` KV binding,
+assets), `gen-prompts.mjs` and `sync-public.sh`. **No secrets are in the repo**; `CLAUDE_API_KEY`,
+`OPENAI_API_KEY`, `LLM_BACKEND`, `OPENAI_MODEL` are Worker secrets in Cloudflare and survive deploys.
+
+Wrangler is typically authenticated on the **box**, not always on the PC.
 
 1. Ask user for version → same `version.js` / `versions.json` as Vercel (from `origin/main`).
-2. Sync **all** browser assets into `public/`:
+2. `cd worker && ./sync-public.sh` — copies **all** browser assets into `worker/public/` (gitignored):
    - `index.html`, `main.js`, `version.js`, `versions.json`, `syntaxHighlight.js`, `htmlInCanvas.js`, `p5Import.js`, `menuSystem.js`, `exporter.js`, `creationContext.js`
    - `threejsAddons/`
-   - **full `vendor_modules/`** — especially `vendor_modules/three/build/three.module.js`
+   - **full `vendor_modules/`** — especially `vendor_modules/three/build/three.module.js` (the script fails if it is missing)
+   - Add any new browser file to `sync-public.sh` **and** `vercel.json` `includeFiles`.
 3. **Prior bug:** if `public/vendor_modules/three/build/` is missing, `/` and `/main.js` still return 200 but the import map 404s `three.module.js`, so the app never boots (blank canvas, empty Model dropdown, no welcome). Always restore `three/build` from git if the working tree deleted it, then sync again.
-4. `wrangler.jsonc`: keep **`SCENES` KV** binding; **do not touch secrets**.
-   - Worker API changes that live in this repo as patches: apply every file in `worker-patches/` to `worker/index.js` (see `worker-patches/README.md`) before deploying.
-5. Deploy: `npx wrangler deploy` (Node ≥ 22 if required by your Wrangler version). Writable cache if needed (`XDG_CACHE_HOME` under the project).
-6. Verify (below).
+4. `node gen-prompts.mjs` — regenerates `prompts.js` whenever the prompts in `server.js` change.
+5. Server API changes in `server.js` must be ported to `worker/index.js` by hand (same validation). `worker-patches/0001` is already applied there (kept for history).
+6. `wrangler.jsonc`: keep **`SCENES` KV** binding; **do not touch secrets**.
+7. Deploy from `worker/`: `npx wrangler deploy` (Node ≥ 22). Writable cache if needed (`XDG_CACHE_HOME` under the project).
+8. Verify (below).
 
 ## Post-deploy verification (both hosts)
 
