@@ -52,7 +52,14 @@ const appElement = document.getElementById('app');
 const scene = new THREE.Scene();
 scene.background = null; // transparent for passthrough
 
-const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
+// Render distance, shared by desktop, phone and VR. VR and the windowed view use
+// this same camera: three.js copies camera.near/far into the XR session's
+// depthNear/depthFar every frame, so VR draws RENDER_NEAR..RENDER_FAR metres from
+// the headset. See syncRenderDistance() for how desktop matches it.
+const RENDER_NEAR = 0.1;
+const RENDER_FAR = 100;
+const RENDER_EYE_HEIGHT = 1.6; // where the VR view starts in the player rig (local-floor)
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, RENDER_NEAR, RENDER_FAR);
 camera.position.set(0, 1.6, 0);
 
 // ============================================================================
@@ -6873,6 +6880,48 @@ const _freeMove = new THREE.Vector3();
 const _freeEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 const _orbitCamWorld = new THREE.Vector3();
 
+// Render distance: make the desktop/phone view draw everything VR draws.
+// VR's far plane is RENDER_FAR metres from the headset, which starts at the
+// player rig's eye (RENDER_EYE_HEIGHT above the rig). The windowed camera hangs
+// in the same rig but usually not at the eye: Orbit looks from 4 m behind it by
+// default and up to orbitControls.maxDistance zoomed out, and Free-roam / First
+// person keep that offset while they move the rig. With the same far value the
+// desktop used to clip what VR still shows, so outside XR the far plane is
+// pushed out by the camera's distance from the VR eye. With the camera at the
+// eye that is exactly RENDER_FAR. VR and Cardboard use the far value as is.
+// Near stays RENDER_NEAR everywhere.
+// Scene code may still set camera.far / camera.near itself (e.g. a huge
+// landscape). The new value then becomes the shared base for desktop and VR.
+let renderFarBase = RENDER_FAR;
+let renderFarApplied = RENDER_FAR;
+const _renderEye = new THREE.Vector3();
+const _renderCamPos = new THREE.Vector3();
+function desktopRenderFarOffset() {
+	if (renderer.xr.isPresenting || mobileXRMode || !player) return 0;
+	player.updateWorldMatrix(true, false);
+	_renderEye.set(0, RENDER_EYE_HEIGHT, 0);
+	player.localToWorld(_renderEye);
+	camera.getWorldPosition(_renderCamPos);
+	return _renderCamPos.distanceTo(_renderEye);
+}
+function syncRenderDistance() {
+	if (camera.far !== renderFarApplied) renderFarBase = camera.far; // changed by scene code
+	const far = renderFarBase + desktopRenderFarOffset();
+	if (far !== camera.far) {
+		camera.far = far;
+		camera.updateProjectionMatrix();
+	}
+	renderFarApplied = far;
+}
+window.gsRenderDistance = {
+	get near() { return camera.near; },
+	/** Far distance from the viewer in VR (and the desktop base). */
+	get far() { return renderFarBase; },
+	/** Far plane the windowed camera uses right now (base + offset from the VR eye). */
+	get desktopFar() { return renderFarBase + desktopRenderFarOffset(); },
+	defaults: { near: RENDER_NEAR, far: RENDER_FAR }
+};
+
 function cameraControlsSuspended() {
 	return !!(renderer.xr.isPresenting || mobileXRMode);
 }
@@ -9429,6 +9478,9 @@ renderer.setAnimationLoop((time) => {
 	// Re-apply after user animations so children parented to the menu this
 	// frame (and any material swapped onto a panel) still render on layer 1.
 	applyMenuLayerPriority();
+
+	// Match the VR render distance (see syncRenderDistance) before any render.
+	syncRenderDistance();
 
 	if (mobileXRMode === 'cardboard') {
 		// Manual side-by-side stereo render (no OpenXR session to do this for us).
