@@ -1,9 +1,14 @@
 {
   "versions": [
     {
-      "id": "0.970",
-      "label": "GS 0.970 (this build)",
+      "id": "0.971",
+      "label": "GS 0.971 (this build)",
       "url": null
+    },
+    {
+      "id": "0.970",
+      "label": "GS 0.970",
+      "url": "https://vrclaudeinterface.vercel.app"
     },
     {
       "id": "0.969",
