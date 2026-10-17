@@ -113,9 +113,21 @@ function drawBackground(ctx, el, style, ox, oy) {
 	}
 }
 
-function drawTextNode(ctx, node, style, ox, oy) {
+// One Range reused for every text node (was one allocation per node per paint).
+let sharedRange = null;
+
+function rectOutside(r, clip) {
+	return r.right < clip.left || r.left > clip.right || r.bottom < clip.top || r.top > clip.bottom;
+}
+
+function drawTextNode(ctx, node, style, ox, oy, clip) {
 	const raw = node.textContent;
 	if (!raw || !raw.trim()) return;
+	if (!sharedRange) sharedRange = document.createRange();
+	const range = sharedRange;
+	range.selectNodeContents(node);
+	// Skip text scrolled out of the visible area before doing any font work.
+	if (clip && rectOutside(range.getBoundingClientRect(), clip)) return;
 	ctx.font = style.font || `${style.fontSize} ${style.fontFamily}`;
 	const fill = style.fill && style.fill !== 'none' && !String(style.fill).startsWith('url')
 		? style.fill
@@ -123,12 +135,13 @@ function drawTextNode(ctx, node, style, ox, oy) {
 	ctx.fillStyle = fill || style.color || '#fff';
 	ctx.textAlign = 'left';
 	ctx.textBaseline = 'top';
-	const range = document.createRange();
-	range.selectNodeContents(node);
 	const rects = Array.from(range.getClientRects());
 	if (!rects.length) return;
 	if (rects.length === 1) {
-		const text = raw.replace(/\s+/g, ' ').trim();
+		// white-space: pre (the Code tab): keep the spaces, the rect starts at
+		// the first one. Otherwise collapse like the browser does.
+		const pre = String(style.whiteSpace || '').startsWith('pre');
+		const text = pre ? raw.replace(/\t/g, '  ').replace(/\n/g, '') : raw.replace(/\s+/g, ' ').trim();
 		ctx.fillText(text, rects[0].left - ox, rects[0].top - oy);
 		return;
 	}
@@ -147,9 +160,9 @@ function drawTextNode(ctx, node, style, ox, oy) {
 	}
 }
 
-function drawDirectText(ctx, el, style, ox, oy) {
+function drawDirectText(ctx, el, style, ox, oy, clip) {
 	for (const node of el.childNodes) {
-		if (node.nodeType === Node.TEXT_NODE) drawTextNode(ctx, node, style, ox, oy);
+		if (node.nodeType === Node.TEXT_NODE) drawTextNode(ctx, node, style, ox, oy, clip);
 	}
 }
 
@@ -213,6 +226,15 @@ function drawFormValue(ctx, el, style, ox, oy) {
 		return;
 	}
 	if (!text) return;
+	// Transparent text (the Code tab's textarea sits over the highlighted
+	// <pre> with transparent text) paints nothing; it used to fillText the
+	// whole program as one line on every refresh.
+	const textFill = style.webkitTextFillColor || style.color;
+	if (!faded && isTransparent(textFill)) return;
+	// A form field shows one line here; never hand fillText a whole document.
+	const nl = text.indexOf('\n');
+	if (nl >= 0) text = text.slice(0, nl);
+	if (text.length > 400) text = text.slice(0, 400);
 	ctx.fillStyle = faded ? 'rgba(255,255,255,0.45)' : (style.color || '#fff');
 	ctx.save();
 	ctx.beginPath();
@@ -222,8 +244,14 @@ function drawFormValue(ctx, el, style, ox, oy) {
 	ctx.restore();
 }
 
-function paintNode(ctx, el, ox, oy) {
+function paintNode(ctx, el, ox, oy, clip) {
 	if (!(el instanceof Element)) return;
+	// Cull before getComputedStyle: anything entirely outside the current
+	// overflow clip is invisible, and the clip below would discard it anyway.
+	// This is what keeps a long, scrolled Code tab (thousands of highlight
+	// spans) cheap. Zero-size boxes are kept: their children may still paint.
+	const box = el.getBoundingClientRect();
+	if (box.width > 0 && box.height > 0 && rectOutside(box, clip)) return;
 	const style = getComputedStyle(el);
 	if (style.display === 'none' || style.visibility === 'hidden') return;
 	const opacity = parseFloat(style.opacity);
@@ -235,16 +263,16 @@ function paintNode(ctx, el, ox, oy) {
 	try {
 		drawBackground(ctx, el, style, ox, oy);
 		if (!(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement) && !(el instanceof HTMLSelectElement)) {
-			drawDirectText(ctx, el, style, ox, oy);
+			drawDirectText(ctx, el, style, ox, oy, clip);
 		}
 		drawFormValue(ctx, el, style, ox, oy);
 	} catch {
 		// Keep painting the rest of the menu if one node can't be sampled.
 	}
 
-	const clip = clipsOverflow(style.overflowX) || clipsOverflow(style.overflowY);
-	if (clip) {
-		const rect = el.getBoundingClientRect();
+	let childClip = clip;
+	if (clipsOverflow(style.overflowX) || clipsOverflow(style.overflowY)) {
+		const rect = box;
 		const bl = parseFloat(style.borderLeftWidth) || 0;
 		const bt = parseFloat(style.borderTopWidth) || 0;
 		const br = parseFloat(style.borderRightWidth) || 0;
@@ -257,9 +285,19 @@ function paintNode(ctx, el, ox, oy) {
 			Math.max(0, rect.height - bt - bb)
 		);
 		ctx.clip();
+		childClip = {
+			left: Math.max(clip.left, rect.left + bl),
+			top: Math.max(clip.top, rect.top + bt),
+			right: Math.min(clip.right, rect.right - br),
+			bottom: Math.min(clip.bottom, rect.bottom - bb)
+		};
+		if (childClip.right <= childClip.left || childClip.bottom <= childClip.top) {
+			ctx.restore();
+			return;
+		}
 	}
 
-	for (const child of el.children) paintNode(ctx, child, ox, oy);
+	for (const child of el.children) paintNode(ctx, child, ox, oy, childClip);
 	ctx.restore();
 }
 
@@ -285,7 +323,9 @@ export function paintElementToCanvas(element, canvas, opts = {}) {
 	const ctx = canvas.getContext('2d');
 	ctx.setTransform(scale, 0, 0, scale, 0, 0);
 	ctx.clearRect(0, 0, width, height);
-	paintNode(ctx, element, rect.left, rect.top);
+	paintNode(ctx, element, rect.left, rect.top, {
+		left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom
+	});
 	ctx.setTransform(1, 0, 0, 1, 0, 0);
 	return { width, height, scale };
 }
