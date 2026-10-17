@@ -1227,7 +1227,7 @@ function exitMobileXRMode() {
 	document.body.classList.remove('gs-cardboard-active');
 	mobileMoveHeld = false;
 	if (wasAr) setArPlacementActive(false);
-	orbitControls.enabled = true;
+	refreshOrbitEnabled();
 	mobileXRExitBtn.hidden = true;
 	mobileXRWalkBtn.hidden = true;
 	isVRMode = true;
@@ -6055,22 +6055,29 @@ function isTypingIntoField() {
 }
 
 document.addEventListener('keydown', (e) => {
+	if (e.key === 'Shift') _freeRoamFast = true;
 	if (!LOCOMOTION_KEYS.has(e.code)) return;
 	if (isTypingIntoField()) return;
 	if (renderer.xr.isPresenting) return;
+	if (cameraControlMode === 'off') return; // Controls tab: Off
 	e.preventDefault();
 	_keysDown.add(e.code);
 });
 document.addEventListener('keyup', (e) => {
+	if (e.key === 'Shift') _freeRoamFast = false;
 	if (!LOCOMOTION_KEYS.has(e.code)) return;
 	_keysDown.delete(e.code);
 });
-window.addEventListener('blur', () => _keysDown.clear());
+window.addEventListener('blur', () => { _keysDown.clear(); _freeRoamFast = false; });
 
 function updateKeyboardLocomotion(dt) {
 	if (renderer.xr.isPresenting || _keysDown.size === 0) return;
-	if (isTypingIntoField()) {
+	if (isTypingIntoField() || cameraControlMode === 'off') {
 		_keysDown.clear();
+		return;
+	}
+	if (cameraControlMode === 'free') {
+		updateFreeRoamMovement(dt);
 		return;
 	}
 	let mx = 0, my = 0, ry = 0;
@@ -6082,6 +6089,170 @@ function updateKeyboardLocomotion(dt) {
 	if (_keysDown.has('KeyE')) ry -= 1;
 	if (mx === 0 && my === 0 && ry === 0) return;
 	applyLocomotionInput(dt, camera, mx, my, 0, ry);
+}
+
+// ============================================================================
+// Controls tab: desktop/phone camera mode (never used during an XR session or
+// Cardboard, which drive the camera themselves).
+//   orbit — OrbitControls; choosing it re-centres the orbit on the scene
+//           origin (0,0,0). WASD/Q/E keep the existing rig movement above.
+//   free  — WASD flies toward where the camera looks, Q/E up/down, Shift
+//           faster; mouse-look via pointer lock (click canvas, Esc releases),
+//           drag-to-look for touch or when pointer lock is unavailable.
+//   off   — no orbit, no keys, no look; the camera stays put.
+// ============================================================================
+const CAMERA_CONTROL_MODES = ['orbit', 'free', 'off'];
+const CAMERA_CONTROL_STORAGE_KEY = 'gs.cameraControlMode';
+const FREE_ROAM_SPEED = 3;          // metres/second
+const FREE_ROAM_FAST_MULT = 3;      // while Shift is held
+const FREE_LOOK_SENSITIVITY = 0.0022; // radians per pixel
+const FREE_LOOK_MAX_PITCH = Math.PI / 2 - 0.01;
+let cameraControlMode = 'orbit';
+let _freeRoamFast = false;
+let _freeLookDrag = null; // { id, x, y } while dragging to look (no pointer lock)
+const _freeQuat = new THREE.Quaternion();
+const _freeFwd = new THREE.Vector3();
+const _freeRight = new THREE.Vector3();
+const _freeMove = new THREE.Vector3();
+const _freeEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+const _orbitCamWorld = new THREE.Vector3();
+
+function cameraControlsSuspended() {
+	return !!(renderer.xr.isPresenting || mobileXRMode);
+}
+
+// Single place that decides whether OrbitControls is live outside XR.
+function refreshOrbitEnabled(immersive = renderer.xr.isPresenting) {
+	orbitControls.enabled = !immersive && !mobileXRMode && cameraControlMode === 'orbit';
+}
+
+function updateFreeRoamMovement(dt) {
+	if (!player || dt <= 0) return;
+	let f = 0, r = 0, u = 0;
+	if (_keysDown.has('KeyW')) f += 1;
+	if (_keysDown.has('KeyS')) f -= 1;
+	if (_keysDown.has('KeyD')) r += 1;
+	if (_keysDown.has('KeyA')) r -= 1;
+	if (_keysDown.has('KeyQ')) u += 1;
+	if (_keysDown.has('KeyE')) u -= 1;
+	if (f === 0 && r === 0 && u === 0) return;
+	camera.getWorldQuaternion(_freeQuat);
+	_freeFwd.set(0, 0, -1).applyQuaternion(_freeQuat);
+	_freeRight.set(1, 0, 0).applyQuaternion(_freeQuat);
+	_freeRight.y = 0;
+	if (_freeRight.lengthSq() < 1e-8) _freeRight.set(1, 0, 0);
+	_freeRight.normalize();
+	_freeMove.set(0, 0, 0)
+		.addScaledVector(_freeFwd, f)
+		.addScaledVector(_freeRight, r)
+		.addScaledVector(_LOCO_UP, u);
+	if (_freeMove.lengthSq() > 1) _freeMove.normalize();
+	_freeMove.multiplyScalar(FREE_ROAM_SPEED * (_freeRoamFast ? FREE_ROAM_FAST_MULT : 1) * dt);
+	player.position.add(_freeMove); // player is a direct child of scene
+}
+
+function applyFreeLook(dx, dy) {
+	_freeEuler.setFromQuaternion(camera.quaternion, 'YXZ');
+	_freeEuler.y -= dx * FREE_LOOK_SENSITIVITY;
+	_freeEuler.x = Math.max(-FREE_LOOK_MAX_PITCH, Math.min(FREE_LOOK_MAX_PITCH, _freeEuler.x - dy * FREE_LOOK_SENSITIVITY));
+	_freeEuler.z = 0;
+	camera.quaternion.setFromEuler(_freeEuler);
+}
+
+// Orbit around the scene origin, keeping the camera where it is in the world.
+// If the camera sits (nearly) on the vertical axis through the origin — e.g.
+// the default spawn at (0, 1.6, 0) — step back 4 m along the current heading
+// so the orbit does not start by staring straight down.
+function centerOrbitOnOrigin() {
+	camera.getWorldPosition(_orbitCamWorld);
+	camera.getWorldQuaternion(_freeQuat);
+	if (player) { player.position.set(0, 0, 0); player.rotation.set(0, 0, 0); }
+	if (viewOffset) { viewOffset.position.set(0, 0, 0); viewOffset.rotation.set(0, 0, 0); }
+	if (Math.hypot(_orbitCamWorld.x, _orbitCamWorld.z) < 1) {
+		_freeFwd.set(0, 0, -1).applyQuaternion(_freeQuat);
+		_freeFwd.y = 0;
+		if (_freeFwd.lengthSq() < 1e-8) _freeFwd.set(0, 0, -1);
+		_freeFwd.normalize();
+		_orbitCamWorld.set(-_freeFwd.x * 4, Math.max(_orbitCamWorld.y, 1.6), -_freeFwd.z * 4);
+	}
+	camera.position.copy(_orbitCamWorld);
+	orbitControls.target.set(0, 0, 0);
+	orbitControls.update();
+}
+
+function exitFreeLookPointerLock() {
+	_freeLookDrag = null;
+	if (document.pointerLockElement === renderer.domElement) document.exitPointerLock?.();
+}
+
+function renderCameraControlsUi() {
+	document.querySelectorAll('#dchat-camera-mode [data-camera-mode]').forEach((btn) => {
+		const on = btn.dataset.cameraMode === cameraControlMode;
+		btn.classList.toggle('active', on);
+		btn.setAttribute('aria-checked', on ? 'true' : 'false');
+	});
+	document.querySelectorAll('[data-camera-help]').forEach((el) => {
+		el.hidden = el.dataset.cameraHelp !== cameraControlMode;
+	});
+	const status = document.getElementById('dchat-controls-status');
+	if (status) {
+		status.textContent = cameraControlMode === 'free' && document.pointerLockElement === renderer.domElement
+			? 'Mouse look on. Press Esc to release.'
+			: '';
+	}
+}
+
+function setCameraControlMode(mode, { persist = true, initial = false } = {}) {
+	if (!CAMERA_CONTROL_MODES.includes(mode)) mode = 'orbit';
+	const prev = cameraControlMode;
+	cameraControlMode = mode;
+	if (mode !== 'free') exitFreeLookPointerLock();
+	_keysDown.clear();
+	document.body.classList.toggle('gs-camera-free', mode === 'free');
+	refreshOrbitEnabled();
+	if (mode === 'orbit' && !initial && !cameraControlsSuspended()) centerOrbitOnOrigin();
+	if (persist) {
+		try { localStorage.setItem(CAMERA_CONTROL_STORAGE_KEY, mode); } catch { /* storage blocked */ }
+	}
+	renderCameraControlsUi();
+	return prev;
+}
+
+document.querySelectorAll('#dchat-camera-mode [data-camera-mode]').forEach((btn) => {
+	btn.addEventListener('click', () => setCameraControlMode(btn.dataset.cameraMode));
+});
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+	if (cameraControlMode !== 'free' || cameraControlsSuspended()) return;
+	if (e.pointerType === 'mouse' && e.button !== 0) return;
+	_freeLookDrag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+	if (e.pointerType === 'mouse' && renderer.domElement.requestPointerLock && document.pointerLockElement !== renderer.domElement) {
+		try {
+			const p = renderer.domElement.requestPointerLock();
+			if (p && typeof p.catch === 'function') p.catch(() => { /* fall back to drag-to-look */ });
+		} catch { /* fall back to drag-to-look */ }
+	}
+});
+renderer.domElement.addEventListener('pointermove', (e) => {
+	if (cameraControlMode !== 'free' || cameraControlsSuspended()) return;
+	if (document.pointerLockElement === renderer.domElement) {
+		applyFreeLook(e.movementX || 0, e.movementY || 0);
+		return;
+	}
+	if (!_freeLookDrag || _freeLookDrag.id !== e.pointerId) return;
+	applyFreeLook(e.clientX - _freeLookDrag.x, e.clientY - _freeLookDrag.y);
+	_freeLookDrag.x = e.clientX;
+	_freeLookDrag.y = e.clientY;
+});
+const _endFreeLookDrag = (e) => { if (_freeLookDrag && _freeLookDrag.id === e.pointerId) _freeLookDrag = null; };
+renderer.domElement.addEventListener('pointerup', _endFreeLookDrag);
+renderer.domElement.addEventListener('pointercancel', _endFreeLookDrag);
+document.addEventListener('pointerlockchange', renderCameraControlsUi);
+
+{
+	let saved = null;
+	try { saved = localStorage.getItem(CAMERA_CONTROL_STORAGE_KEY); } catch { /* storage blocked */ }
+	setCameraControlMode(CAMERA_CONTROL_MODES.includes(saved) ? saved : 'orbit', { persist: false, initial: true });
 }
 
 // ============================================================================
@@ -7103,7 +7274,8 @@ function setImmersiveUiMode(immersive) {
 	hud.visible = immersive && !displayOnlyMode;
 	// Mouse orbit/pan/zoom only makes sense windowed — the headset pose drives
 	// the camera during an XR session.
-	orbitControls.enabled = !immersive;
+	refreshOrbitEnabled(!!immersive);
+	if (immersive) exitFreeLookPointerLock();
 	document.body.classList.toggle('gs-xr-presenting', !!immersive);
 	applyXrPanelVisibility(immersive);
 }

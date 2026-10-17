@@ -420,17 +420,23 @@
 			color: var(--dchat-tab-active-color);
 		}
 
-		/* Narrow chat panel (phone / resized): two equal rows of three, pill tabs */
-		@container desktop-chat (max-width: 480px) {
+		/* Environment shows its short label ("Env") only in the 4-column layout. */
+		.dchat-tab-short { display: none; }
+
+		/* Narrow chat panel (phone / resized / default 380px): seven tabs as
+		   two rows, 4 + 3 (the second row stretches to thirds), pill tabs. */
+		@container desktop-chat (max-width: 760px) {
 			#desktop-chat-tabs {
 				flex-wrap: wrap;
 				padding: 8px 8px 6px;
 				gap: 4px;
 			}
+			.dchat-tab-full { display: none; }
+			.dchat-tab-short { display: inline; }
 			.dchat-tab {
-				flex: 1 1 calc(33.333% - 4px);
-				min-width: calc(33.333% - 4px);
-				max-width: calc(33.333% - 2px);
+				flex: 1 1 calc(25% - 4px);
+				min-width: calc(25% - 4px);
+				max-width: none;
 				padding: 8px 4px;
 				font-size: 11px;
 				border-radius: 8px;
@@ -456,10 +462,12 @@
 				gap: 4px;
 				overflow: hidden;
 			}
+			.dchat-tab-full { display: none; }
+			.dchat-tab-short { display: inline; }
 			.dchat-tab {
-				flex: 1 1 calc(33.333% - 4px);
-				min-width: calc(33.333% - 4px);
-				max-width: calc(33.333% - 2px);
+				flex: 1 1 calc(25% - 4px);
+				min-width: calc(25% - 4px);
+				max-width: none;
 				padding: 8px 4px;
 				font-size: 11px;
 				border-radius: 8px;
@@ -716,6 +724,44 @@
 		.dchat-btn:active { transform: scale(0.98); }
 		.dchat-btn.secondary { background: #3a3c4e; }
 		.dchat-btn.accent { background: linear-gradient(135deg, #6366f1, #8b5cf6); }
+
+		/* --- Controls tab (desktop camera: orbit / free-roam / off) --- */
+		#dchat-controls {
+			overflow-y: auto;
+			padding: 16px;
+			display: flex;
+			flex-direction: column;
+			gap: 12px;
+			font-size: 13px;
+			overscroll-behavior: contain;
+		}
+		#dchat-camera-mode {
+			display: grid;
+			grid-template-columns: repeat(3, 1fr);
+			gap: 6px;
+		}
+		#dchat-camera-mode .dchat-btn { padding: 10px 6px; }
+		#dchat-camera-mode .dchat-btn.active {
+			background: linear-gradient(135deg, #6366f1, #8b5cf6);
+			box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25) inset;
+		}
+		.dchat-controls-help {
+			font-size: 12px;
+			line-height: 1.45;
+			color: rgba(255, 255, 255, 0.6);
+		}
+		.dchat-controls-help kbd {
+			display: inline-block;
+			min-width: 1.4em;
+			padding: 1px 5px;
+			border-radius: 4px;
+			background: rgba(255, 255, 255, 0.12);
+			font: 600 11px/1.4 ui-monospace, Menlo, monospace;
+			text-align: center;
+		}
+		#dchat-controls-status { font-size: 11px; color: rgba(255, 255, 255, 0.4); }
+		/* Free-roam pointer lock: no orbit cursor hints */
+		body.gs-camera-free canvas { cursor: crosshair; }
 
 		/* --- Scenes tab (export / load / manage saved scenes) --- */
 		#dchat-scenes, #dchat-community, #dchat-files { padding: 14px; gap: 10px; overflow: hidden; }
@@ -1990,11 +2036,12 @@
 		</div>
 		<div id="desktop-chat-tabs">
 			<button class="dchat-tab active" data-tab="chat">💬 Chat</button>
-			<button class="dchat-tab" data-tab="env">🎨 Environment</button>
+			<button class="dchat-tab" data-tab="env">🎨 <span class="dchat-tab-full">Environment</span><span class="dchat-tab-short">Env</span></button>
 			<button class="dchat-tab" data-tab="scenes">📁 Scenes</button>
 			<button class="dchat-tab" data-tab="files">📄 Files</button>
 			<button class="dchat-tab" data-tab="code">📝 Code</button>
 			<button class="dchat-tab" data-tab="community">🌐 Community</button>
+			<button class="dchat-tab" data-tab="controls">🎮 Controls</button>
 		</div>
 
 		<div id="dchat-panel-chat" class="dchat-panel active">
@@ -2172,6 +2219,35 @@
 					<div style="font-size:12px;color:rgba(255,255,255,0.45);margin-top:10px;line-height:1.4">
 						Restyle the editor in Chat → Theme, then upload the current theme here to share it.
 					</div>
+				</div>
+			</div>
+		</div>
+
+		<div id="dchat-panel-controls" class="dchat-panel">
+			<div id="dchat-controls">
+				<div>
+					<div class="dchat-section-label" style="margin-bottom:8px">Camera controls</div>
+					<div id="dchat-camera-mode" role="radiogroup" aria-label="Camera controls">
+						<button type="button" class="dchat-btn secondary" data-camera-mode="orbit" role="radio">Orbit</button>
+						<button type="button" class="dchat-btn secondary" data-camera-mode="free" role="radio">Free-roam</button>
+						<button type="button" class="dchat-btn secondary" data-camera-mode="off" role="radio">Off</button>
+					</div>
+				</div>
+				<div class="dchat-controls-help" data-camera-help="orbit">
+					Picking Orbit centres the camera on the scene origin. Drag to orbit &middot; scroll to zoom &middot; right-drag to pan &middot;
+					<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &middot; <kbd>Q</kbd>/<kbd>E</kbd> up/down.
+				</div>
+				<div class="dchat-controls-help" data-camera-help="free" hidden>
+					Click the scene to look around with the mouse, <kbd>Esc</kbd> to release.
+					<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly where you look &middot; <kbd>Q</kbd>/<kbd>E</kbd> up/down &middot;
+					hold <kbd>Shift</kbd> to go faster. On touch screens, drag to look.
+				</div>
+				<div class="dchat-controls-help" data-camera-help="off" hidden>
+					Camera input is off. The camera stays where it is until you pick another mode.
+				</div>
+				<div id="dchat-controls-status"></div>
+				<div class="dchat-controls-help" style="color:rgba(255,255,255,0.4)">
+					Desktop and phone only. In a headset, the thumbsticks still move you (see Environment &rarr; Navigation).
 				</div>
 			</div>
 		</div>
