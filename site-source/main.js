@@ -311,6 +311,15 @@ function getLayDownButton() {
 		variant: layDownView ? 'active' : 'default'
 	};
 }
+function getWindowAnchorButton() {
+	const follow = windowAnchorMode === 'follow';
+	return {
+		id: 'windowAnchor',
+		label: follow ? 'Windows: Follow head' : 'Windows: Fixed',
+		action: 'env:windowAnchor',
+		variant: follow ? 'active' : 'inactiveToggle'
+	};
+}
 function getHtmlInCanvasButton() {
 	return {
 		id: 'htmlInCanvas',
@@ -336,7 +345,8 @@ const FILES_BUTTONS = [
 const CODE_BUTTONS = [
 	{ id: 'codeLive', label: 'Live updates', action: 'code:toggleLive' },
 	{ id: 'codeApply', label: 'Apply', action: 'code:apply', variant: 'accent' },
-	{ id: 'codeRevert', label: 'Revert', action: 'code:revert', variant: 'secondary' }
+	{ id: 'codeRevert', label: 'Revert', action: 'code:revert', variant: 'secondary' },
+	{ id: 'codeReset', label: 'Full reset', action: 'code:reset', variant: 'warning' }
 ];
 const COMMUNITY_BUTTONS = [
 	{ id: 'upload', label: 'Upload Current Scene', action: 'community:upload', variant: 'accent' },
@@ -385,6 +395,9 @@ function handleMenuAction(action) {
 		case 'env:htmlInCanvas':
 			setHtmlInCanvas(!htmlInCanvas);
 			break;
+		case 'env:windowAnchor':
+			setWindowAnchorMode(windowAnchorMode === 'follow' ? 'fixed' : 'follow');
+			break;
 		case 'env:nav:free':
 			locomotionMode = 'free';
 			if (dchatNavType) dchatNavType.value = 'free';
@@ -431,6 +444,11 @@ function handleMenuAction(action) {
 			renderScenePanel();
 			break;
 		case 'code:apply':
+			// Apply hot reloads (changed blocks only, state kept).
+			hotReloadFromEditor({ fromLive: false });
+			break;
+		case 'code:reset':
+			// Old behavior: clear the scene and re-run every block from scratch.
 			applyCodeFromEditor({ fromLive: false });
 			break;
 		case 'code:revert':
@@ -2341,11 +2359,16 @@ function renderSidePanel() {
 	const htmlLayout = buildButtonLayout([getHtmlInCanvasButton()], {
 		width: w - 32, x: 16, y: htmlY, height: 36, perRow: 1, gap: 4
 	});
-	sidePanelHtmlButtonBoxes = htmlLayout.boxes;
+	// Windows: Fixed (stay put in the world) / Follow head (lazy follow).
+	const anchorY = htmlY + htmlLayout.totalHeight + 4;
+	const anchorLayout = buildButtonLayout([getWindowAnchorButton()], {
+		width: w - 32, x: 16, y: anchorY, height: 32, perRow: 1, gap: 4
+	});
+	sidePanelHtmlButtonBoxes = htmlLayout.boxes.concat(anchorLayout.boxes);
 	drawButtonsToCanvas(ctx, sidePanelHtmlButtonBoxes, { fontSize: 12 });
 
 	// Navigation — same choices as desktop Environment → Navigation
-	const navY = htmlY + htmlLayout.totalHeight + 6;
+	const navY = anchorY + anchorLayout.totalHeight + 6;
 	ctx.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
 	ctx.fillStyle = 'rgba(255,255,255,0.4)';
 	ctx.textAlign = 'center';
@@ -2697,13 +2720,155 @@ function parseCodeEditorSource(text) {
 	return { sceneUpdates, sessionBlocks };
 }
 
+function sceneBlockKey(sc, i) { return `scene:${sc.id}#${i}`; }
+function sessionBlockKey(i) { return `block:${i}`; }
+
+/** Editor text -> ordered [{key, code, sceneId}] using the // --- markers. */
+function parseCodeEditorBlocks(text) {
+	const { sceneUpdates, sessionBlocks } = parseCodeEditorSource(text);
+	const blocks = [];
+	for (const sc of loadedScenes) {
+		if (!sc.active) continue;
+		const codes = sceneUpdates.has(sc.id) ? sceneUpdates.get(sc.id) : (sc.codeBlocks || []);
+		codes.forEach((code, i) => blocks.push({ key: sceneBlockKey(sc, i), code, sceneId: sc.id }));
+	}
+	sessionBlocks.forEach((code, i) => blocks.push({ key: sessionBlockKey(i), code, sceneId: null }));
+	return { blocks, sceneUpdates, sessionBlocks };
+}
+
+function blockLabel(key) {
+	return key.startsWith('block:') ? `block ${key.slice(6)}` : `scene block ${key.split('#')[1] || ''}`.trim();
+}
+
+/**
+ * Hot reload: re-run only the blocks whose code changed and keep the rest of
+ * the world running. Objects a changed block made are snapshotted (position,
+ * rotation, scale, userData.velocity, ammo body velocity) by name, torn down
+ * with that block's callbacks/timers/listeners, and restored onto the new
+ * objects with the same names. gs.state / window.gsState are untouched.
+ * A syntax error changes nothing; a runtime error rolls that block back to
+ * its last working code. Only if the rollback fails too does it fall back to
+ * a full clear-and-re-run.
+ */
+async function hotReloadFromEditor({ fromLive = false } = {}) {
+	if (!dchatCodeEditor || codeEditorApplying) return;
+	codeEditorApplying = true;
+	if (dchatCodeApply) dchatCodeApply.disabled = true;
+	const text = dchatCodeEditor.value;
+	try {
+		const { blocks, sceneUpdates, sessionBlocks } = parseCodeEditorBlocks(text);
+		const wanted = new Map(blocks.map((b) => [b.key, b]));
+		const changed = [];
+		for (const b of blocks) {
+			const rt = _blockRuntimes.get(b.key);
+			if (!rt || rt.code.trim() !== b.code.trim()) changed.push(b);
+		}
+		const removed = [..._blockRuntimes.values()].filter((rt) => !rt.key.startsWith('adhoc:') && !wanted.has(rt.key));
+		if (!changed.length && !removed.length) {
+			codeEditorDirty = false;
+			setCodeEditorStatus('Hot reload: no code changes', 'ok');
+			return;
+		}
+		// 1. Compile every changed block first: a typo must not touch the scene.
+		const compiled = new Map();
+		for (const b of changed) {
+			try {
+				compiled.set(b.key, compileVrBlock(b.code));
+			} catch (err) {
+				codeEditorDirty = true;
+				setCodeEditorStatus(`Syntax error in ${blockLabel(b.key)}: ${err.message} (scene unchanged)`, 'error');
+				return;
+			}
+		}
+		setCodeEditorStatus(fromLive ? 'Hot reloading…' : 'Applying (hot reload)…', 'pending');
+		// 2. Commit the new code to the model.
+		for (const [id, codes] of sceneUpdates) {
+			const sc = loadedScenes.find((x) => x.id === id);
+			if (sc) sc.codeBlocks = codes;
+		}
+		executedCodeBlocks = sessionBlocks;
+		// 3. Drop blocks that were deleted from the editor.
+		for (const rt of removed) teardownBlock(rt);
+		// 4. Swap each changed block in place.
+		const errors = [];
+		let restoredCount = 0;
+		for (const b of changed) {
+			const old = _blockRuntimes.get(b.key) || null;
+			const snap = old ? snapshotBlockState(old) : null;
+			if (old) teardownBlock(old);
+			try {
+				const rt = await runTrackedBlock(b.code, b.key, { hot: true, compiled: compiled.get(b.key) });
+				restoredCount += restoreBlockState(snap, rt);
+			} catch (err) {
+				console.error(`Hot reload: ${blockLabel(b.key)} failed`, err);
+				const partial = _blockRuntimes.get(b.key);
+				if (partial) teardownBlock(partial);
+				if (!old) { errors.push({ b, err, rolledBack: false }); continue; }
+				// Roll this block back to its last working code, state intact.
+				try {
+					const rt = await runTrackedBlock(old.code, b.key, { hot: true });
+					restoreBlockState(snap, rt);
+					setModelBlockCode(b, old.code);
+					errors.push({ b, err, rolledBack: true });
+				} catch (rollbackErr) {
+					throw new Error(`${blockLabel(b.key)}: ${err.message}; rollback also failed (${rollbackErr.message})`);
+				}
+			}
+		}
+		updateCodeEditorHint();
+		renderScenePanel();
+		if (errors.length) {
+			const e = errors[0];
+			codeEditorDirty = true;
+			setCodeEditorStatus(
+				`Error in ${blockLabel(e.b.key)}: ${e.err?.message || e.err}` +
+				(e.rolledBack ? ' (kept the previous version running)' : ''),
+				'error'
+			);
+			return;
+		}
+		codeEditorLastApplied = buildCodeEditorSource();
+		codeEditorDirty = false;
+		const n = changed.length;
+		setCodeEditorStatus(
+			`Hot reloaded ${n} block${n === 1 ? '' : 's'}` +
+			(removed.length ? `, removed ${removed.length}` : '') +
+			(restoredCount ? ' · state kept' : ''),
+			'ok'
+		);
+	} catch (err) {
+		// Last resort: the old clear-and-re-run of everything.
+		console.error('Hot reload failed, doing a full reset:', err);
+		codeEditorApplying = false;
+		await applyCodeFromEditor({ fromLive });
+		const cur = dchatCodeStatus ? dchatCodeStatus.textContent : '';
+		setCodeEditorStatus(`Hot reload failed (${err.message}) · did a full reset. ${cur}`, dchatCodeStatus?.className || 'error');
+		return;
+	} finally {
+		codeEditorApplying = false;
+		if (dchatCodeApply) dchatCodeApply.disabled = false;
+	}
+}
+
+function setModelBlockCode(b, code) {
+	if (b.sceneId) {
+		const sc = loadedScenes.find((x) => x.id === b.sceneId);
+		const i = Number(b.key.split('#').pop());
+		if (sc && sc.codeBlocks && i < sc.codeBlocks.length) sc.codeBlocks[i] = code;
+	} else {
+		const i = Number(b.key.slice(6));
+		if (i < executedCodeBlocks.length) executedCodeBlocks[i] = code;
+	}
+}
+
 function updateCodeEditorHint() {
 	if (!dchatCodeHint) return;
 	const sceneCount = loadedScenes.filter(s => s.active).reduce((n, s) => n + (s.codeBlocks?.length || 0), 0);
 	const sessionCount = executedCodeBlocks.length;
 	dchatCodeHint.textContent =
 		`Active scenes: ${sceneCount} block${sceneCount === 1 ? '' : 's'} · Session: ${sessionCount} block${sessionCount === 1 ? '' : 's'}. ` +
-		`Markers like // --- block N --- separate blocks on Apply.`;
+		`Apply / Live hot reload only changed blocks and keep state; Full reset re-runs everything. ` +
+		`Markers like // --- block N --- separate blocks.`;
 }
 
 function syncCodeEditorFromState({ force = false } = {}) {
@@ -2734,7 +2899,7 @@ function scheduleLiveCodeApply() {
 	if (codeEditorLiveTimer) clearTimeout(codeEditorLiveTimer);
 	codeEditorLiveTimer = setTimeout(() => {
 		codeEditorLiveTimer = null;
-		applyCodeFromEditor({ fromLive: true });
+		hotReloadFromEditor({ fromLive: true });
 	}, CODE_EDITOR_LIVE_DEBOUNCE_MS);
 }
 
@@ -2756,12 +2921,13 @@ async function applyCodeFromEditor({ fromLive = false } = {}) {
 		clearUserObjects();
 		for (const sc of loadedScenes) {
 			if (!sc.active) continue;
-			for (const code of sc.codeBlocks || []) {
-				await executeVrCode(code);
+			const codes = sc.codeBlocks || [];
+			for (let i = 0; i < codes.length; i++) {
+				await executeVrCode(codes[i], sceneBlockKey(sc, i));
 			}
 		}
-		for (const code of executedCodeBlocks) {
-			await executeVrCode(code);
+		for (let i = 0; i < executedCodeBlocks.length; i++) {
+			await executeVrCode(executedCodeBlocks[i], sessionBlockKey(i));
 		}
 
 		const normalized = buildCodeEditorSource();
@@ -2775,7 +2941,7 @@ async function applyCodeFromEditor({ fromLive = false } = {}) {
 			codeEditorDirty = false;
 		}
 		updateCodeEditorHint();
-		setCodeEditorStatus(fromLive ? 'Live applied' : 'Applied', 'ok');
+		setCodeEditorStatus('Full reset: scene rebuilt from code', 'ok');
 		renderScenePanel();
 	} catch (err) {
 		console.error('Code editor apply error:', err);
@@ -2803,6 +2969,18 @@ function revertCodeEditor() {
 }
 
 function clearUserObjects() {
+	// Full reset: stop every block's timers/listeners/dispose hooks and forget
+	// hot-reload state (scene objects are removed wholesale below).
+	for (const rt of _blockRuntimes.values()) {
+		for (const fn of rt.disposers) { try { fn(); } catch { /* ignore */ } }
+		for (const id of rt.timeouts) window.clearTimeout(id);
+		for (const id of rt.intervals) window.clearInterval(id);
+		for (const id of rt.rafs) window.cancelAnimationFrame(id);
+		for (const [target, type, fn, opts] of rt.listeners) { try { target.removeEventListener(type, fn, opts); } catch { /* ignore */ } }
+	}
+	_blockRuntimes.clear();
+	_blockStates.clear();
+	window.gsState = {};
 	// Stop p5 sketches / drop canvas surfaces and scene-owned gamepad hooks
 	// before the meshes and _vrAnimations they live in are thrown away.
 	for (const surf of [...gsSurfaces]) {
@@ -2868,19 +3046,19 @@ function rebuildSceneFromActive() {
 	// fire-and-forget here and just log any rejections.
 	for (const sc of loadedScenes) {
 		if (sc.active) {
-			for (const code of sc.codeBlocks) {
-				Promise.resolve(executeVrCode(code)).catch(e => {
+			sc.codeBlocks.forEach((code, i) => {
+				Promise.resolve(executeVrCode(code, sceneBlockKey(sc, i))).catch(e => {
 					console.error(`Scene "${sc.name}" error:`, e);
 				});
-			}
+			});
 		}
 	}
 	// Then re-execute current session code
-	for (const code of executedCodeBlocks) {
-		Promise.resolve(executeVrCode(code)).catch(e => {
+	executedCodeBlocks.forEach((code, i) => {
+		Promise.resolve(executeVrCode(code, sessionBlockKey(i))).catch(e => {
 			console.error('Session code error:', e);
 		});
-	}
+	});
 }
 
 function showExportModal(combined) {
@@ -2981,11 +3159,11 @@ function addLoadedScene(data, fallbackName) {
 	loadedScenes.push(sc);
 
 	// Execute the scene's code blocks (async; surface failures via console)
-	for (const code of sc.codeBlocks) {
-		Promise.resolve(executeVrCode(code)).catch(err => {
+	sc.codeBlocks.forEach((code, i) => {
+		Promise.resolve(executeVrCode(code, sceneBlockKey(sc, i))).catch(err => {
 			console.error(`Scene "${sc.name}" load error:`, err);
 		});
-	}
+	});
 
 	loadSceneThumbnails();
 	renderScenePanel();
@@ -3428,8 +3606,8 @@ function blankLiveSceneForCommunityLoad() {
 
 function runLoadedSceneCode(sc) {
 	const blocks = sc.codeBlocks || [];
-	return Promise.all(blocks.map(code =>
-		Promise.resolve(executeVrCode(code)).catch(err => {
+	return Promise.all(blocks.map((code, i) =>
+		Promise.resolve(executeVrCode(code, sceneBlockKey(sc, i))).catch(err => {
 			console.error(`Scene "${sc.name}" load error:`, err);
 		})
 	));
@@ -4129,8 +4307,14 @@ function renderDomSceneList() {
 	dchatExportCombinedMount.classList.toggle('visible', hasContent && loadedScenes.length > 0);
 }
 
-function renderScenePanel() {
-	renderDomSceneList();
+// Last clamp limits from renderScenePanel, so stick scrolling can tell when
+// it is already at an end and skip the redraw + texture upload.
+const _scenePanelMaxScroll = { scenes: Infinity, files: Infinity, code: Infinity };
+
+function renderScenePanel({ dom = true } = {}) {
+	// The desktop Scenes list only changes with the scenes themselves; stick
+	// scrolling the XR panel passes dom:false so it isn't rebuilt per frame.
+	if (dom) renderDomSceneList();
 	if (!sceneContext) return;
 
 	const ctx = sceneContext;
@@ -4200,6 +4384,7 @@ function renderScenePanel() {
 			ctx.fillText('Tap Load to import', w / 2, listTop + 65);
 		} else {
 			const maxScroll = Math.max(0, loadedScenes.length - maxVisible);
+			_scenePanelMaxScroll.scenes = maxScroll;
 			sceneScrollOffset = Math.max(0, Math.min(sceneScrollOffset, maxScroll));
 
 			for (let i = 0; i < maxVisible && (i + sceneScrollOffset) < loadedScenes.length; i++) {
@@ -4303,6 +4488,7 @@ function renderScenePanel() {
 		const listBottom = h - 16;
 		const maxVisible = Math.floor((listBottom - listTop) / itemH);
 		const maxScroll = Math.max(0, contextLibrary.length - maxVisible);
+		_scenePanelMaxScroll.files = maxScroll;
 		filesScrollOffset = Math.max(0, Math.min(filesScrollOffset, maxScroll));
 
 		if (contextLibrary.length === 0) {
@@ -4374,7 +4560,7 @@ function renderScenePanel() {
 			return { ...b };
 		});
 		const btnLayout = buildButtonLayout(codeBtns, {
-			width: w - 24, x: 12, y: contentTop, height: 40, perRow: 3, gap: 6
+			width: w - 24, x: 12, y: contentTop, height: 36, perRow: 2, gap: 6
 		});
 		scenePanelButtonBoxes = btnLayout.boxes;
 		drawButtonsToCanvas(ctx, scenePanelButtonBoxes, { fontSize: 12 });
@@ -4397,6 +4583,7 @@ function renderScenePanel() {
 		const listBottom = h - 16;
 		const maxVisible = Math.floor((listBottom - listTop) / lineH);
 		const maxScroll = Math.max(0, codeLines.length - maxVisible);
+		_scenePanelMaxScroll.code = maxScroll;
 		codeScrollOffset = Math.max(0, Math.min(codeScrollOffset, maxScroll));
 
 		ctx.fillStyle = 'rgba(0,0,0,0.25)';
@@ -4405,6 +4592,11 @@ function renderScenePanel() {
 
 		ctx.textAlign = 'left';
 		ctx.font = '13px ui-monospace, SFMono-Regular, Menlo, monospace';
+		// Monospace: truncate by character count instead of re-measuring the
+		// line once per dropped character.
+		const maxW = w - 52;
+		const charW = ctx.measureText('MMMMMMMMMM').width / 10 || 8;
+		const maxChars = Math.max(4, Math.floor(maxW / charW));
 		for (let i = 0; i < maxVisible && (i + codeScrollOffset) < codeLines.length; i++) {
 			const line = codeLines[i + codeScrollOffset];
 			const y = listTop + i * lineH + 12;
@@ -4412,9 +4604,7 @@ function renderScenePanel() {
 			ctx.fillText(String(i + codeScrollOffset + 1).padStart(3, ' '), 12, y);
 			ctx.fillStyle = '#e5e7eb';
 			let display = line.replace(/\t/g, '  ');
-			const maxW = w - 52;
-			while (ctx.measureText(display).width > maxW && display.length > 3) display = display.slice(0, -1);
-			if (display !== line.replace(/\t/g, '  ')) display += '\u2026';
+			if (display.length > maxChars) display = display.slice(0, maxChars - 1) + '\u2026';
 			ctx.fillText(display, 44, y);
 		}
 		if (codeScrollOffset > 0) {
@@ -4694,21 +4884,37 @@ function handleChatPanelHit(uv) {
 
 function deepestDesktopChatElement(x, y) {
 	if (!desktopChat) return null;
+	// Same answer as before (smallest visible box under the point, later
+	// nodes win ties) but checks the cheap box first and only reads computed
+	// style for boxes that contain the point, and skips the inside of any
+	// overflow-clipping box the point is not in (scrolled-away code lines).
 	let best = null;
 	let bestArea = Infinity;
-	const nodes = desktopChat.querySelectorAll('*');
-	for (const el of nodes) {
-		const style = getComputedStyle(el);
-		if (style.display === 'none' || style.visibility === 'hidden') continue;
-		const r = el.getBoundingClientRect();
-		if (r.width <= 0 || r.height <= 0) continue;
-		if (x < r.left || y < r.top || x > r.right || y > r.bottom) continue;
-		const area = r.width * r.height;
-		if (area <= bestArea) {
-			best = el;
-			bestArea = area;
+	const visit = (el) => {
+		for (const child of el.children) {
+			const r = child.getBoundingClientRect();
+			const inside = r.width > 0 && r.height > 0 && x >= r.left && y >= r.top && x <= r.right && y <= r.bottom;
+			let style = null;
+			if (inside) {
+				style = getComputedStyle(child);
+				if (style.display !== 'none' && style.visibility !== 'hidden') {
+					const area = r.width * r.height;
+					if (area <= bestArea) {
+						best = child;
+						bestArea = area;
+					}
+				}
+			}
+			if (child.children.length === 0) continue;
+			if (!inside && r.width > 0 && r.height > 0) {
+				style = style || getComputedStyle(child);
+				const ox = style.overflowX, oy = style.overflowY;
+				if (ox !== 'visible' && oy !== 'visible') continue;
+			}
+			visit(child);
 		}
-	}
+	};
+	visit(desktopChat);
 	return best;
 }
 
@@ -4927,7 +5133,9 @@ function moveHtmlInCanvasScrollDrag(controllerIndex, uv) {
 	// Grab the content: pointer motion moves the scrolled content with it.
 	if (drag.canY) drag.scroller.scrollTop = drag.originScrollTop - dy;
 	if (drag.canX) drag.scroller.scrollLeft = drag.originScrollLeft - dx;
-	tickHtmlInCanvas(true);
+	// Painted by the frame loop at most every HTML_PAINT_MIN_MS (was a full
+	// synchronous repaint on every frame of the drag).
+	markHtmlInCanvasDirty();
 }
 
 function endHtmlInCanvasScrollDrag(controllerIndex) {
@@ -4940,11 +5148,27 @@ function endHtmlInCanvasScrollDrag(controllerIndex) {
 
 function onXRSelectEnd(event) {
 	const idx = xrControllerIndex(event.target);
+	if (idx >= 0 && _surfacePressed[idx]) {
+		const surface = _surfacePressed[idx];
+		_surfacePressed[idx] = null;
+		const hover = _surfaceHover[idx];
+		if (hover && hover.surface === surface) dispatchSurfacePointer(surface, hover.uv, 'up', { pointerId: 10 + idx });
+		else dispatchSurfacePointer(surface, { x: 0.5, y: 0.5 }, 'cancel', { pointerId: 10 + idx });
+		return;
+	}
 	if (idx >= 0) endHtmlInCanvasScrollDrag(idx);
 }
 
 function onXRSelectStart(event) {
 	const controller = event.target;
+	// Trigger on a canvas surface the frame loop found in front of any window.
+	const sIdx = xrControllerIndex(controller);
+	if (sIdx >= 0 && _surfaceHover[sIdx]) {
+		const { surface, uv } = _surfaceHover[sIdx];
+		_surfacePressed[sIdx] = surface;
+		dispatchSurfacePointer(surface, uv, 'down', { pointerId: 10 + sIdx, pressed: true });
+		return;
+	}
 
 	tempMatrix.identity().extractRotation(controller.matrixWorld);
 	raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
@@ -5086,10 +5310,288 @@ function parseVrExecBlocks(text) {
  * Returns a Promise that resolves once the code finishes.
  */
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-function executeVrCode(code) {
-	const fn = new AsyncFunction('THREE', 'scene', 'camera', 'renderer', 'document', 'hud', code);
-	// Re-anchor stray HUD objects once the block finishes (success or failure).
-	return Promise.resolve(fn(THREE, scene, camera, renderer, document, hud)).finally(reanchorStrayObjects);
+
+// ----------------------------------------------------------------------------
+// Per-block runtime tracking (powers state-preserving hot reload)
+// ----------------------------------------------------------------------------
+// Every block runs with a key ("block:3", "scene:<id>#0", ...) and a `gs`
+// helper. While it runs we record what it creates: top-level scene objects,
+// _vrAnimations callbacks, timers, rAFs, listeners, overlay elements and
+// canvas/p5 surfaces. Hot reload can then tear down and re-run ONE block,
+// carrying over runtime state:
+//   gs.state            per-block object that survives hot reloads
+//   window.gsState      shared object that survives hot reloads
+//   gs.onUpdate(fn)     per-frame callback, replaced (not stacked) on reload
+//   gs.on(target, type, fn, opts) / gs.onDispose(fn)  cleaned up on reload
+//   gs.hot              true when this run is a hot reload
+// Bare setTimeout / setInterval / requestAnimationFrame (and their clear/cancel
+// functions) inside a block are block-scoped wrappers, so old timers stop.
+// Full reset (clearUserObjects) wipes all of it, state included.
+const BLOCK_PARAMS = ['THREE', 'scene', 'camera', 'renderer', 'document', 'hud', 'gs'];
+const BLOCK_TIMER_PARAMS = ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame'];
+const BLOCK_ATTRIBUTION_WAIT_MS = 5000;
+const _blockRuntimes = new Map();   // key -> runtime of the live run
+const _blockStates = new Map();     // key -> gs.state (survives hot reload)
+let _adhocBlockSeq = 0;
+let _blockQueue = Promise.resolve();
+window.gsState = window.gsState || {};
+
+/** Compile a block without running it. Throws SyntaxError for bad code. */
+function compileVrBlock(code) {
+	try {
+		return { fn: new AsyncFunction(...BLOCK_PARAMS, ...BLOCK_TIMER_PARAMS, code), timers: true };
+	} catch (err) {
+		// The block may declare its own `const setTimeout` etc.; fall back to
+		// plain globals for timers rather than refuse the block.
+		const fn = new AsyncFunction(...BLOCK_PARAMS, code); // rethrows real syntax errors
+		return { fn, timers: false };
+	}
+}
+
+function liveUserRoots() {
+	const out = [];
+	for (const child of scene.children) {
+		if (!systemObjectIds.has(child.uuid)) out.push(child);
+	}
+	if (typeof arPlacementRoot !== 'undefined' && arPlacementRoot) {
+		for (const child of arPlacementRoot.children) {
+			if (child === arPlacementMarker || systemObjectIds.has(child.uuid)) continue;
+			out.push(child);
+		}
+	}
+	return out;
+}
+
+function newBlockRuntime(key, code) {
+	return {
+		key, code, roots: [], anims: [], timeouts: new Set(), intervals: new Set(), rafs: new Set(),
+		listeners: [], disposers: [], overlay: [], surfaces: [], spawn: new Map()
+	};
+}
+
+function makeBlockApi(rt, hot) {
+	if (!_blockStates.has(rt.key)) _blockStates.set(rt.key, {});
+	const timers = {
+		setTimeout(fn, ms, ...args) {
+			const id = window.setTimeout(() => { rt.timeouts.delete(id); if (typeof fn === 'function') fn(...args); }, ms);
+			rt.timeouts.add(id);
+			return id;
+		},
+		setInterval(fn, ms, ...args) {
+			const id = window.setInterval(fn, ms, ...args);
+			rt.intervals.add(id);
+			return id;
+		},
+		clearTimeout(id) { rt.timeouts.delete(id); window.clearTimeout(id); },
+		clearInterval(id) { rt.intervals.delete(id); window.clearInterval(id); },
+		requestAnimationFrame(fn) {
+			const id = window.requestAnimationFrame((t) => { rt.rafs.delete(id); fn(t); });
+			rt.rafs.add(id);
+			return id;
+		},
+		cancelAnimationFrame(id) { rt.rafs.delete(id); window.cancelAnimationFrame(id); }
+	};
+	const gs = {
+		key: rt.key,
+		hot: !!hot,
+		state: _blockStates.get(rt.key),
+		onUpdate(fn) {
+			if (typeof fn !== 'function') return fn;
+			window._vrAnimations.push(fn);
+			return fn;
+		},
+		on(target, type, fn, opts) {
+			if (!target || typeof target.addEventListener !== 'function') return;
+			target.addEventListener(type, fn, opts);
+			rt.listeners.push([target, type, fn, opts]);
+		},
+		onDispose(fn) { if (typeof fn === 'function') rt.disposers.push(fn); },
+		...timers
+	};
+	return { gs, timers };
+}
+
+function snapshotTransformKeyed(rt, visit) {
+	const seen = new Map();
+	rt.roots.forEach((root, i) => {
+		root.traverse((obj) => {
+			let key;
+			if (obj.name) key = 'n:' + obj.name;
+			else if (obj === root) key = 'i:' + i;
+			else return;
+			const n = seen.get(key) || 0;
+			seen.set(key, n + 1);
+			if (n) key += '#' + n;
+			visit(key, obj);
+		});
+	});
+}
+
+function recordBlockSpawn(rt) {
+	rt.spawn.clear();
+	snapshotTransformKeyed(rt, (key, obj) => {
+		rt.spawn.set(key, {
+			pos: obj.position.clone(), quat: obj.quaternion.clone(), scale: obj.scale.clone(),
+			vel: obj.userData && obj.userData.velocity && obj.userData.velocity.isVector3 ? obj.userData.velocity.clone() : null
+		});
+	});
+}
+
+function readAmmoVelocity(body) {
+	try {
+		const lv = body.getLinearVelocity(), av = body.getAngularVelocity();
+		return { lin: [lv.x(), lv.y(), lv.z()], ang: [av.x(), av.y(), av.z()] };
+	} catch { return null; }
+}
+
+/** Live transforms (and velocities) of everything a block created, keyed by
+ *  object name (or root order for unnamed roots). */
+function snapshotBlockState(rt) {
+	const snap = new Map();
+	snapshotTransformKeyed(rt, (key, obj) => {
+		const body = obj.userData && obj.userData.physicsBody;
+		snap.set(key, {
+			pos: obj.position.clone(), quat: obj.quaternion.clone(), scale: obj.scale.clone(),
+			vel: obj.userData && obj.userData.velocity && obj.userData.velocity.isVector3 ? obj.userData.velocity.clone() : null,
+			body: body ? readAmmoVelocity(body) : null,
+			spawn: rt.spawn.get(key) || null
+		});
+	});
+	return snap;
+}
+
+function syncAmmoBodyToObject(obj, vel) {
+	const body = obj.userData && obj.userData.physicsBody;
+	if (!body || typeof body.getWorldTransform !== 'function') return;
+	try {
+		obj.updateWorldMatrix(true, false);
+		const p = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+		obj.matrixWorld.decompose(p, q, sc);
+		const t = body.getWorldTransform();
+		t.getOrigin().setValue(p.x, p.y, p.z);
+		const bq = t.getRotation();
+		bq.setValue(q.x, q.y, q.z, q.w);
+		t.setRotation(bq);
+		const ms = body.getMotionState && body.getMotionState();
+		if (ms && ms.setWorldTransform) ms.setWorldTransform(t);
+		if (vel) {
+			const lv = body.getLinearVelocity(); lv.setValue(vel.lin[0], vel.lin[1], vel.lin[2]); body.setLinearVelocity(lv);
+			const av = body.getAngularVelocity(); av.setValue(vel.ang[0], vel.ang[1], vel.ang[2]); body.setAngularVelocity(av);
+		}
+		if (body.activate) body.activate();
+	} catch (e) {
+		console.warn('hot reload: could not re-sync physics body', e);
+	}
+}
+
+/** Put runtime state back onto a block's new objects. A value is only carried
+ *  over when the code's starting value is unchanged, so editing an object's
+ *  start position in code still moves it. */
+function restoreBlockState(snap, rt) {
+	if (!snap || !snap.size) return 0;
+	let restored = 0;
+	snapshotTransformKeyed(rt, (key, obj) => {
+		const old = snap.get(key);
+		if (!old) return;
+		const spawn = rt.spawn.get(key);
+		const same = (a, b) => !!(a && b && a.equals(b));
+		// Per axis, so editing only the start height keeps the runtime x/z.
+		for (const axis of ['x', 'y', 'z']) {
+			if (!old.spawn || !spawn || old.spawn.pos[axis] === spawn.pos[axis]) obj.position[axis] = old.pos[axis];
+			if (!old.spawn || !spawn || old.spawn.scale[axis] === spawn.scale[axis]) obj.scale[axis] = old.scale[axis];
+		}
+		if (!old.spawn || !spawn || same(old.spawn.quat, spawn.quat)) obj.quaternion.copy(old.quat);
+		const v = obj.userData && obj.userData.velocity;
+		if (old.vel && v && v.isVector3 && (!old.spawn || !spawn || !old.spawn.vel || same(old.spawn.vel, spawn.vel))) v.copy(old.vel);
+		syncAmmoBodyToObject(obj, old.body);
+		restored++;
+	});
+	return restored;
+}
+
+/** Undo everything one block run created, leaving every other block alone. */
+function teardownBlock(rt) {
+	if (!rt) return;
+	for (const fn of rt.disposers) { try { fn(); } catch (e) { console.warn('block dispose hook failed', e); } }
+	for (const id of rt.timeouts) window.clearTimeout(id);
+	for (const id of rt.intervals) window.clearInterval(id);
+	for (const id of rt.rafs) window.cancelAnimationFrame(id);
+	for (const [target, type, fn, opts] of rt.listeners) { try { target.removeEventListener(type, fn, opts); } catch { /* ignore */ } }
+	if (rt.anims.length) {
+		const drop = new Set(rt.anims);
+		window._vrAnimations = window._vrAnimations.filter((f) => !drop.has(f));
+	}
+	for (const surf of rt.surfaces) { try { surf.dispose(); } catch (e) { console.warn('surface dispose failed', e); } }
+	const world = window.physicsWorld;
+	for (const root of rt.roots) {
+		root.traverse((obj) => {
+			const body = obj.userData && obj.userData.physicsBody;
+			if (body && world && typeof world.removeRigidBody === 'function') {
+				try { world.removeRigidBody(body); } catch { /* ignore */ }
+			}
+		});
+		if (root.parent) root.parent.remove(root);
+		disposeRecursive(root);
+	}
+	for (const el of rt.overlay) el.remove();
+	if (_blockRuntimes.get(rt.key) === rt) _blockRuntimes.delete(rt.key);
+}
+
+/** Run one block with tracking. Runs are serialized so objects are attributed
+ *  to the right block. */
+function runTrackedBlock(code, key, { hot = false, compiled = null } = {}) {
+	const job = _blockQueue.then(() => runTrackedBlockNow(code, key, { hot, compiled }));
+	_blockQueue = job.then(() => {}, () => {});
+	return job;
+}
+
+async function runTrackedBlockNow(code, key, { hot, compiled }) {
+	const { fn, timers: useTimers } = compiled || compileVrBlock(code);
+	const rt = newBlockRuntime(key, code);
+	const rootsBefore = new Set(liveUserRoots());
+	const animsBefore = new Set(window._vrAnimations);
+	const surfacesBefore = new Set(gsSurfaces);
+	const overlayRoot = document.getElementById('overlay-root');
+	const overlayBefore = new Set(overlayRoot ? overlayRoot.children : []);
+	const { gs, timers } = makeBlockApi(rt, hot);
+	const args = [THREE, scene, camera, renderer, document, hud, gs];
+	if (useTimers) args.push(...BLOCK_TIMER_PARAMS.map((n) => timers[n]));
+	const finish = () => {
+		reanchorStrayObjects();
+		rt.roots = liveUserRoots().filter((r) => !rootsBefore.has(r));
+		rt.anims = window._vrAnimations.filter((f) => !animsBefore.has(f));
+		rt.surfaces = [...gsSurfaces].filter((sf) => !surfacesBefore.has(sf));
+		rt.overlay = overlayRoot ? [...overlayRoot.children].filter((el) => !overlayBefore.has(el) && !systemOverlayIds.has(el.id)) : [];
+		recordBlockSpawn(rt);
+		_blockRuntimes.set(key, rt);
+	};
+	let run;
+	try {
+		run = Promise.resolve(fn(...args));
+	} catch (err) {
+		finish();
+		throw err;
+	}
+	// A block that keeps awaiting (big model download) shouldn't hold up the
+	// rest; attribute what it made so far and let it finish in the background.
+	let timer = 0;
+	const capped = new Promise((resolve) => { timer = window.setTimeout(() => resolve('timeout'), BLOCK_ATTRIBUTION_WAIT_MS); });
+	try {
+		const r = await Promise.race([run, capped]);
+		if (r === 'timeout') run.finally(reanchorStrayObjects).catch(() => {});
+	} finally {
+		window.clearTimeout(timer);
+		finish();
+	}
+	return rt;
+}
+
+/**
+ * Run a vr-exec block. `key` identifies it for hot reload (session blocks are
+ * "block:<index>", scene blocks "scene:<id>#<index>"); omit for one-off runs.
+ */
+function executeVrCode(code, key) {
+	return runTrackedBlock(code, key || `adhoc:${++_adhocBlockSeq}`);
 }
 
 // Safety net: an object that ends up parented to the camera or to a UI panel
@@ -5125,7 +5627,7 @@ const MAX_FIX_ATTEMPTS = 3;
  * Attempt to fix a failing code block via the error-correction API.
  * Returns { success, code, error } — the final fixed code if successful.
  */
-async function attemptAutoFix(failingCode, errorMessage, errorStack) {
+async function attemptAutoFix(failingCode, errorMessage, errorStack, blockKey) {
 	const priorFixes = [];
 
 	for (let attempt = 1; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
@@ -5208,7 +5710,7 @@ async function attemptAutoFix(failingCode, errorMessage, errorStack) {
 
 			// Try executing the fixed code
 			try {
-				await executeVrCode(fixedCode);
+				await executeVrCode(fixedCode, blockKey);
 				return { success: true, code: fixedCode, attempts: attempt };
 			} catch (retryErr) {
 				// This fix also failed — record it and try again
@@ -5765,8 +6267,9 @@ async function sendMessage(userMessage) {
 			let execCount = 0;
 			let fixCount = 0;
 			for (const code of codeBlocks) {
+				const blockKey = sessionBlockKey(executedCodeBlocks.length);
 				try {
-					await executeVrCode(code);
+					await executeVrCode(code, blockKey);
 					executedCodeBlocks.push(code);
 					execCount++;
 				} catch (execErr) {
@@ -5779,7 +6282,7 @@ async function sendMessage(userMessage) {
 					renderChatToCanvas();
 
 					// Attempt auto-fix
-					const fix = await attemptAutoFix(code, execErr.message, execErr.stack);
+					const fix = await attemptAutoFix(code, execErr.message, execErr.stack, blockKey);
 					if (fix.success) {
 						executedCodeBlocks.push(fix.code);
 						execCount++;
@@ -6544,6 +7047,162 @@ async function gsCreateP5Surface(sketch, opts = {}) {
 }
 
 window.gsCreateCanvasSurface = gsCreateCanvasSurface;
+
+// ----------------------------------------------------------------------------
+// Pointer input for canvas surfaces (p5 sketches and blank canvases)
+// ----------------------------------------------------------------------------
+// A controller ray (or a Quest hand's pinch ray), a desktop mouse or a phone
+// touch on a surface mesh is turned into pointer + mouse events on the
+// surface's canvas, at the matching canvas pixel. p5 listens on window and
+// computes mouseX/mouseY from the canvas's client rect, so the events carry
+// clientX/clientY in that rect (the p5 host is laid out off-screen); a canvas
+// that isn't in the document gets canvas-pixel clientX/offsetX instead.
+// This only reads the surface; the per-frame texture upload is untouched.
+const _surfaceRaycaster = new THREE.Raycaster();
+const _surfaceMeshes = [];
+const _surfaceHover = [null, null];     // per XR controller: { surface, uv }
+const _surfacePressed = [null, null];   // per XR controller: surface held by the trigger
+
+function surfaceForMesh(mesh) {
+	for (const sf of gsSurfaces) if (sf.mesh === mesh) return sf;
+	return null;
+}
+
+/** First canvas-surface hit along the raycaster's ray, or null. */
+function intersectCanvasSurfaces(raycaster) {
+	if (!gsSurfaces.size) return null;
+	_surfaceMeshes.length = 0;
+	for (const sf of gsSurfaces) {
+		const m = sf.mesh;
+		if (m && m.parent && m.visible) _surfaceMeshes.push(m);
+	}
+	if (!_surfaceMeshes.length) return null;
+	const hits = raycaster.intersectObjects(_surfaceMeshes, false);
+	for (const h of hits) {
+		if (!h.uv) continue;
+		const surface = surfaceForMesh(h.object);
+		if (surface) return { surface, uv: h.uv.clone(), point: h.point, face: h.face, distance: h.distance };
+	}
+	return null;
+}
+
+function dispatchSurfacePointer(surface, uv, type, { pointerId = 1, pressed = false } = {}) {
+	const canvas = surface && surface.canvas;
+	if (!canvas || !uv) return;
+	const u = Math.min(1, Math.max(0, uv.x));
+	const v = Math.min(1, Math.max(0, 1 - uv.y));
+	const rect = canvas.isConnected ? canvas.getBoundingClientRect() : null;
+	let clientX, clientY, offsetX, offsetY;
+	if (rect && rect.width > 0 && rect.height > 0) {
+		offsetX = u * rect.width;
+		offsetY = v * rect.height;
+		clientX = rect.left + offsetX;
+		clientY = rect.top + offsetY;
+	} else {
+		offsetX = clientX = u * canvas.width;
+		offsetY = clientY = v * canvas.height;
+	}
+	const buttons = pressed ? 1 : 0;
+	const init = {
+		bubbles: true, cancelable: true, composed: true, view: window,
+		clientX, clientY, screenX: clientX, screenY: clientY, button: 0, buttons
+	};
+	const fire = (ev) => {
+		Object.defineProperty(ev, 'offsetX', { value: offsetX });
+		Object.defineProperty(ev, 'offsetY', { value: offsetY });
+		canvas.dispatchEvent(ev);
+	};
+	const pointer = (t) => fire(new PointerEvent(t, { ...init, pointerId, pointerType: 'mouse', isPrimary: true, pressure: pressed ? 0.5 : 0 }));
+	const mouse = (t) => fire(new MouseEvent(t, init));
+	if (type === 'move') { pointer('pointermove'); mouse('mousemove'); }
+	else if (type === 'down') { pointer('pointerdown'); mouse('mousedown'); }
+	else if (type === 'up') { pointer('pointerup'); mouse('mouseup'); mouse('click'); }
+	else if (type === 'cancel') { pointer('pointerup'); mouse('mouseup'); }
+}
+
+/**
+ * One XR controller's ray vs the canvas surfaces. A window hit that is closer
+ * wins (returns null). Sends pointermove when the hit pixel changes and puts
+ * the reticle on the sketch as a small white dot.
+ */
+function updateSurfacePointer(i, rayOrigin, rayDir, uiIntersects, reticle) {
+	// Surfaces are world content, so they stay clickable with the UI hidden.
+	let surfHit = null;
+	if (gsSurfaces.size) {
+		_surfaceRaycaster.set(rayOrigin, rayDir);
+		surfHit = intersectCanvasSurfaces(_surfaceRaycaster);
+		if (surfHit && uiIntersects.length > 0 && uiIntersects[0].distance <= surfHit.distance) surfHit = null;
+	}
+	const pressedSurface = _surfacePressed[i];
+	if (surfHit && (!pressedSurface || surfHit.surface === pressedSurface)) {
+		const prev = _surfaceHover[i];
+		if (!prev || prev.surface !== surfHit.surface || !prev.uv.equals(surfHit.uv)) {
+			dispatchSurfacePointer(surfHit.surface, surfHit.uv, 'move', { pointerId: 10 + i, pressed: !!pressedSurface });
+		}
+		_surfaceHover[i] = { surface: surfHit.surface, uv: surfHit.uv };
+	} else if (!pressedSurface) {
+		_surfaceHover[i] = null;
+	}
+	if (surfHit && reticle) {
+		reticle.position.copy(surfHit.point);
+		_tmpSurfNormal.copy(surfHit.face.normal).transformDirection(surfHit.surface.mesh.matrixWorld);
+		if (_tmpSurfNormal.dot(rayDir) > 0) _tmpSurfNormal.negate();
+		reticle.lookAt(surfHit.point.x + _tmpSurfNormal.x, surfHit.point.y + _tmpSurfNormal.y, surfHit.point.z + _tmpSurfNormal.z);
+		reticle.material.color.setHex(0xffffff);
+		reticle.visible = true;
+	}
+	return surfHit;
+}
+const _tmpSurfNormal = new THREE.Vector3();
+
+// Desktop mouse / phone touch on a surface in the 3D view. Capture phase on
+// the WebGL canvas so a press that lands on a sketch doesn't also orbit.
+const _surfaceNdc = new THREE.Vector2();
+let _desktopSurfaceDrag = null; // { surface, pointerId }
+function desktopSurfaceHit(e) {
+	if (renderer.xr.isPresenting || mobileXRMode) return null;
+	const r = renderer.domElement.getBoundingClientRect();
+	if (!r.width || !r.height) return null;
+	_surfaceNdc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+	_surfaceRaycaster.setFromCamera(_surfaceNdc, camera);
+	return intersectCanvasSurfaces(_surfaceRaycaster);
+}
+renderer.domElement.addEventListener('pointerdown', (e) => {
+	if (e.button !== 0 && e.pointerType === 'mouse') return;
+	const hit = desktopSurfaceHit(e);
+	if (!hit) return;
+	e.stopImmediatePropagation();
+	e.preventDefault();
+	_desktopSurfaceDrag = { surface: hit.surface, pointerId: e.pointerId };
+	try { renderer.domElement.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+	dispatchSurfacePointer(hit.surface, hit.uv, 'move', { pressed: false });
+	dispatchSurfacePointer(hit.surface, hit.uv, 'down', { pressed: true });
+}, true);
+renderer.domElement.addEventListener('pointermove', (e) => {
+	if (_desktopSurfaceDrag) {
+		if (e.pointerId !== _desktopSurfaceDrag.pointerId) return;
+		e.stopImmediatePropagation();
+		const hit = desktopSurfaceHit(e);
+		if (hit && hit.surface === _desktopSurfaceDrag.surface) dispatchSurfacePointer(hit.surface, hit.uv, 'move', { pressed: true });
+		return;
+	}
+	if (!gsSurfaces.size || e.buttons) return;
+	const hit = desktopSurfaceHit(e);
+	if (hit) dispatchSurfacePointer(hit.surface, hit.uv, 'move', { pressed: false });
+}, true);
+const endDesktopSurfaceDrag = (e) => {
+	if (!_desktopSurfaceDrag || e.pointerId !== _desktopSurfaceDrag.pointerId) return;
+	e.stopImmediatePropagation();
+	const drag = _desktopSurfaceDrag;
+	_desktopSurfaceDrag = null;
+	const hit = desktopSurfaceHit(e);
+	const uv = hit && hit.surface === drag.surface ? hit.uv : null;
+	if (uv) dispatchSurfacePointer(drag.surface, uv, e.type === 'pointercancel' ? 'cancel' : 'up');
+	else dispatchSurfacePointer(drag.surface, { x: 0.5, y: 0.5 }, 'cancel');
+};
+renderer.domElement.addEventListener('pointerup', endDesktopSurfaceDrag, true);
+renderer.domElement.addEventListener('pointercancel', endDesktopSurfaceDrag, true);
+
 window.gsCreateP5Surface = gsCreateP5Surface;
 
 function buildGsSettingsNote() {
@@ -6554,7 +7213,7 @@ function buildGsSettingsNote() {
 	} else if (lib === 'webgl') {
 		lines.push("Environment: 3D, raw WebGL. Write plain WebGL (your own shaders, buffers and gl.draw* calls) instead of THREE meshes and materials. Get a context with `const surf = gsCreateCanvasSurface({ context: 'webgl2', width: 1024, height: 768 }); const gl = surf.gl;` (it shows the canvas on a panel in the scene and re-uploads it every frame) and draw in a window._vrAnimations callback.");
 	} else if (lib === 'p5') {
-		lines.push('Environment: 2D, p5.js. Write a p5.js sketch in instance mode and show it with `window.mySketch = await gsCreateP5Surface((p) => { p.setup = () => { p.createCanvas(800, 600); }; p.draw = () => { p.background(20); /* ... */ }; });`. Call every p5 function on `p` (never global mode). The app drives p.draw every frame, also in a headset. Mouse/keyboard events do not reach the sketch; use gsGamepad or your own window listeners for input.');
+		lines.push('Environment: 2D, p5.js. Write a p5.js sketch in instance mode and show it with `window.mySketch = await gsCreateP5Surface((p) => { p.setup = () => { p.createCanvas(800, 600); }; p.draw = () => { p.background(20); /* ... */ }; });`. Call every p5 function on `p` (never global mode). The app drives p.draw every frame, also in a headset. Pointer input reaches the sketch on desktop, phone and in a headset (VR controller ray + trigger), so p.mouseX, p.mouseY, p.mouseIsPressed, p.mousePressed and p.mouseDragged work; keyboard input does not, use gsGamepad or window listeners for that.');
 	} else if (lib === 'canvas') {
 		lines.push('Environment: 2D, blank HTML canvas (no library). Draw with the Canvas 2D API: `const surf = gsCreateCanvasSurface({ width: 1024, height: 768 }); const ctx = surf.ctx;` and animate in a window._vrAnimations callback.');
 	}
@@ -7484,7 +8143,9 @@ if (dchatCodeEditor) {
 		}
 	});
 }
-if (dchatCodeApply) dchatCodeApply.addEventListener('click', () => applyCodeFromEditor());
+if (dchatCodeApply) dchatCodeApply.addEventListener('click', () => hotReloadFromEditor());
+const dchatCodeReset = document.getElementById('dchat-code-reset');
+if (dchatCodeReset) dchatCodeReset.addEventListener('click', () => applyCodeFromEditor());
 if (dchatCodeRevert) dchatCodeRevert.addEventListener('click', revertCodeEditor);
 if (dchatCodeLive) {
 	dchatCodeLive.checked = false; // default OFF for safety
@@ -7880,6 +8541,8 @@ renderer.xr.addEventListener('sessionstart', () => {
 	// 'local-floor' reference space: origin at the real floor, eye level
 	// is around y=1.6, so anchor panels just below eye level for comfort.
 	positionAllPanels(1.4);
+	resetPanelAnchor();
+	if (windowAnchorMode === 'follow') _anchorSnapNext = true; // start right in front of you
 	setImmersiveUiMode(true);
 	applyLayDownView();
 
@@ -7892,12 +8555,127 @@ renderer.xr.addEventListener('sessionstart', () => {
 
 renderer.xr.addEventListener('sessionend', () => {
 	positionAllPanels(1.4);
+	resetPanelAnchor();
 	isVRMode = true;
 	applyEnvironmentMode();
 	applyLayDownView(); // clear pitch so desktop orbit stays upright
 	renderSidePanel();
 	renderDomEnv();
 	setImmersiveUiMode(false);
+});
+
+// ============================================================================
+// Window anchoring — Fixed (in the world) or Follow head (lazy, yaw-only)
+// ============================================================================
+// Every XR window (chat, input, keyboard, side, scene/code, HTML mirror) is a
+// child of panelAnchor, positioned exactly as before in its local space. In
+// Fixed mode the anchor is the identity, so nothing changes. In Follow mode
+// the anchor glides to the head's position and heading, but only once the
+// windows drift out of a comfort zone (turned away > 50 degrees, walked > 0.4 m
+// or head height changed > 0.3 m), then eases in and stops. Yaw only, so the
+// windows stay upright. Per frame it is a handful of vector ops and no
+// allocations; raycasts use the updated matrices, so buttons keep working
+// while the windows move.
+const WINDOW_ANCHOR_STORAGE_KEY = 'gs.windowAnchor';
+const WINDOW_ANCHOR_MODES = ['fixed', 'follow'];
+const FOLLOW_EYE_HEIGHT = 1.6;               // panel layout assumes eyes at 1.6 m (panels at 1.4 m)
+const FOLLOW_YAW_START = THREE.MathUtils.degToRad(50);
+const FOLLOW_YAW_STOP = THREE.MathUtils.degToRad(1);
+const FOLLOW_DIST_START = 0.4;
+const FOLLOW_HEIGHT_START = 0.3;
+const FOLLOW_STOP_DIST = 0.02;
+const FOLLOW_RATE = 4;                       // 1/s exponential ease
+let windowAnchorMode = 'fixed';
+let _anchorFollowing = false;
+let _anchorSnapNext = false;
+let _anchorYaw = 0;
+const panelAnchor = new THREE.Group();
+panelAnchor.name = 'gsPanelAnchor';
+scene.add(panelAnchor);
+const _anchorHeadPos = new THREE.Vector3();
+const _anchorHeadDir = new THREE.Vector3();
+
+function resetPanelAnchor() {
+	panelAnchor.position.set(0, 0, 0);
+	panelAnchor.rotation.set(0, 0, 0);
+	_anchorYaw = 0;
+	_anchorFollowing = false;
+	panelAnchor.updateMatrixWorld(true);
+}
+
+function wrapAngle(a) {
+	while (a > Math.PI) a -= Math.PI * 2;
+	while (a < -Math.PI) a += Math.PI * 2;
+	return a;
+}
+
+// Called once per XR frame before the panel billboarding and raycasts.
+function updatePanelAnchor(dt, xrCamera) {
+	if (windowAnchorMode !== 'follow') return;
+	// Don't slide a window out from under an active trigger drag.
+	if (htmlScrollDrag[0] || htmlScrollDrag[1]) return;
+	xrCamera.getWorldPosition(_anchorHeadPos);
+	xrCamera.getWorldDirection(_anchorHeadDir);
+	const horiz = Math.hypot(_anchorHeadDir.x, _anchorHeadDir.z);
+	// Looking straight up/down: heading is undefined, keep the current one.
+	const headYaw = horiz > 0.2 ? Math.atan2(-_anchorHeadDir.x, -_anchorHeadDir.z) : _anchorYaw;
+	const tx = _anchorHeadPos.x;
+	const ty = _anchorHeadPos.y - FOLLOW_EYE_HEIGHT;
+	const tz = _anchorHeadPos.z;
+	const p = panelAnchor.position;
+	const dYaw = wrapAngle(headYaw - _anchorYaw);
+	const dist = Math.hypot(tx - p.x, tz - p.z);
+	const dy = ty - p.y;
+	if (_anchorSnapNext) {
+		_anchorSnapNext = false;
+		p.set(tx, ty, tz);
+		_anchorYaw = headYaw;
+		_anchorFollowing = false;
+	} else {
+		if (!_anchorFollowing && (Math.abs(dYaw) > FOLLOW_YAW_START || dist > FOLLOW_DIST_START || Math.abs(dy) > FOLLOW_HEIGHT_START)) {
+			_anchorFollowing = true;
+		}
+		if (!_anchorFollowing) return;
+		const k = 1 - Math.exp(-FOLLOW_RATE * Math.max(dt, 1 / 120));
+		p.x += (tx - p.x) * k;
+		p.y += dy * k;
+		p.z += (tz - p.z) * k;
+		_anchorYaw = wrapAngle(_anchorYaw + dYaw * k);
+		if (Math.abs(dYaw) < FOLLOW_YAW_STOP && dist < FOLLOW_STOP_DIST && Math.abs(dy) < FOLLOW_STOP_DIST) {
+			_anchorFollowing = false;
+		}
+	}
+	panelAnchor.rotation.set(0, _anchorYaw, 0);
+	panelAnchor.updateMatrixWorld(true);
+}
+
+function renderWindowAnchorUi() {
+	document.querySelectorAll('#dchat-window-anchor [data-window-anchor]').forEach((btn) => {
+		const on = btn.dataset.windowAnchor === windowAnchorMode;
+		btn.classList.toggle('active', on);
+		btn.setAttribute('aria-checked', on ? 'true' : 'false');
+	});
+}
+
+function setWindowAnchorMode(mode, { persist = true } = {}) {
+	if (!WINDOW_ANCHOR_MODES.includes(mode)) mode = 'fixed';
+	windowAnchorMode = mode;
+	if (mode === 'fixed') {
+		resetPanelAnchor();
+	} else if (xrSessionActive()) {
+		// Glide in from wherever the windows are now.
+		_anchorFollowing = true;
+	}
+	if (persist) {
+		try { localStorage.setItem(WINDOW_ANCHOR_STORAGE_KEY, mode); } catch { /* storage blocked */ }
+	}
+	renderWindowAnchorUi();
+	renderSidePanel();
+	updateStatus(mode === 'follow' ? 'Windows follow your head' : 'Windows fixed in place', '');
+}
+
+document.querySelectorAll('#dchat-window-anchor [data-window-anchor]').forEach((btn) => {
+	btn.addEventListener('click', () => setWindowAnchorMode(btn.dataset.windowAnchor));
 });
 
 // ============================================================================
@@ -7950,11 +8728,42 @@ function layoutHtmlInCanvasPanel(chatY = 1.4) {
 	}
 }
 
+// The mirror is repainted only when #desktop-chat actually changed (DOM
+// mutation, scroll, input, focus) instead of unconditionally every 200 ms.
+// Each repaint walks the menu and re-uploads the texture, which on a Quest
+// was the frame-time hog while the Code tab was open.
+const HTML_PAINT_MIN_MS = 66;      // cap repaints at ~15/s while content changes
+const HTML_PAINT_IDLE_MS = 2000;   // safety refresh for CSS-only changes (hover, animations)
+let _htmlDirty = true;
+let _htmlObserver = null;
+function markHtmlInCanvasDirty() { _htmlDirty = true; }
+function watchHtmlInCanvasSource(on) {
+	if (!desktopChat) return;
+	if (on && !_htmlObserver) {
+		_htmlObserver = new MutationObserver(markHtmlInCanvasDirty);
+		_htmlObserver.observe(desktopChat, { subtree: true, childList: true, characterData: true, attributes: true });
+		for (const ev of ['scroll', 'input', 'change', 'focusin', 'focusout']) {
+			desktopChat.addEventListener(ev, markHtmlInCanvasDirty, true);
+		}
+	} else if (!on && _htmlObserver) {
+		_htmlObserver.disconnect();
+		_htmlObserver = null;
+		for (const ev of ['scroll', 'input', 'change', 'focusin', 'focusout']) {
+			desktopChat.removeEventListener(ev, markHtmlInCanvasDirty, true);
+		}
+	}
+	_htmlDirty = true;
+}
+
 function tickHtmlInCanvas(force) {
 	if (!htmlInCanvasPanel || !htmlInCanvasPanel.visible || !desktopChat || !htmlInCanvasCanvas) return;
 	const now = performance.now();
-	if (!force && now - _htmlPaintAt < 200) return;
+	if (!force) {
+		const since = now - _htmlPaintAt;
+		if (_htmlDirty ? since < HTML_PAINT_MIN_MS : since < HTML_PAINT_IDLE_MS) return;
+	}
 	_htmlPaintAt = now;
+	_htmlDirty = false;
 	try {
 		const metrics = paintElementToCanvas(desktopChat, htmlInCanvasCanvas);
 		if (htmlInCanvasTexture) htmlInCanvasTexture.needsUpdate = true;
@@ -7972,6 +8781,7 @@ function tickHtmlInCanvas(force) {
 
 function setHtmlInCanvas(on) {
 	htmlInCanvas = !!on;
+	watchHtmlInCanvasSource(htmlInCanvas);
 	if (!htmlInCanvas) htmlKeyboardForDom = false;
 	applyXrPanelVisibility(xrSessionActive());
 	if (htmlInCanvas) {
@@ -8053,6 +8863,16 @@ createKeyboardPanel();
 createSidePanel();
 createScenePanel();
 createHtmlInCanvasPanel();
+// All XR windows ride on panelAnchor (identity in Fixed mode, see above).
+for (const panel of [chatPanel, inputPanel, keyboardPanel, sidePanel, scenePanel, htmlInCanvasPanel]) {
+	if (panel) panelAnchor.add(panel);
+}
+{
+	let savedAnchor = null;
+	try { savedAnchor = localStorage.getItem(WINDOW_ANCHOR_STORAGE_KEY); } catch { /* storage blocked */ }
+	windowAnchorMode = savedAnchor === 'follow' ? 'follow' : 'fixed';
+	renderWindowAnchorUi();
+}
 createHudStatus();
 createUiToggle();
 // Start in windowed (non-XR) mode: the desktop chat window is the UI, and the
@@ -8105,6 +8925,8 @@ applyMenuLayerPriority();
 // Previous per-hand button-pressed state, for edge detection (ray toggle) and
 // hold detection (push-to-talk). Keyed by handedness → button index → bool.
 const _prevButtons = { left: {}, right: {} };
+let _stickScrollAt = 0;
+const _cameraWorldPos = new THREE.Vector3();
 
 renderer.setAnimationLoop((time) => {
 	// Frame delta (seconds), clamped so a paused/backgrounded tab doesn't jump.
@@ -8121,8 +8943,9 @@ renderer.setAnimationLoop((time) => {
 	// Billboard effect: panels face the camera while staying upright
 	if (renderer.xr.isPresenting) {
 		const xrCamera = renderer.xr.getCamera();
-		const cameraWorldPos = new THREE.Vector3();
+		const cameraWorldPos = _cameraWorldPos;
 		xrCamera.getWorldPosition(cameraWorldPos);
+		updatePanelAnchor(dt, xrCamera);
 
 		if (chatPanel) chatPanel.lookAt(cameraWorldPos);
 		if (inputPanel) inputPanel.lookAt(cameraWorldPos);
@@ -8158,7 +8981,11 @@ renderer.setAnimationLoop((time) => {
 			_hitRaycaster.set(_rayOrigin, _rayDir);
 			const intersects = _hitRaycaster.intersectObjects(_hitTargets);
 
-			if (intersects.length > 0) {
+			// Canvas surfaces (p5 / blank canvas) — hover, cursor dot, events.
+			const surfHit = updateSurfacePointer(i, _rayOrigin, _rayDir, intersects, reticle);
+			if (surfHit) {
+				// cursor dot already placed on the sketch
+			} else if (intersects.length > 0) {
 				const hit = intersects[0];
 				reticle.position.copy(hit.point);
 				// Face along hit normal (toward the camera side of the panel)
@@ -8251,18 +9078,29 @@ renderer.setAnimationLoop((time) => {
 						}
 					}
 					if (hand === 'left' && Math.abs(thumbY) > THUMBSTICK_DEADZONE) {
-						// Left thumbstick: scroll active left-panel list
-						if (scenePanelSubTab === 'code') {
-							codeScrollOffset += thumbY < 0 ? 2 : -2;
-							codeScrollOffset = Math.max(0, codeScrollOffset);
-						} else if (scenePanelSubTab === 'files') {
-							filesScrollOffset += thumbY < 0 ? 1 : -1;
-							filesScrollOffset = Math.max(0, filesScrollOffset);
-						} else {
-							sceneScrollOffset += thumbY < 0 ? 1 : -1;
-							sceneScrollOffset = Math.max(0, sceneScrollOffset);
+						// Left thumbstick: scroll active left-panel list. Stepped at
+						// ~30 Hz and only redrawn when the offset really moved
+						// (it used to redraw + re-upload every frame, even at an end).
+						if (time - _stickScrollAt >= 33) {
+							_stickScrollAt = time;
+							const dir = thumbY < 0 ? 1 : -1;
+							const clampTo = (v, max) => Math.max(0, Math.min(v, max));
+							let changed = false;
+							if (scenePanelSubTab === 'code') {
+								const v = clampTo(codeScrollOffset + 2 * dir, _scenePanelMaxScroll.code);
+								changed = v !== codeScrollOffset;
+								codeScrollOffset = v;
+							} else if (scenePanelSubTab === 'files') {
+								const v = clampTo(filesScrollOffset + dir, _scenePanelMaxScroll.files);
+								changed = v !== filesScrollOffset;
+								filesScrollOffset = v;
+							} else if (scenePanelSubTab === 'scenes') {
+								const v = clampTo(sceneScrollOffset + dir, _scenePanelMaxScroll.scenes);
+								changed = v !== sceneScrollOffset;
+								sceneScrollOffset = v;
+							}
+							if (changed) renderScenePanel({ dom: false });
 						}
-						renderScenePanel();
 					}
 				}
 			}

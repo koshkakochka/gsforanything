@@ -814,6 +814,16 @@
 			gap: 6px;
 		}
 		#dchat-camera-mode .dchat-btn { padding: 10px 6px; }
+		#dchat-window-anchor {
+			display: grid;
+			grid-template-columns: repeat(2, 1fr);
+			gap: 6px;
+		}
+		#dchat-window-anchor .dchat-btn { padding: 10px 6px; }
+		#dchat-window-anchor .dchat-btn.active {
+			background: linear-gradient(135deg, #6366f1, #8b5cf6);
+			box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25) inset;
+		}
 		#dchat-camera-mode .dchat-btn.active {
 			background: linear-gradient(135deg, #6366f1, #8b5cf6);
 			box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25) inset;
@@ -2312,9 +2322,10 @@
 					</label>
 					<button type="button" id="dchat-code-apply" class="dchat-btn accent">Apply</button>
 					<button type="button" id="dchat-code-revert" class="dchat-btn secondary">Revert</button>
+					<button type="button" id="dchat-code-reset" class="dchat-btn secondary" title="Clear the scene and re-run every block from scratch (resets state)">Full reset</button>
 					<span id="dchat-code-status"></span>
 				</div>
-				<div id="dchat-code-hint">Generated VR program (active scenes + session blocks). Edit and Apply to rebuild the scene.</div>
+				<div id="dchat-code-hint">Generated VR program (active scenes + session blocks). Apply (or Live) hot reloads only the blocks you changed and keeps positions, scores and other state; Full reset rebuilds everything from scratch.</div>
 				<div class="dchat-code-editor-wrap">
 					<pre class="dchat-code-highlight" aria-hidden="true"><code id="dchat-code-highlight"></code></pre>
 					<textarea id="dchat-code-editor" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="// vr-exec blocks appear here after chat generates them…"></textarea>
@@ -2384,6 +2395,18 @@
 						<kbd>Y</kbd> switches Orbit/Free-roam &middot; <kbd>View</kbd> resets the view.
 						Press any button after connecting so the browser picks it up.
 						Headset controllers in VR are separate and keep their own mapping.
+					</div>
+				</div>
+				<div>
+					<div class="dchat-section-label" style="margin:6px 0 8px">VR windows</div>
+					<div id="dchat-window-anchor" role="radiogroup" aria-label="VR windows">
+						<button type="button" class="dchat-btn secondary" data-window-anchor="fixed" role="radio">Fixed in place</button>
+						<button type="button" class="dchat-btn secondary" data-window-anchor="follow" role="radio">Follow headset</button>
+					</div>
+					<div class="dchat-controls-help" style="margin-top:6px">
+						Fixed keeps the windows where they open. Follow headset lets them catch up gently when you turn
+						or walk away, staying upright in front of you. Also on the Environment panel in VR
+						(<b>Windows: Fixed / Follow head</b>).
 					</div>
 				</div>
 				<div class="dchat-controls-help" style="color:rgba(255,255,255,0.4)">
