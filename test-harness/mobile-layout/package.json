@@ -1,0 +1,9 @@
+{
+  "name": "gs-mobile-layout-test",
+  "private": true,
+  "type": "module",
+  "description": "Headless phone layout + simulated on-screen keyboard check (390x844, 412x915, landscape; Android resize and iOS visualViewport styles), plus desktop-unchanged check.",
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}

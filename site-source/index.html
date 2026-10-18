@@ -3,7 +3,7 @@
 <head>
 	<meta charset="UTF-8" />
 	<link rel="icon" href="data:," />
-	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
 	<base href="/" />
 	<title>Claude VR Chat</title>
 	<style>
@@ -2046,6 +2046,165 @@
 			display: none !important;
 		}
 
+
+		/* ================================================================
+		   Phones (html.gs-phone: touch screen whose short side is <= 600px,
+		   set by main.js). Desktop, tablets and VR never get this class, so
+		   nothing below changes them.
+		   ================================================================ */
+		/* Tap targets of at least 44px. */
+		html.gs-phone #desktop-chat button,
+		html.gs-phone #desktop-chat select,
+		html.gs-phone #desktop-chat input[type="text"],
+		html.gs-phone #desktop-chat input[type="search"],
+		html.gs-phone #desktop-chat input[type="url"],
+		html.gs-phone #desktop-chat input[type="number"],
+		html.gs-phone #gs-dock .gs-dock-btn,
+		html.gs-phone #gs-dock #XRButton,
+		html.gs-phone #ui-toggle {
+			min-height: 44px;
+			box-sizing: border-box;
+		}
+		html.gs-phone #desktop-chat button { min-width: 44px; }
+		html.gs-phone #desktop-chat .dchat-attachment-remove { min-width: 28px; min-height: 28px; width: 28px; height: 28px; line-height: 28px; }
+		html.gs-phone #desktop-chat label:has(> input[type="checkbox"]) {
+			display: inline-flex; align-items: center; gap: 8px; min-height: 44px;
+		}
+		html.gs-phone #desktop-chat input[type="checkbox"] { width: 20px; height: 20px; }
+		html.gs-phone #desktop-chat input,
+		html.gs-phone #desktop-chat select,
+		html.gs-phone #desktop-chat textarea { font-size: 16px; } /* no iOS focus zoom */
+		/* Header: the floating Hide UI button sits over the title, so the
+		   (decorative) title gives way; bigger minimize / expand buttons. */
+		html.gs-phone #desktop-chat-header { padding: 6px 8px 6px 14px; min-height: 56px; box-sizing: border-box; }
+		html.gs-phone #desktop-chat-title { visibility: hidden; }
+		html.gs-phone #desktop-chat-header-buttons { gap: 8px; }
+		html.gs-phone #desktop-chat-header-buttons button { width: 44px; height: 44px; font-size: 16px; border-radius: 10px; }
+		html.gs-phone #ui-toggle {
+			top: max(18px, calc(env(safe-area-inset-top, 0px) + 6px));
+			left: max(16px, calc(env(safe-area-inset-left, 0px) + 8px));
+			padding: 0 14px;
+		}
+		/* Tabs: one horizontally scrollable row instead of two squeezed rows. */
+		html.gs-phone #desktop-chat-tabs {
+			flex-wrap: nowrap;
+			overflow-x: auto;
+			overflow-y: hidden;
+			gap: 6px;
+			padding: 6px 8px;
+			scrollbar-width: none;
+			scroll-snap-type: x proximity;
+			-webkit-overflow-scrolling: touch;
+			overscroll-behavior-x: contain;
+			touch-action: pan-x;
+			-webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+			mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+		}
+		html.gs-phone #desktop-chat-tabs.gs-at-end { -webkit-mask-image: none; mask-image: none; }
+		html.gs-phone #desktop-chat-tabs::-webkit-scrollbar { display: none; }
+		html.gs-phone .dchat-tab {
+			flex: 0 0 auto;
+			min-width: 0;
+			max-width: none;
+			min-height: 44px;
+			padding: 0 14px;
+			font-size: 13px;
+			border-radius: 10px;
+			scroll-snap-align: start;
+		}
+		html.gs-phone .dchat-tab-full { display: inline; }
+		html.gs-phone .dchat-tab-short { display: none; }
+		html.gs-phone .dchat-subtab { min-height: 44px; }
+		html.gs-phone #desktop-model-row { padding: 6px 12px; }
+		/* Chat input: attach / files / mic / history go behind a "More" (+)
+		   button, so the compose row is just [+] [message] [Send]. */
+		#desktop-chat-more { display: none; }
+		html.gs-phone #desktop-chat-more {
+			display: inline-flex; align-items: center; justify-content: center;
+			flex-shrink: 0; width: 44px; height: 44px; padding: 0;
+			border: none; border-radius: 11px; background: #3a3c4e; color: #fff;
+			font-size: 22px; line-height: 1; cursor: pointer;
+		}
+		html.gs-phone #desktop-chat-more[aria-expanded="true"] { background: #4f46e5; }
+		html.gs-phone #desktop-chat-tools-row { display: none; }
+		html.gs-phone #desktop-chat-input-row.gs-tools-open #desktop-chat-tools-row { display: flex; }
+		html.gs-phone #desktop-chat-input-row { padding: 8px 10px; gap: 8px; }
+		html.gs-phone #desktop-chat-input { min-height: 44px; }
+		html.gs-phone #desktop-send-button { min-height: 44px; padding: 0 16px; }
+		/* Side resize strips would swallow taps on the tabs and buttons at the
+		   panel edge; phones keep the bottom edge and the corners. */
+		html.gs-phone #desktop-chat .dchat-resize.edge-e,
+		html.gs-phone #desktop-chat .dchat-resize.edge-w,
+		html.gs-phone #desktop-chat .dchat-resize.edge-n { display: none; }
+		/* Panel buttons in the other tabs. */
+		html.gs-phone #desktop-chat .dchat-btn { min-height: 44px; }
+		html.gs-phone #desktop-chat .dchat-dep-meta { align-items: center; }
+		html.gs-phone #desktop-chat .dchat-dep-meta a { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; padding: 0 8px; }
+		/* Bottom dock: 44px buttons; the greyed "VR not supported" pill is only
+		   status, so phones without WebXR drop it to make room. */
+		html.gs-phone #gs-dock { gap: 6px; padding: 5px; }
+		html.gs-phone #gs-dock #XRButton[data-xr-state="unavailable"] { display: none !important; }
+
+		/* Phone landscape: the panel is a full-height column on the left and
+		   the dock moves to the bottom-right, so neither covers the other. */
+		@media (orientation: landscape) {
+			html.gs-phone:not(.gs-kb-chat) #desktop-chat:not(.expanded) {
+				top: max(8px, env(safe-area-inset-top, 0px)) !important;
+				left: max(8px, env(safe-area-inset-left, 0px));
+				height: calc(100dvh - 16px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) !important;
+				max-height: none !important;
+				width: min(440px, 52vw);
+				min-width: 0;
+				min-height: 0;
+			}
+			html.gs-phone #gs-dock {
+				left: auto;
+				right: max(8px, calc(env(safe-area-inset-right, 0px) + 6px));
+				transform: none;
+				max-width: calc(48vw - 24px);
+			}
+			html.gs-phone #ui-toggle { top: max(14px, calc(env(safe-area-inset-top, 0px) + 6px)); }
+		}
+
+		/* ---- On-screen keyboard open (html.gs-kb, phones only) ----
+		   The panel fills the visible area above the keyboard (--gs-kb-* are
+		   the visual viewport, written by main.js) and keeps only what is
+		   needed to type: the recent messages and the input row, like a
+		   messaging app. Everything is restored when the keyboard closes. */
+		html.gs-kb #gs-dock,
+		html.gs-kb #ui-toggle,
+		html.gs-kb #gs-twin-sticks,
+		html.gs-kb #gs-gamepad-toast { display: none !important; }
+		html.gs-kb-chat #desktop-chat {
+			top: var(--gs-kb-top, 0px) !important;
+			left: var(--gs-kb-left, 0px) !important;
+			right: auto !important;
+			bottom: auto !important;
+			width: var(--gs-kb-width, 100vw) !important;
+			height: var(--gs-kb-height, 50vh) !important;
+			min-width: 0 !important;
+			min-height: 0 !important;
+			max-width: none !important;
+			max-height: none !important;
+			transition: none !important;
+			border-radius: 12px;
+		}
+		html.gs-kb-chat #desktop-chat-header,
+		html.gs-kb-chat #desktop-chat-tabs,
+		html.gs-kb-chat #dchat-chat-subtabs,
+		html.gs-kb-chat #dchat-community-subtabs,
+		html.gs-kb-chat #desktop-model-row,
+		html.gs-kb-chat #desktop-ollama-model-row,
+		html.gs-kb-chat #desktop-chat-tools-row,
+		html.gs-kb-chat #dchat-code-hint,
+		html.gs-kb-chat .dchat-theme-remember,
+		html.gs-kb-chat #dchat-theme-chat .dchat-section-label,
+		html.gs-kb-chat #desktop-chat .dchat-resize { display: none !important; }
+		html.gs-kb-chat .dchat-panel { border-radius: 12px; }
+		html.gs-kb-chat #desktop-chat-messages { padding: 8px 12px; }
+		html.gs-kb-chat #desktop-chat-input-row { padding: 6px 8px; }
+		html.gs-kb-chat #dchat-code-toolbar { flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding: 6px 8px; }
+		html.gs-kb-chat #dchat-code-toolbar > * { flex-shrink: 0; white-space: nowrap; }
 	</style>
 </head>
 <body>
