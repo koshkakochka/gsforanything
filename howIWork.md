@@ -91,11 +91,20 @@ Three moving parts:
   which dependencies are on, the ammo.js physics recipe and the `gsGamepad`
   API. `/api/fix-code` sends the same note as `sceneContext`. This works on
   hosts whose system prompt has not been updated yet.
+- **Desktop camera controls** (`site-source/cameraControls.js`): the stock
+  three.js r180 addons from `vendor_modules/three/examples/jsm/controls/`:
+  Orbit (OrbitControls, default, target at the origin), Map (MapControls),
+  Trackball, Fly (FlyControls), First person (PointerLockControls + WASD as in
+  the three.js pointerlock example) and Off, picked in the Controls tab. Only
+  focused text fields block keys; VR uses head tracking. Scenes see
+  `window.gsControls` / `window.controls` / `window.gsOrbit`.
 - **Game controllers** (Gamepad API, `window.gsGamepad`): Xbox Series X|S
   and other standard pads over USB or Bluetooth drive the desktop/phone
-  camera per the Controls tab mode (left stick move, right stick orbit/look,
-  LB/RB down/up, LT/RT zoom in Orbit, RT or L3 sprint in Free-roam, Y
-  switches mode, View resets). Scenes read the pad with `gsGamepad.axis()`,
+  camera through the stock three.js control picked in the Controls tab
+  (Orbit / Map: right stick orbits, left stick pans / dollies, LT/RT zoom;
+  First person: left stick walks, right stick looks; Fly: left stick moves,
+  right stick yaw/pitch, LB/RB down/up; Trackball and Off: not used; Y
+  toggles Orbit / First person, View resets). Scenes read the pad with `gsGamepad.axis()`,
   `button()`, `justPressed()`, `onButton()`, and set
   `gsGamepad.captureCamera = true` to take the sticks over. WebXR headset
   controllers are separate (XR `inputSources`).

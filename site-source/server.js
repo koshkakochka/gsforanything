@@ -121,6 +121,7 @@ The page also provides these window globals:
 - \`await gsCreateP5Surface((p) => { p.setup = ...; p.draw = ...; }, opts)\` — a p5.js sketch shown on such a panel; the app drives \`p.draw\` every frame.
 - Pointer input on these panels works everywhere, including in a headset: pointing a VR controller (or hand) at the panel and pulling the trigger / pinching, or clicking / tapping it in the 3D view, sends pointer and mouse events to the canvas at the matching pixel. p5's \`mouseX\`, \`mouseY\`, \`mouseIsPressed\`, \`mousePressed()\`, \`mouseReleased()\`, \`mouseDragged()\` and \`mouseClicked()\` work, as do \`canvas.addEventListener('pointerdown' | 'mousedown' | 'click', ...)\` with \`e.offsetX/e.offsetY\` in canvas pixels.
 - \`gsGamepad\` — game controllers (Xbox / PlayStation / other USB or Bluetooth pads via the Gamepad API): \`connected\`, \`axis('leftX' | 'leftY' | 'rightX' | 'rightY')\`, \`button(name)\`, \`pressed(name)\`, \`justPressed(name)\`, \`onButton(name, fn)\`, \`rumble(ms, strength)\`, and \`captureCamera = true\` to stop the sticks moving the editor camera. Headset (WebXR) controllers are separate.
+- Desktop camera controls are the stock three.js addons, owned by the app — never create your own OrbitControls / PointerLockControls / FlyControls or add WASD / mouse-look camera code. The user picks the mode in the Controls tab: Orbit (OrbitControls, default, target at the scene origin 0,0,0), Map (MapControls), Trackball, Fly (FlyControls), First person (PointerLockControls + WASD) or Off. From code: \`window.gsControls.mode\`, \`gsControls.controls\` (the active control instance, also \`window.controls\`; \`null\` when Off), \`gsControls.setMode('orbit' | 'map' | 'trackball' | 'fly' | 'firstperson' | 'off')\` only when the user asks for a mode, \`gsControls.reset()\` to restore the default view, and \`gsOrbit.pivot()\` / \`gsOrbit.recenter()\`. Keyboard keys reach the controls except while a text field is focused; in VR the headset drives the camera.
 
 When the scene needs physics (gravity, collisions, rigid bodies), use ammo.js through \`gsRequire('ammo')\`: one \`btDiscreteDynamicsWorld\` stored on \`window\`, stepped in a \`window._vrAnimations\` callback, copying each body's transform onto its mesh every frame.
 
@@ -219,7 +220,7 @@ The code runs inside an \`AsyncFunction('THREE', 'scene', 'camera', 'renderer', 
 - \`window\` — the global window object (use window.* to access/store persistent references)
 - \`window._vrAnimations\` — array of per-frame animation callbacks
 - \`gs\` — hot-reload helpers: \`gs.state\` (persistent per-block object), \`gs.onUpdate(fn)\`, \`gs.on(target, type, fn)\`, \`gs.onDispose(fn)\`, \`gs.hot\`; also \`window.gsState\`. Valid — keep using them, and keep stable \`name\`s on objects.
-- \`window.gsRequire(name)\` (async; \`'ammo'\` → initialised ammo.js, \`'p5'\` → p5 constructor), \`window.gsCreateCanvasSurface(opts)\`, \`window.gsCreateP5Surface(sketch, opts)\` and \`window.gsGamepad\` — page helpers; these are valid, keep using them. Never call \`Ammo()\` directly: use \`const Ammo = await gsRequire('ammo');\`
+- \`window.gsRequire(name)\` (async; \`'ammo'\` → initialised ammo.js, \`'p5'\` → p5 constructor), \`window.gsCreateCanvasSurface(opts)\`, \`window.gsCreateP5Surface(sketch, opts)\` \`window.gsGamepad\`, \`window.gsControls\` / \`window.controls\` (the app's stock three.js camera controls) and \`window.gsOrbit\` — page helpers; these are valid, keep using them. Never call \`Ammo()\` directly: use \`const Ammo = await gsRequire('ammo');\`
 
 Top-level \`await\` IS allowed because the function is async.
 
@@ -230,7 +231,7 @@ Top-level \`await\` IS allowed because the function is async.
 3. Referencing variables from other code blocks without \`window.\` prefix
 4. Using ES module import syntax (not available inside new Function)
 5. Using \`let\`/\`const\` for variables that need to persist across blocks — should use \`window.varName\` instead
-6. Accessing Three.js addon classes (like OrbitControls, FontLoader, TextGeometry) that aren't available in the base Three.js build
+6. Accessing Three.js addon classes (like OrbitControls, FontLoader, TextGeometry) that aren't available in the base Three.js build (for camera controls use the app's \`window.gsControls\` / \`window.controls\` instead of constructing OrbitControls)
 
 ## Rules
 

@@ -48,12 +48,12 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   const d1 = await view();
   ok(`${T} Orbit zoomed out to 50 m: still draws everything within 100 m of the VR eye`, Math.abs(d1.far - 150) < 0.1 && d1.m50 && d1.m98 && !d1.m140, JSON.stringify(d1));
   await p.evaluate(() => { camera.position.set(0, 1.6, 4); });
-  // 3. Free-roam / First person move the rig; the camera keeps its offset from the eye
-  await p.evaluate(() => document.querySelector('#dchat-camera-mode [data-camera-mode="free"]').click()); await sleep(400);
+  // 3. First person (PointerLockControls) moves the camera; far keeps its offset from the eye
+  await p.evaluate(() => document.querySelector('#dchat-camera-mode [data-camera-mode="firstperson"]').click()); await sleep(400);
   await look(); await sleep(200);
   const d2 = await view();
   const off2 = await p.evaluate(() => gsRenderDistance.desktopFar - gsRenderDistance.far);
-  ok(`${T} Free-roam: far = 100 + camera offset from the eye, draws 98 m, not 140 m`, d2.near === 0.1 && Math.abs(d2.far - (100 + off2)) < 0.05 && d2.m98 && !d2.m140, JSON.stringify(d2) + ' offset=' + off2.toFixed(2));
+  ok(`${T} First person: far = 100 + camera offset from the eye, draws 98 m, not 140 m`, d2.near === 0.1 && Math.abs(d2.far - (100 + off2)) < 0.05 && d2.m98 && !d2.m140, JSON.stringify(d2) + ' offset=' + off2.toFixed(2));
   await p.evaluate(() => { scene.getObjectByName('player').position.set(0, 0, -30); camera.position.set(0, 1.6, 0); }); await sleep(300); await look(); await sleep(100);
   const d2b = await view();
   ok(`${T} camera at the VR eye (rig moved 30 m): near/far exactly the VR values 0.1 / 100`, d2b.near === 0.1 && Math.abs(d2b.far - 100) < 1e-6, JSON.stringify(d2b));
@@ -73,7 +73,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   await p.evaluate(() => renderer.xr.getSession().end()); 
   for (let i = 0; i < 40 && (await p.evaluate(() => renderer.xr.isPresenting)); i++) await sleep(250);
   await sleep(800);
-  await p.evaluate(() => { if (typeof resetCameraView === 'function') resetCameraView(); });
+  await p.evaluate(() => { gsOrbit.recenter(); });
   await look(); await sleep(300); await look();
   const d3 = await view();
   ok(`${T} after VR: desktop keeps the scene's far (1000 + orbit offset) and draws 140 m`, d3.far > 1000 && d3.far < 1060 && d3.m140 && api.near === d3.near, JSON.stringify(d3));

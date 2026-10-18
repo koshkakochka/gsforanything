@@ -18,6 +18,7 @@
           "site-source/creationContext.js",
           "site-source/communityMerge.js",
           "site-source/twinSticks.js",
+          "site-source/cameraControls.js",
           "site-source/threejsAddons/**",
           "site-source/vendor_modules/**"
         ],
