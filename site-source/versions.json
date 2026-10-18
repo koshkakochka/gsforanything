@@ -1,9 +1,20 @@
 {
   "versions": [
     {
-      "id": "0.976",
-      "label": "GS 0.976 (this build)",
+      "id": "0.977",
+      "label": "GS 0.977 (this build)",
       "url": null,
+      "date": "2026-10-18",
+      "changes": [
+        "The desktop camera now uses the standard three.js camera controls, picked in the Controls tab: Orbit (the default, rotating around the scene's center at 0,0,0), Map, Trackball, Fly (drag to look) and First person (click the scene to look around with the mouse, Esc to release, WASD or arrows to walk), plus Off. Each mode lists its keys in the Controls tab.",
+        "Removed the custom Orbit and Free-roam controls. A saved Orbit choice stays Orbit, Free-roam becomes First person, and Off stays Off.",
+        "Keys move the camera unless you are typing in a text field, even after clicking buttons or panels. The on-screen joysticks appear in Fly and First person, and a game controller drives Orbit, Map, Fly and First person."
+      ]
+    },
+    {
+      "id": "0.976",
+      "label": "GS 0.976",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-10-17",
       "changes": [
         "Orbit now always rotates around the scene's center (0,0,0): on first load, after Clear scene, after loading a scene, and after Reset Camera View or the gamepad View button. Walking with WASD or the left stick in Orbit used to make the camera circle one point while facing another; now it turns around the point it's looking at.",
