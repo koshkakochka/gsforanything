@@ -802,7 +802,7 @@
 		.dchat-dep-status[data-state="loading"] { color: #fbbf24; }
 		.dchat-dep-status[data-state="error"] { color: #f87171; }
 
-		/* --- Controls tab (desktop camera: orbit / free-roam / off) --- */
+		/* --- Controls tab (desktop camera: stock three.js controls) --- */
 		#dchat-controls {
 			overflow-y: auto;
 			padding: 16px;
@@ -868,8 +868,8 @@
 			transition: opacity 0.2s, transform 0.2s;
 		}
 		#gs-gamepad-toast.show { opacity: 1; transform: translate(-50%, 0); }
-		/* Free-roam pointer lock: no orbit cursor hints */
-		body.gs-camera-free canvas { cursor: crosshair; }
+		/* First person: crosshair while the mouse is locked */
+		body.gs-camera-locked canvas { cursor: crosshair; }
 
 		/* --- Scenes tab (export / load / manage saved scenes) --- */
 		#dchat-scenes, #dchat-community, #dchat-files { padding: 14px; gap: 10px; overflow: hidden; }
@@ -2290,8 +2290,8 @@
 				<div>
 					<div class="dchat-section-label" style="margin-bottom:8px">Camera</div>
 					<div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:8px">
-						Pick Orbit, Free-roam or Off in the Controls tab. Reset returns to the start view
-						(Orbit: 4 m back, circling the scene origin).
+						Pick a camera mode (Orbit, Map, Trackball, Fly, First person or Off) in the Controls tab.
+						Reset returns to the start view (4 m back at eye height; Orbit circles the scene origin).
 					</div>
 					<button id="dchat-reset-camera" class="dchat-btn secondary" style="width:100%">Reset Camera View</button>
 				</div>
@@ -2374,19 +2374,44 @@
 					<div class="dchat-section-label" style="margin-bottom:8px">Camera controls</div>
 					<div id="dchat-camera-mode" role="radiogroup" aria-label="Camera controls">
 						<button type="button" class="dchat-btn secondary" data-camera-mode="orbit" role="radio">Orbit</button>
-						<button type="button" class="dchat-btn secondary" data-camera-mode="free" role="radio">Free-roam</button>
+						<button type="button" class="dchat-btn secondary" data-camera-mode="map" role="radio">Map</button>
+						<button type="button" class="dchat-btn secondary" data-camera-mode="trackball" role="radio">Trackball</button>
+						<button type="button" class="dchat-btn secondary" data-camera-mode="fly" role="radio">Fly</button>
+						<button type="button" class="dchat-btn secondary" data-camera-mode="firstperson" role="radio">First person</button>
 						<button type="button" class="dchat-btn secondary" data-camera-mode="off" role="radio">Off</button>
 					</div>
 				</div>
+				<!-- Stock key lists of the three.js controls (r180) -->
 				<div class="dchat-controls-help" data-camera-help="orbit">
-					Orbit circles the scene origin. Drag to orbit &middot; scroll or pinch to zoom &middot;
-					<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &middot; <kbd>Q</kbd>/<kbd>E</kbd> up/down.
+					<b>OrbitControls</b>, around the scene origin. Left-drag rotate &middot; right-drag or
+					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + left-drag pan &middot; wheel or middle-drag zoom &middot;
+					<kbd>&larr;</kbd><kbd>&uarr;</kbd><kbd>&rarr;</kbd><kbd>&darr;</kbd> pan &middot;
+					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + arrows rotate.
+					Touch: one finger rotates, two fingers zoom and pan.
 				</div>
-				<div class="dchat-controls-help" data-camera-help="free" hidden>
-					Click the scene to look around with the mouse, <kbd>Esc</kbd> to release.
-					<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly where you look &middot; <kbd>Q</kbd>/<kbd>E</kbd> up/down &middot;
-					hold <kbd>Shift</kbd> to go faster. On touch screens, drag to look.
-					On-screen joysticks: left stick moves forward and back (sideways strafes), right stick looks around.
+				<div class="dchat-controls-help" data-camera-help="map" hidden>
+					<b>MapControls</b>. Left-drag pan &middot; right-drag or
+					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + left-drag rotate &middot; wheel or middle-drag zoom &middot;
+					<kbd>&larr;</kbd><kbd>&uarr;</kbd><kbd>&rarr;</kbd><kbd>&darr;</kbd> pan &middot;
+					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + arrows rotate.
+					Touch: one finger pans, two fingers zoom and rotate.
+				</div>
+				<div class="dchat-controls-help" data-camera-help="trackball" hidden>
+					<b>TrackballControls</b>, around the scene origin. Left-drag rotate &middot; middle-drag or wheel zoom &middot;
+					right-drag pan &middot; hold <kbd>A</kbd> + drag rotate, <kbd>S</kbd> + drag zoom, <kbd>D</kbd> + drag pan.
+					Touch: one finger rotates, two fingers zoom and pan.
+				</div>
+				<div class="dchat-controls-help" data-camera-help="fly" hidden>
+					<b>FlyControls</b>. <kbd>W</kbd>/<kbd>S</kbd> forward/back &middot; <kbd>A</kbd>/<kbd>D</kbd> left/right &middot;
+					<kbd>R</kbd>/<kbd>F</kbd> up/down &middot; <kbd>Q</kbd>/<kbd>E</kbd> roll &middot;
+					<kbd>&uarr;</kbd>/<kbd>&darr;</kbd> pitch &middot; <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> yaw &middot; drag the scene to look.
+				</div>
+				<div class="dchat-controls-help" data-camera-help="firstperson" hidden>
+					<b>PointerLockControls</b>. Click the scene to look around with the mouse, <kbd>Esc</kbd> to release &middot;
+					<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or <kbd>&uarr;</kbd><kbd>&larr;</kbd><kbd>&darr;</kbd><kbd>&rarr;</kbd> move.
+				</div>
+				<div class="dchat-controls-help" data-camera-help="fly firstperson" hidden>
+					On-screen joysticks: left stick moves (up/down forward and back, sideways strafes), right stick looks around.
 					<label id="dchat-twin-sticks-opt">
 						<input type="checkbox" id="dchat-twin-sticks" checked />
 						Show on-screen joysticks
@@ -2395,16 +2420,21 @@
 				<div class="dchat-controls-help" data-camera-help="off" hidden>
 					Camera input is off. The camera stays where it is until you pick another mode.
 				</div>
+				<div class="dchat-controls-help" data-camera-help="orbit map trackball fly firstperson" style="color:rgba(255,255,255,0.4)">
+					Keys work unless you are typing in a text field. Reset Camera View (Env tab) returns to the default view.
+				</div>
 				<div id="dchat-controls-status"></div>
 				<div>
 					<div class="dchat-section-label" style="margin:6px 0 8px">Game controller</div>
 					<div id="dchat-gamepad-status" class="dchat-controls-help" role="status"></div>
 					<div class="dchat-controls-help" style="margin-top:6px">
 						Xbox Series X|S, Xbox One, PlayStation and other USB or Bluetooth pads.
-						Left stick moves &middot; right stick orbits (Orbit) or looks (Free-roam) &middot;
-						<kbd>LB</kbd>/<kbd>RB</kbd> down/up &middot; <kbd>LT</kbd>/<kbd>RT</kbd> zoom (Orbit) &middot;
-						hold <kbd>RT</kbd> or click the left stick to go faster (Free-roam) &middot;
-						<kbd>Y</kbd> switches Orbit/Free-roam &middot; <kbd>View</kbd> resets the view.
+						The sticks drive the selected control: Orbit and Map: right stick orbits, left stick pans
+						(Orbit: up/down zooms), <kbd>LT</kbd>/<kbd>RT</kbd> zoom out/in &middot;
+						First person: left stick walks, right stick looks &middot;
+						Fly: left stick moves, right stick looks, <kbd>LB</kbd>/<kbd>RB</kbd> down/up &middot;
+						Trackball: sticks not used &middot;
+						<kbd>Y</kbd> switches Orbit/First person &middot; <kbd>View</kbd> resets the view.
 						Press any button after connecting so the browser picks it up.
 						Headset controllers in VR are separate and keep their own mapping.
 					</div>

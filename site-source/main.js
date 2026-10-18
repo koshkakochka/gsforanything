@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { XRButton } from './threejsAddons/XRButton.js';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { buildButtonLayout, drawButtonsToCanvas, hitTestButtons, mountButtonsToDOM } from './menuSystem.js';
 import { paintElementToCanvas } from './htmlInCanvas.js';
@@ -17,6 +16,7 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { initSceneExport } from './exporter.js';
 import { createTwinSticks } from './twinSticks.js';
+import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, ORBIT_TARGET } from './cameraControls.js';
 // p5.js sketch import (paste / file / zip / URL -> panel in the scene). Self-contained;
 // it only uses the window.gs* hooks set up next to gsCreateP5Surface below.
 import './p5Import.js';
@@ -173,23 +173,9 @@ document.addEventListener('touchmove', preventPagePanFromTouch, { passive: false
 document.addEventListener('gesturestart', preventPagePanFromTouch, { passive: false });
 document.addEventListener('gesturechange', preventPagePanFromTouch, { passive: false });
 
-// Desktop (non-XR) camera controls: orbit/pan/zoom with the mouse. Disabled
-// automatically while an XR session is presenting (the headset pose drives
-// the camera then) — see setImmersiveUiMode.
-const orbitControls = new OrbitControls(camera, renderer.domElement);
-// Orbit pivots on the scene origin (0,0,0): ORBIT_PIVOT is in the player
-// rig's space, and the rig sits at the origin whenever the view is reset or
-// re-centred (centerOrbitOnOrigin / resetCameraView / recenterOrbitPivot).
-const ORBIT_PIVOT = new THREE.Vector3(0, 0, 0);
-orbitControls.target.copy(ORBIT_PIVOT);
-orbitControls.enableDamping = true;
-orbitControls.dampingFactor = 0.08;
-orbitControls.minDistance = 0.5;
-orbitControls.maxDistance = 50;
-// No panning (right-drag, Shift/Ctrl-drag, two-finger touch): Orbit stays
-// centred on its target. Rotate + zoom only. Nothing re-enables this.
-orbitControls.enablePan = false;
-orbitControls.update();
+// Desktop (non-XR) camera controls are the stock three.js addons (Orbit,
+// Map, Trackball, Fly, First person); see cameraControls.js and the Controls
+// tab section below. They are disabled while WebXR or Cardboard drives the camera.
 
 // Walk-in-AR only: finger-driven transform gizmos for arPlacementRoot (not WebXR).
 // Three controls so "All" can show translate + rotate + scale handles together.
@@ -1171,11 +1157,9 @@ function setArPlacementActive(active) {
 	if (active) {
 		adoptSceneContentIntoArPlacement();
 		placeArAnchorInFrontOfCamera();
-		// Touch must move the scene, never orbit/pan the camera.
-		orbitControls.enabled = false;
-		orbitControls.enableRotate = false;
-		orbitControls.enablePan = false;
-		orbitControls.enableZoom = false;
+		// Touch must move the scene, never orbit/pan the camera (controls are
+		// suspended while mobileXRMode is set).
+		refreshCameraControls();
 		renderer.domElement.style.touchAction = 'none';
 		if (mobileXrGizmoBar) mobileXrGizmoBar.classList.add('visible');
 		setArGizmoMode('all');
@@ -1189,9 +1173,7 @@ function setArPlacementActive(active) {
 		arPlacementRoot.scale.set(1, 1, 1);
 		arDragging = false;
 		arDragPointerId = null;
-		orbitControls.enableRotate = true;
-		orbitControls.enablePan = false; // panning stays off (Orbit has no pan)
-		orbitControls.enableZoom = true;
+		refreshCameraControls();
 		renderer.domElement.style.touchAction = 'none';
 	}
 }
@@ -1255,8 +1237,8 @@ async function enterMobileXRMode(mode) {
 		try { await screen.orientation.lock('landscape'); } catch { /* not all browsers allow this */ }
 	}
 
-	orbitControls.enabled = false;
 	mobileXRMode = 'cardboard';
+	refreshCameraControls();
 	document.body.classList.add('gs-cardboard-active');
 	if (cardboardBtn) cardboardBtn.hidden = true;
 	mobileXRExitBtn.hidden = false;
@@ -1293,7 +1275,8 @@ function exitMobileXRMode() {
 	document.body.classList.remove('gs-cardboard-active');
 	mobileMoveHeld = false;
 	if (wasAr) setArPlacementActive(false);
-	refreshOrbitEnabled();
+	refreshCameraControls();
+	resetCameraView(); // back to the default desktop view
 	mobileXRExitBtn.hidden = true;
 	mobileXRWalkBtn.hidden = true;
 	isVRMode = true;
@@ -6711,11 +6694,10 @@ dchatNavType?.addEventListener('change', () => {
 
 const _locoUpLocal = new THREE.Vector3();
 
-// Shared movement math for both VR thumbsticks and desktop keyboard. mx/my
+// Movement math for the VR thumbsticks and Cardboard hold-to-walk. mx/my
 // are strafe/forward (-1..1, forward = negative my to match "push stick up
 // = forward"), rx is yaw turn, ry is vertical (-1..1, positive = up).
-// refCamera supplies the facing direction (xrCam in VR, the plain desktop
-// `camera` otherwise).
+// refCamera supplies the facing direction (xrCam in VR, `camera` in Cardboard).
 //
 // Both nav types: forward/back is the camera look direction with pitch
 // removed (projected onto world XZ, so yaw around world up, level with the
@@ -6763,17 +6745,7 @@ function applyLocomotionInput(dt, refCamera, mx, my, rx, ry) {
 			.addScaledVector(_locoRight, mx)    // push right = strafe right
 			.addScaledVector(upVec, ry)          // Q/push right-stick up = ascend
 			.multiplyScalar(MOVE_SPEED * dt);
-		if (orbitControls && orbitControls.enabled && !renderer.xr.isPresenting) {
-			// Desktop Orbit: slide the pivot and the camera together and leave the
-			// rig where it is. OrbitControls places the camera around the target in
-			// the rig's space but aims it with lookAt in world space. Moving the rig
-			// as well (as before) pulled those apart, so after WASD the camera
-			// circled one point while facing another, twice the distance away.
-			orbitControls.target.add(_locoMove);
-			camera.position.add(_locoMove);
-		} else {
-			player.position.add(_locoMove);
-		}
+		player.position.add(_locoMove);
 	}
 
 	// Turn (right stick x / no keyboard equivalent). Yaw around world up
@@ -6815,90 +6787,23 @@ function updateLocomotion(dt, session) {
 	applyLocomotionInput(dt, xrCam, mx, my, rx, ry);
 }
 
-// Desktop keyboard equivalent (WASD move/strafe, Q/E vertical). Only active
-// outside an XR session (VR uses the thumbsticks above) and never while
-// typing into a text field.
-const _keysDown = new Set();
-const LOCOMOTION_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE']);
-
-function isTypingIntoField() {
-	const el = document.activeElement;
-	if (!el) return false;
-	const tag = el.tagName;
-	if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-	if (el.isContentEditable) return true;
-	return false;
-}
-
-document.addEventListener('keydown', (e) => {
-	if (e.key === 'Shift') _freeRoamFast = true;
-	if (!LOCOMOTION_KEYS.has(e.code)) return;
-	if (isTypingIntoField()) return;
-	if (renderer.xr.isPresenting) return;
-	if (cameraControlMode === 'off') return; // Controls tab: Off
-	e.preventDefault();
-	_keysDown.add(e.code);
-});
-document.addEventListener('keyup', (e) => {
-	if (e.key === 'Shift') _freeRoamFast = false;
-	if (!LOCOMOTION_KEYS.has(e.code)) return;
-	_keysDown.delete(e.code);
-});
-window.addEventListener('blur', () => { _keysDown.clear(); _freeRoamFast = false; });
-
-function updateKeyboardLocomotion(dt) {
-	if (renderer.xr.isPresenting || _keysDown.size === 0) return;
-	if (isTypingIntoField() || cameraControlMode === 'off') {
-		_keysDown.clear();
-		return;
-	}
-	if (cameraControlMode === 'free') {
-		updateFreeRoamMovement(dt);
-		return;
-	}
-	let mx = 0, my = 0, ry = 0;
-	if (_keysDown.has('KeyW')) my -= 1;
-	if (_keysDown.has('KeyS')) my += 1;
-	if (_keysDown.has('KeyD')) mx += 1;
-	if (_keysDown.has('KeyA')) mx -= 1;
-	if (_keysDown.has('KeyQ')) ry += 1;
-	if (_keysDown.has('KeyE')) ry -= 1;
-	if (mx === 0 && my === 0 && ry === 0) return;
-	applyLocomotionInput(dt, camera, mx, my, 0, ry);
-}
-
 // ============================================================================
-// Controls tab: desktop/phone camera mode (never used during an XR session or
-// Cardboard, which drive the camera themselves).
-//   orbit — OrbitControls; choosing it re-centres the orbit on the scene
-//           origin (0,0,0). WASD/Q/E keep the existing rig movement above.
-//   free  — WASD flies toward where the camera looks, Q/E up/down, Shift
-//           faster; mouse-look via pointer lock (click canvas, Esc releases),
-//           drag-to-look for touch or when pointer lock is unavailable.
-//   off   — no orbit, no keys, no look; the camera stays put.
+// Controls tab: desktop/phone camera mode. The stock three.js controls from
+// cameraControls.js, never used during an XR session or Cardboard (they drive
+// the camera themselves) and disabled while typing into a text field.
+//   orbit (default) OrbitControls around the scene origin · map MapControls ·
+//   trackball TrackballControls · fly FlyControls · firstperson
+//   PointerLockControls with the pointerlock example's WASD · off nothing.
+// Saved values from 0.976 and earlier map orbit → orbit, free → firstperson,
+// off → off.
 // ============================================================================
-const CAMERA_CONTROL_MODES = ['orbit', 'free', 'off'];
 const CAMERA_CONTROL_STORAGE_KEY = 'gs.cameraControlMode';
-const FREE_ROAM_SPEED = 3;          // metres/second
-const FREE_ROAM_FAST_MULT = 3;      // while Shift is held
-const FREE_LOOK_SENSITIVITY = 0.0022; // radians per pixel
-const FREE_LOOK_MAX_PITCH = Math.PI / 2 - 0.01;
-let cameraControlMode = 'orbit';
-let _freeRoamFast = false;
-let _freeLookDrag = null; // { id, x, y } while dragging to look (no pointer lock)
-const _freeQuat = new THREE.Quaternion();
-const _freeFwd = new THREE.Vector3();
-const _freeRight = new THREE.Vector3();
-const _freeMove = new THREE.Vector3();
-const _freeEuler = new THREE.Euler(0, 0, 0, 'YXZ');
-const _orbitCamWorld = new THREE.Vector3();
 
 // Render distance: make the desktop/phone view draw everything VR draws.
 // VR's far plane is RENDER_FAR metres from the headset, which starts at the
 // player rig's eye (RENDER_EYE_HEIGHT above the rig). The windowed camera hangs
-// in the same rig but usually not at the eye: Orbit looks from 4 m behind it by
-// default and up to orbitControls.maxDistance zoomed out, and Free-roam / First
-// person keep that offset while they move the rig. With the same far value the
+// in the same rig but usually not at the eye: it starts 4 m behind it, and
+// Orbit / Map / Trackball zoom it further out while Fly / First person move it. With the same far value the
 // desktop used to clip what VR still shows, so outside XR the far plane is
 // pushed out by the camera's distance from the VR eye. With the camera at the
 // eye that is exactly RENDER_FAR. VR and Cardboard use the far value as is.
@@ -6939,148 +6844,102 @@ function cameraControlsSuspended() {
 	return !!(renderer.xr.isPresenting || mobileXRMode);
 }
 
-// Single place that decides whether OrbitControls is live outside XR.
-function refreshOrbitEnabled(immersive = renderer.xr.isPresenting) {
-	orbitControls.enabled = !immersive && !mobileXRMode && cameraControlMode === 'orbit';
+const cameraControls = createCameraControls({
+	camera,
+	domElement: renderer.domElement,
+	isSuspended: cameraControlsSuspended,
+	onModeChange: () => renderCameraControlsUi(),
+	onLockChange: (locked, why) => renderCameraControlsUi(why)
+});
+
+function refreshCameraControls() {
+	cameraControls.refreshEnabled();
 }
 
-function updateFreeRoamMovement(dt) {
-	if (!player || dt <= 0) return;
-	let f = 0, r = 0, u = 0;
-	if (_keysDown.has('KeyW')) f += 1;
-	if (_keysDown.has('KeyS')) f -= 1;
-	if (_keysDown.has('KeyD')) r += 1;
-	if (_keysDown.has('KeyA')) r -= 1;
-	if (_keysDown.has('KeyQ')) u += 1;
-	if (_keysDown.has('KeyE')) u -= 1;
-	if (f === 0 && r === 0 && u === 0) return;
-	camera.getWorldQuaternion(_freeQuat);
-	_freeFwd.set(0, 0, -1).applyQuaternion(_freeQuat);
-	_freeRight.set(1, 0, 0).applyQuaternion(_freeQuat);
-	_freeRight.y = 0;
-	if (_freeRight.lengthSq() < 1e-8) _freeRight.set(1, 0, 0);
-	_freeRight.normalize();
-	_freeMove.set(0, 0, 0)
-		.addScaledVector(_freeFwd, f)
-		.addScaledVector(_freeRight, r)
-		.addScaledVector(_LOCO_UP, u);
-	if (_freeMove.lengthSq() > 1) _freeMove.normalize();
-	_freeMove.multiplyScalar(FREE_ROAM_SPEED * (_freeRoamFast ? FREE_ROAM_FAST_MULT : 1) * dt);
-	player.position.add(_freeMove); // player is a direct child of scene
-}
-
-function applyFreeLook(dx, dy) {
-	_freeEuler.setFromQuaternion(camera.quaternion, 'YXZ');
-	_freeEuler.y -= dx * FREE_LOOK_SENSITIVITY;
-	_freeEuler.x = Math.max(-FREE_LOOK_MAX_PITCH, Math.min(FREE_LOOK_MAX_PITCH, _freeEuler.x - dy * FREE_LOOK_SENSITIVITY));
-	_freeEuler.z = 0;
-	camera.quaternion.setFromEuler(_freeEuler);
-}
-
-// Orbit around the scene origin, keeping the camera where it is in the world.
-// If the camera sits (nearly) on the vertical axis through the origin — e.g.
-// the default spawn at (0, 1.6, 0) — step back 4 m along the current heading
-// so the orbit does not start by staring straight down.
-function centerOrbitOnOrigin() {
-	flushOrbitMomentum();
-	camera.getWorldPosition(_orbitCamWorld);
-	camera.getWorldQuaternion(_freeQuat);
+// The desktop controls move the camera inside the player rig; keep the rig at
+// the origin so the camera's local pose is its world pose (and the Orbit
+// target really is the scene origin).
+function resetPlayerRig() {
 	if (player) { player.position.set(0, 0, 0); player.rotation.set(0, 0, 0); }
 	if (viewOffset) { viewOffset.position.set(0, 0, 0); viewOffset.rotation.set(0, 0, 0); }
-	if (Math.hypot(_orbitCamWorld.x, _orbitCamWorld.z) < 1) {
-		_freeFwd.set(0, 0, -1).applyQuaternion(_freeQuat);
-		_freeFwd.y = 0;
-		if (_freeFwd.lengthSq() < 1e-8) _freeFwd.set(0, 0, -1);
-		_freeFwd.normalize();
-		_orbitCamWorld.set(-_freeFwd.x * 4, Math.max(_orbitCamWorld.y, 1.6), -_freeFwd.z * 4);
-	}
-	camera.position.copy(_orbitCamWorld);
-	orbitControls.target.copy(ORBIT_PIVOT);
-	orbitControls.update();
 }
 
-// Orbit pivot in world space (the rig-local target through the rig).
-function orbitPivotWorld(out = new THREE.Vector3()) {
-	out.copy(orbitControls.target);
+// Reset Camera View / gamepad View / leaving VR or Cardboard: the default
+// desktop view (camera at (0, 1.6, 4); Orbit, Map and Trackball look at the
+// origin with their target there, Fly and First person face -Z).
+function resetCameraView() {
+	resetPlayerRig();
+	cameraControls.reset();
+}
+
+// Orbit / Map / Trackball target, in world space (null in the other modes).
+function orbitPivotWorld() {
+	const t = cameraControls.target;
+	if (!t) return null;
+	const out = t.clone();
 	if (camera.parent) { camera.parent.updateWorldMatrix(true, false); camera.parent.localToWorld(out); }
 	return out;
 }
 
-// Clear scene and loading a scene put the Orbit pivot back on the scene origin
-// when WASD / the left stick had slid it away (or scene code moved the rig).
-// Same move as switching back to Orbit: the camera stays where it is in the
-// world and turns to orbit the origin.
+// Clear scene and loading a scene put the Orbit / Map / Trackball target
+// back on the scene origin if it was panned away.
 function recenterOrbitPivot() {
-	if (cameraControlMode !== 'orbit' || cameraControlsSuspended()) return;
-	if (orbitPivotWorld(_orbitCamWorld).lengthSq() < 1e-8 && (!player || player.position.lengthSq() < 1e-8)) return;
-	centerOrbitOnOrigin();
+	if (cameraControlsSuspended()) return;
+	if (player && player.position.lengthSq() > 1e-8) resetPlayerRig();
+	cameraControls.recenter();
 }
 
+// Compatible handles for scene code: gsOrbit (0.976) and window.controls (the
+// name three.js examples use) both reach the active stock control.
 window.gsOrbit = {
-	/** World position the Orbit camera rotates around. */
-	pivot: () => orbitPivotWorld().toArray(),
+	/** World position the camera orbits (Orbit / Map / Trackball), else the origin. */
+	pivot: () => (orbitPivotWorld() || ORBIT_TARGET.clone()).toArray(),
 	recenter: () => recenterOrbitPivot()
 };
-
-// Start / "Reset Camera View" pose. Orbit: 4 m back from the origin, orbiting
-// it. Free-roam / Off, headset and Cardboard: the original spawn (eye height
-// at the origin, facing -Z).
-// OrbitControls damping keeps applying leftover drag/zoom momentum for a
-// second or so; flush it first so a reset/re-centre lands exactly.
-function flushOrbitMomentum() {
-	const damping = orbitControls.enableDamping;
-	orbitControls.enableDamping = false;
-	orbitControls.update();
-	orbitControls.enableDamping = damping;
+window.gsControls = {
+	modes: CAMERA_MODES.slice(),
+	get mode() { return cameraControls.mode; },
+	/** The active three.js controls instance (OrbitControls, MapControls, …) or null for Off. */
+	get controls() { return cameraControls.controls; },
+	setMode: (m) => setCameraControlMode(m),
+	reset: () => resetCameraView()
+};
+{
+	let userControls; // scene code may assign its own value
+	Object.defineProperty(window, 'controls', {
+		configurable: true,
+		get() { return userControls !== undefined ? userControls : cameraControls.controls; },
+		set(v) { userControls = v; }
+	});
 }
 
-function resetCameraView() {
-	flushOrbitMomentum();
-	if (player) { player.position.set(0, 0, 0); player.rotation.set(0, 0, 0); }
-	if (viewOffset) { viewOffset.rotation.set(0, 0, 0); viewOffset.position.set(0, 0, 0); }
-	camera.quaternion.identity();
-	if (cameraControlMode === 'orbit' && !cameraControlsSuspended()) {
-		camera.position.set(0, 1.6, 4);
-	} else {
-		camera.position.set(0, 1.6, 0);
-	}
-	orbitControls.target.copy(ORBIT_PIVOT);
-	orbitControls.update();
-}
-
-function exitFreeLookPointerLock() {
-	_freeLookDrag = null;
-	if (document.pointerLockElement === renderer.domElement) document.exitPointerLock?.();
-}
-
-function renderCameraControlsUi() {
+function renderCameraControlsUi(why) {
+	const mode = cameraControls.mode;
 	document.querySelectorAll('#dchat-camera-mode [data-camera-mode]').forEach((btn) => {
-		const on = btn.dataset.cameraMode === cameraControlMode;
+		const on = btn.dataset.cameraMode === mode;
 		btn.classList.toggle('active', on);
 		btn.setAttribute('aria-checked', on ? 'true' : 'false');
 	});
 	document.querySelectorAll('[data-camera-help]').forEach((el) => {
-		el.hidden = el.dataset.cameraHelp !== cameraControlMode;
+		el.hidden = !el.dataset.cameraHelp.split(' ').includes(mode);
 	});
+	// PointerLockControls fires lock/unlock before it updates isLocked, so ask the document.
+	const locked = mode === 'firstperson' && document.pointerLockElement === renderer.domElement;
+	document.body.classList.toggle('gs-camera-locked', locked);
 	const status = document.getElementById('dchat-controls-status');
 	if (status) {
-		status.textContent = cameraControlMode === 'free' && document.pointerLockElement === renderer.domElement
-			? 'Mouse look on. Press Esc to release.'
+		status.textContent = mode === 'firstperson'
+			? (locked ? 'Mouse look on. Press Esc to release.'
+				: why === 'refused' ? 'The browser refused mouse look (Esc was just pressed). Click the scene again.' : '')
 			: '';
 	}
+	window.gsRefreshTwinSticks?.(); // set up with the twin sticks further down
 }
 
-function setCameraControlMode(mode, { persist = true, initial = false } = {}) {
-	if (!CAMERA_CONTROL_MODES.includes(mode)) mode = 'orbit';
-	const prev = cameraControlMode;
-	cameraControlMode = mode;
-	if (mode !== 'free') exitFreeLookPointerLock();
-	_keysDown.clear();
-	document.body.classList.toggle('gs-camera-free', mode === 'free');
-	refreshOrbitEnabled();
-	if (mode === 'orbit' && !cameraControlsSuspended()) {
-		if (initial) resetCameraView(); else centerOrbitOnOrigin();
-	}
+function setCameraControlMode(mode, { persist = true } = {}) {
+	const prev = cameraControls.mode;
+	resetPlayerRig();
+	mode = cameraControls.setMode(mode);
 	if (persist) {
 		try { localStorage.setItem(CAMERA_CONTROL_STORAGE_KEY, mode); } catch { /* storage blocked */ }
 	}
@@ -7092,37 +6951,24 @@ document.querySelectorAll('#dchat-camera-mode [data-camera-mode]').forEach((btn)
 	btn.addEventListener('click', () => setCameraControlMode(btn.dataset.cameraMode));
 });
 
-renderer.domElement.addEventListener('pointerdown', (e) => {
-	if (cameraControlMode !== 'free' || cameraControlsSuspended()) return;
-	if (e.pointerType === 'mouse' && e.button !== 0) return;
-	_freeLookDrag = { id: e.pointerId, x: e.clientX, y: e.clientY };
-	if (e.pointerType === 'mouse' && renderer.domElement.requestPointerLock && document.pointerLockElement !== renderer.domElement) {
-		try {
-			const p = renderer.domElement.requestPointerLock();
-			if (p && typeof p.catch === 'function') p.catch(() => { /* fall back to drag-to-look */ });
-		} catch { /* fall back to drag-to-look */ }
-	}
+// A picked <select> option keeps keyboard focus (and would swallow the camera
+// keys, since selects count as text entry); hand focus back to the page.
+document.addEventListener('change', (e) => {
+	if (e.target instanceof HTMLSelectElement) e.target.blur();
 });
-renderer.domElement.addEventListener('pointermove', (e) => {
-	if (cameraControlMode !== 'free' || cameraControlsSuspended()) return;
-	if (document.pointerLockElement === renderer.domElement) {
-		applyFreeLook(e.movementX || 0, e.movementY || 0);
-		return;
-	}
-	if (!_freeLookDrag || _freeLookDrag.id !== e.pointerId) return;
-	applyFreeLook(e.clientX - _freeLookDrag.x, e.clientY - _freeLookDrag.y);
-	_freeLookDrag.x = e.clientX;
-	_freeLookDrag.y = e.clientY;
-});
-const _endFreeLookDrag = (e) => { if (_freeLookDrag && _freeLookDrag.id === e.pointerId) _freeLookDrag = null; };
-renderer.domElement.addEventListener('pointerup', _endFreeLookDrag);
-renderer.domElement.addEventListener('pointercancel', _endFreeLookDrag);
-document.addEventListener('pointerlockchange', renderCameraControlsUi);
 
 {
 	let saved = null;
 	try { saved = localStorage.getItem(CAMERA_CONTROL_STORAGE_KEY); } catch { /* storage blocked */ }
-	setCameraControlMode(CAMERA_CONTROL_MODES.includes(saved) ? saved : 'orbit', { persist: false, initial: true });
+	const mode = normalizeCameraMode(saved);
+	resetPlayerRig();
+	camera.position.set(0, 1.6, 4);
+	cameraControls.setMode(mode);
+	cameraControls.reset();
+	if (saved !== null && saved !== mode) {
+		try { localStorage.setItem(CAMERA_CONTROL_STORAGE_KEY, mode); } catch { /* storage blocked */ }
+	}
+	renderCameraControlsUi();
 }
 
 // ============================================================================
@@ -7633,21 +7479,19 @@ function withGsSettingsNote(outgoing) {
 // DualSense / DualShock, Switch Pro and other pads, over USB or Bluetooth.
 // Separate from WebXR headset controllers, which come through the XR
 // session's inputSources (see updateLocomotion).
-//   Orbit:     left stick moves (like WASD), right stick orbits,
-//              LT / RT zoom out / in, LB / RB down / up.
-//   Free-roam: left stick moves, right stick looks, LB / RB down / up,
-//              hold RT or click the left stick to go faster.
-//   Both:      Y switches Orbit <-> Free-roam, View (Back) resets the view.
+//   The sticks feed the active stock three.js control (updateGamepadCamera):
+//   Orbit / Map: right stick orbits, left stick pans (Orbit: y dollies),
+//              LT / RT zoom out / in.
+//   First person: left stick walks, right stick looks.
+//   Fly:       left stick moves, right stick yaws / pitches, LB / RB down / up.
+//   Trackball: sticks unused (no programmatic API).
+//   All:       Y switches Orbit <-> First person, View (Back) resets the view.
 //   Off:       the controller does not move the camera.
 // Browsers only reveal a pad after a button is pressed on it.
 // ============================================================================
 const GAMEPAD_BUTTON_NAMES = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'LS', 'RS', 'Up', 'Down', 'Left', 'Right', 'Home'];
 const GAMEPAD_BUTTON_ALIASES = { Back: 'View', Select: 'View', Start: 'Menu', L1: 'LB', R1: 'RB', L2: 'LT', R2: 'RT', L3: 'LS', R3: 'RS', Cross: 'A', Circle: 'B', Square: 'X', Triangle: 'Y', DUp: 'Up', DDown: 'Down', DLeft: 'Left', DRight: 'Right', Guide: 'Home' };
 const GAMEPAD_STICK_DEADZONE = THUMBSTICK_DEADZONE;
-const GAMEPAD_LOOK_SPEED = 2.4;   // radians/second at full right-stick deflection
-const GAMEPAD_ZOOM_SPEED = 1.5;   // orbit radius factor per second at full trigger
-const _padSpherical = new THREE.Spherical();
-const _padOffset = new THREE.Vector3();
 
 function gamepadButtonIndex(name) {
 	const key = GAMEPAD_BUTTON_ALIASES[name] || name;
@@ -7787,70 +7631,35 @@ function pollGamepads() {
 }
 
 // Moves the desktop/phone camera from the pad, matching the Controls tab mode.
+// Game controller → the active stock control (see cameraControls.stick):
+// Orbit / Map: right stick orbits, left stick pans (Orbit: y dollies in/out),
+// LT/RT zoom. First person: left stick walks, right stick looks (through
+// PointerLockControls' own mouse-look). Fly: left stick moves, right stick
+// yaws/pitches, LB/RB down/up. Trackball: sticks unused. Y switches Orbit /
+// First person, View resets the view.
 function updateGamepadCamera(dt) {
-	if (!gsGamepad.connected || dt <= 0) return;
-	if (cameraControlsSuspended() || gsGamepad.captureCamera) return;
-	if (cameraControlMode === 'off') return;
+	if (!gsGamepad.connected || dt <= 0) return null;
+	if (cameraControlsSuspended() || gsGamepad.captureCamera) return null;
+	if (cameraControls.mode === 'off') return null;
 	if (gsGamepad.justPressed('Y')) {
-		setCameraControlMode(cameraControlMode === 'orbit' ? 'free' : 'orbit');
-		return;
+		setCameraControlMode(cameraControls.mode === 'orbit' ? 'firstperson' : 'orbit');
+		return null;
 	}
-	if (gsGamepad.justPressed('View')) { resetCameraView(); return; }
-
-	const lx = gsGamepad.axis('leftX'), ly = gsGamepad.axis('leftY');
-	const rx = gsGamepad.axis('rightX'), ry = gsGamepad.axis('rightY');
-	const vertical = gsGamepad.button('RB') - gsGamepad.button('LB');
-
-	if (cameraControlMode === 'free') {
-		applyFreeRoamSticks(dt, lx, ly, rx, ry, vertical, gsGamepad.button('RT') > 0.5 || gsGamepad.pressed('LS'));
-		return;
-	}
-
-	// Orbit
-	if (lx || ly || vertical) applyLocomotionInput(dt, camera, lx, ly, 0, vertical);
-	const zoom = gsGamepad.button('LT') - gsGamepad.button('RT'); // RT = in
-	if (rx || ry || zoom) {
-		_padOffset.copy(camera.position).sub(orbitControls.target);
-		_padSpherical.setFromVector3(_padOffset);
-		_padSpherical.theta -= rx * GAMEPAD_LOOK_SPEED * dt;
-		_padSpherical.phi -= ry * GAMEPAD_LOOK_SPEED * dt;
-		_padSpherical.phi = Math.max(Math.max(0.01, orbitControls.minPolarAngle), Math.min(Math.min(Math.PI - 0.01, orbitControls.maxPolarAngle), _padSpherical.phi));
-		if (zoom) {
-			_padSpherical.radius *= Math.pow(GAMEPAD_ZOOM_SPEED, zoom * dt * 2);
-			_padSpherical.radius = Math.max(Math.max(0.1, orbitControls.minDistance), Math.min(orbitControls.maxDistance, _padSpherical.radius));
-		}
-		_padOffset.setFromSpherical(_padSpherical);
-		camera.position.copy(orbitControls.target).add(_padOffset);
-		orbitControls.update();
-	}
-}
-
-// Free-roam from stick axes (gamepad or the on-screen twin sticks), already
-// past the deadzone: right stick looks (yaw/pitch), left stick y goes forward
-// and back where you look, left stick x strafes, `vertical` goes up/down.
-function applyFreeRoamSticks(dt, lx, ly, rx, ry, vertical = 0, fast = false) {
-	if (rx || ry) applyFreeLook(rx * GAMEPAD_LOOK_SPEED * dt / FREE_LOOK_SENSITIVITY, ry * GAMEPAD_LOOK_SPEED * dt / FREE_LOOK_SENSITIVITY);
-	if (!player || (!lx && !ly && !vertical)) return;
-	camera.getWorldQuaternion(_freeQuat);
-	_freeFwd.set(0, 0, -1).applyQuaternion(_freeQuat);
-	_freeRight.set(1, 0, 0).applyQuaternion(_freeQuat);
-	_freeRight.y = 0;
-	if (_freeRight.lengthSq() < 1e-8) _freeRight.set(1, 0, 0);
-	_freeRight.normalize();
-	_freeMove.set(0, 0, 0)
-		.addScaledVector(_freeFwd, -ly)
-		.addScaledVector(_freeRight, lx)
-		.addScaledVector(_LOCO_UP, vertical);
-	if (_freeMove.lengthSq() > 1) _freeMove.normalize();
-	_freeMove.multiplyScalar(FREE_ROAM_SPEED * (fast ? FREE_ROAM_FAST_MULT : 1) * dt);
-	player.position.add(_freeMove);
+	if (gsGamepad.justPressed('View')) { resetCameraView(); return null; }
+	return {
+		lx: gsGamepad.axis('leftX'), ly: gsGamepad.axis('leftY'),
+		rx: gsGamepad.axis('rightX'), ry: gsGamepad.axis('rightY'),
+		vertical: gsGamepad.button('RB') - gsGamepad.button('LB'),
+		zoom: gsGamepad.button('RT') - gsGamepad.button('LT')
+	};
 }
 
 // ============================================================================
-// On-screen twin joysticks (Free-roam on desktop and phone, see twinSticks.js).
-// Left: forward/back (y) and strafe (x). Right: look. Same deadzone and speeds
-// as the gamepad. Hidden in Orbit/Off, VR and Cardboard, or when turned off
-// in the Controls tab (saved per browser).
+// On-screen twin joysticks (First person and Fly, desktop and phone; see
+// twinSticks.js). Left: move (y forward/back, x sideways). Right: look. Same
+// deadzone as the gamepad; the values go to the stock control like the
+// gamepad's. Hidden in the other modes, in VR and Cardboard, or when turned
+// off in the Controls tab (saved per browser).
 // ============================================================================
 const TWIN_STICKS_STORAGE_KEY = 'gs.twinSticks';
 let twinSticksEnabled = true;
@@ -7873,28 +7682,38 @@ if (dchatTwinSticksToggle) {
 	});
 }
 function refreshTwinSticks() {
-	const want = twinSticksEnabled && cameraControlMode === 'free' && !cameraControlsSuspended()
+	const want = twinSticksEnabled && STICK_MODES.has(cameraControls.mode) && !cameraControlsSuspended()
 		&& !document.body.classList.contains('gs-xr-presenting');
 	if (want !== twinSticks.visible) twinSticks.setVisible(want);
 }
-function updateTwinSticksCamera(dt) {
-	refreshTwinSticks();
-	if (!twinSticks.visible || dt <= 0) return;
-	const a = twinSticks.axes();
-	const [lx, ly] = applyStickDeadzone(a.lx, a.ly, gsGamepad.deadzone);
-	const [rx, ry] = applyStickDeadzone(a.rx, a.ry, gsGamepad.deadzone);
-	if (lx || ly || rx || ry) applyFreeRoamSticks(dt, lx, ly, rx, ry);
-}
+window.gsRefreshTwinSticks = refreshTwinSticks;
+refreshTwinSticks();
 window.gsTwinSticks = {
 	get visible() { return twinSticks.visible; },
 	get enabled() { return twinSticksEnabled; },
 	axes: () => twinSticks.axes()
 };
 
+// Gamepad and on-screen sticks combined (each past the deadzone), one call
+// into the stock control per frame.
+const _clampAxis = (v) => Math.max(-1, Math.min(1, v));
+function updateStickCamera(dt, pad) {
+	refreshTwinSticks();
+	const input = pad ? { ...pad } : { lx: 0, ly: 0, rx: 0, ry: 0, vertical: 0, zoom: 0 };
+	if (twinSticks.visible) {
+		const a = twinSticks.axes();
+		const [lx, ly] = applyStickDeadzone(a.lx, a.ly, gsGamepad.deadzone);
+		const [rx, ry] = applyStickDeadzone(a.rx, a.ry, gsGamepad.deadzone);
+		input.lx = _clampAxis(input.lx + lx); input.ly = _clampAxis(input.ly + ly);
+		input.rx = _clampAxis(input.rx + rx); input.ry = _clampAxis(input.ry + ry);
+	}
+	if (cameraControlsSuspended()) return;
+	cameraControls.stick(dt, input);
+}
+
 function updateGamepads(dt) {
 	pollGamepads();
-	updateGamepadCamera(dt);
-	updateTwinSticksCamera(dt);
+	updateStickCamera(dt, updateGamepadCamera(dt));
 }
 
 refreshGamepadList();
@@ -8930,8 +8749,8 @@ function setImmersiveUiMode(immersive) {
 	hud.visible = immersive && !displayOnlyMode;
 	// Mouse orbit/pan/zoom only makes sense windowed — the headset pose drives
 	// the camera during an XR session.
-	refreshOrbitEnabled(!!immersive);
-	if (immersive) exitFreeLookPointerLock();
+	refreshCameraControls();
+	if (immersive) cameraControls.unlock();
 	document.body.classList.toggle('gs-xr-presenting', !!immersive);
 	applyXrPanelVisibility(immersive);
 }
@@ -8988,6 +8807,7 @@ renderer.xr.addEventListener('sessionend', () => {
 	renderSidePanel();
 	renderDomEnv();
 	setImmersiveUiMode(false);
+	resetCameraView(); // back to the default desktop view (not the headset pose)
 });
 
 // ============================================================================
@@ -9364,7 +9184,6 @@ renderer.setAnimationLoop((time) => {
 	// transcription segmentation works in MR as well as the windowed view.
 	pumpVad();
 
-	if (orbitControls.enabled) orbitControls.update();
 
 	// Billboard effect: panels face the camera while staying upright
 	if (renderer.xr.isPresenting) {
@@ -9545,8 +9364,8 @@ renderer.setAnimationLoop((time) => {
 	} else {
 		// Hide reticles outside XR
 		for (const r of reticles) if (r) r.visible = false;
-		// Desktop keyboard locomotion (WASD move/strafe, Q/E vertical).
-		updateKeyboardLocomotion(dt);
+		// Desktop / phone camera: the active stock three.js control.
+		cameraControls.update(dt);
 	}
 
 	// Game controllers (Gamepad API): poll once per frame before scene code

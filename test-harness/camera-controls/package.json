@@ -1,0 +1,10 @@
+{
+  "name": "gs-camera-controls-test",
+  "private": true,
+  "type": "module",
+  "description": "Headless check of the stock three.js desktop camera controls (Orbit, Map, Trackball, Fly, First person, Off) on desktop + phone, plus a real-input pointer-lock check.",
+  "dependencies": {
+    "iwer": "^2.6.0",
+    "puppeteer-core": "^24.0.0"
+  }
+}

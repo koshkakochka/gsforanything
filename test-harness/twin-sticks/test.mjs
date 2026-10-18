@@ -1,4 +1,6 @@
-// Orbit pivot = scene origin + Free-roam twin on-screen joysticks. Desktop + phone.
+// Orbit pivot = scene origin + on-screen twin joysticks (First person; Fly is covered by
+// test-harness/camera-controls). Desktop + phone. Updated for the stock three.js controls:
+// Orbit has no WASD now, so the pivot is moved with OrbitControls' arrow-key pan.
 // BASE=https://localhost:3488 node test.mjs
 import puppeteer from 'puppeteer-core';
 import fs from 'fs';
@@ -56,13 +58,14 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
     const s1 = await state();
     ok(`${T} desktop render distance still matches VR: ${label}`, Math.abs(s1.far - s1.expectFar) < 0.05, `far=${s1.far.toFixed(2)} expected=${s1.expectFar.toFixed(2)}`);
   }
-  const walk = async (ms = 900) => { await p.keyboard.down('KeyW'); await sleep(ms); await p.keyboard.up('KeyW'); await sleep(500); };
+  // Orbit: pan the target off the origin with the stock arrow keys (OrbitControls.listenToKeyEvents).
+  const walk = async () => { for (let i = 0; i < 15; i++) { await p.keyboard.down('ArrowLeft'); await sleep(20); await p.keyboard.up('ArrowLeft'); } await sleep(2000); }; // let OrbitControls damping settle
 
   // ---- Orbit pivot
   await pivotCase('first load');
   await walk(); const moved = await state();
-  ok(`${T} W in Orbit slides the pivot (rig stays at the origin)`, !near0(moved.pivot) && near0(moved.rig), JSON.stringify(r3(moved.pivot)));
-  { const bp = await behaviouralPivot(); const s2 = await state(); ok(`${T} after W, Orbit still rotates around its own pivot (camera aims at it)`, bp && s2.pivot.every((v, i) => Math.abs(v - bp[i]) < 0.03), `api=${JSON.stringify(r3(s2.pivot))} measured=${JSON.stringify(r3(bp || []))}`); }
+  ok(`${T} arrow keys in Orbit pan the pivot (rig stays at the origin)`, !near0(moved.pivot) && near0(moved.rig), JSON.stringify(r3(moved.pivot)));
+  { const bp = await behaviouralPivot(); const s2 = await state(); ok(`${T} after panning, Orbit still rotates around its own pivot (camera aims at it)`, bp && s2.pivot.every((v, i) => Math.abs(v - bp[i]) < 0.03), `api=${JSON.stringify(r3(s2.pivot))} measured=${JSON.stringify(r3(bp || []))}`); }
   await tab('scenes'); await p.click('[data-action="scenes:clear"]'); await sleep(800); await tab('chat');
   await pivotCase('after Clear scene');
   await walk();
@@ -70,7 +73,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   ok(`${T} scene file loaded`, await p.evaluate(() => !!scene.getObjectByName('pivotBox')));
   await pivotCase('after loading a scene');
   await walk();
-  await tab('scenes'); await p.evaluate(() => document.getElementById('dchat-reset-camera').click()); await sleep(800); await tab('chat');
+  await p.evaluate(() => document.getElementById('dchat-reset-camera').click()); await sleep(800); await tab('chat');
   await pivotCase('after Reset Camera View');
   await walk();
   await p.evaluate(() => { const mk = () => ({ id: 'Xbox Wireless Controller (STANDARD GAMEPAD)', index: 0, connected: true, mapping: 'standard', timestamp: performance.now(), axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })) }); window.fakePad = mk(); navigator.getGamepads = () => [window.fakePad, null, null, null]; const ev = new Event('gamepadconnected'); ev.gamepad = window.fakePad; window.dispatchEvent(ev); });
@@ -82,9 +85,9 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   const sticks = () => p.evaluate(() => { const r = id => { const e = document.getElementById(id); if (!e) return null; const b = e.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom, op: +getComputedStyle(e).opacity }; }; return { visible: gsTwinSticks.visible, root: !document.getElementById('gs-twin-sticks')?.hidden, left: r('gs-stick-left'), right: r('gs-stick-right'), dock: r('gs-dock'), chat: r('desktop-chat'), tabs: r('dchat-tabs') || null }; });
   let st = await sticks();
   ok(`${T} sticks hidden in Orbit`, !st.visible && !st.root, JSON.stringify({ v: st.visible }));
-  await mode('free'); await sleep(300);
+  await mode('firstperson'); await sleep(300);
   st = await sticks();
-  ok(`${T} sticks shown in Free-roam (default on)`, st.visible && st.root && st.left && st.left.r - st.left.l > 60, JSON.stringify(st.left));
+  ok(`${T} sticks shown in First person (default on)`, st.visible && st.root && st.left && st.left.r - st.left.l > 60, JSON.stringify(st.left));
   const ov = (a, c) => a && c && a.l < c.r && a.r > c.l && a.t < c.b && a.b > c.t;
   ok(`${T} sticks inside the viewport, in the bottom corners, clear of the dock and the chat panel`, [st.left, st.right].every(s => s.l >= 0 && s.r <= vp.width && s.b <= vp.height && s.t > vp.height / 2 && !ov(s, st.dock) && !ov(s, st.chat)) && st.left.r < vp.width / 2 && st.right.l > vp.width / 2, JSON.stringify(st));
   ok(`${T} sticks are minimal (low opacity, ≤ 100 px)`, [st.left, st.right].every(s => s.op <= 0.5 && s.r - s.l <= 100), `${st.left.op} ${st.right.op}`);
@@ -97,7 +100,8 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   const [Lx, Ly] = C(st.left), [Rx, Ry] = C(st.right), LR = R(st.left);
   const look = () => p.evaluate(() => { const e = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ'); return { yaw: e.y, pitch: e.x }; });
   const fwd = () => p.evaluate(() => { const d = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion())); d.y = 0; return d.normalize().toArray(); });
-  const rigPos = () => p.evaluate(() => scene.getObjectByName('player').position.toArray());
+  // First person moves the camera itself (PointerLockControls); the rig stays at the origin.
+  const rigPos = () => p.evaluate(() => camera.getWorldPosition(new THREE.Vector3()).toArray());
   async function hold(points, ms) { // points: [[x0,y0,x1,y1,id]]
     if (touch) {
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points.map(([x, y, , , id]) => ({ x, y, id })) });
@@ -117,7 +121,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   await hold([[Lx, Ly, Lx, Ly - LR * 1.5, 1]], 1000);
   let p1 = await rigPos(); let dv = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
   const lk1 = await look();
-  ok(`${T} left stick up moves forward (~3 m/s, same as the gamepad), no turning`, dot(dv, f0) > 2 && dot(dv, f0) < 4.2 && Math.abs(lk1.yaw - lk0.yaw) < 1e-6, `forward=${dot(dv, f0).toFixed(2)} m`);
+  ok(`${T} left stick up moves forward (~3 m/s), no turning`, dot(dv, f0) > 2 && dot(dv, f0) < 4.2 && Math.abs(lk1.yaw - lk0.yaw) < 1e-6, `forward=${dot(dv, f0).toFixed(2)} m`);
   p0 = p1;
   await hold([[Lx, Ly, Lx, Ly + LR * 1.5, 1]], 600);
   p1 = await rigPos(); dv = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
@@ -151,29 +155,29 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   await sleep(200);
   if (!touch) { await p.evaluate(() => document.exitPointerLock?.()); await sleep(200); }
   ok(`${T} tap/click outside the sticks reaches the scene canvas`, hit && besideStick === 'CANVAS' && await p.evaluate(() => window.__canvasDowns >= 1), `beside=${besideStick}`);
-  if (!touch) await p.evaluate(() => document.exitPointerLock?.());
-  a0 = await look();
-  await drag(spot[0], spot[1], 80, 0); await sleep(300);
-  a1 = await look();
-  if (!touch) { await p.evaluate(() => document.exitPointerLock?.()); await sleep(200); }
-  ok(`${T} drag-to-look on the scene still works next to the sticks`, Math.abs(a1.yaw - a0.yaw) > 0.05 || !touch, `dyaw=${(a1.yaw - a0.yaw).toFixed(2)}`);
+  if (!touch) {
+    // First person (PointerLockControls): clicking the scene next to the sticks locks the mouse.
+    await p.mouse.click(spot[0], spot[1]); await sleep(300);
+    ok(`${T} clicking the scene next to the sticks locks the mouse (First person)`, await p.evaluate(() => document.pointerLockElement === renderer.domElement));
+    await p.evaluate(() => document.exitPointerLock?.()); await sleep(200);
+  }
   await p.click('.dchat-tab[data-tab="scenes"]'); await sleep(250);
   ok(`${T} UI still clickable (Scenes tab opens)`, await p.evaluate(() => document.querySelector('.dchat-tab.active')?.dataset.tab === 'scenes'));
-  // WASD in Free-roam still works
-  p0 = await rigPos(); await walk(500); p1 = await rigPos();
-  ok(`${T} WASD still moves in Free-roam`, Math.hypot(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]) > 0.5);
+  // WASD in First person still works
+  p0 = await rigPos(); await p.keyboard.down('KeyW'); await sleep(500); await p.keyboard.up('KeyW'); await sleep(400); p1 = await rigPos();
+  ok(`${T} WASD still moves in First person`, Math.hypot(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]) > 0.5);
   // option to hide, saved
   await tab('controls');
   ok(`${T} Controls tab has the joystick option (checked)`, await p.evaluate(() => document.getElementById('dchat-twin-sticks')?.checked === true));
   await p.click('#dchat-twin-sticks'); await sleep(300);
   ok(`${T} unchecking hides the sticks`, !(await sticks()).visible);
   await p.reload({ waitUntil: 'networkidle2' }); await sleep(2500);
-  ok(`${T} hidden choice saved across reload (still Free-roam)`, await p.evaluate(() => !gsTwinSticks.visible && document.getElementById('dchat-twin-sticks').checked === false && document.querySelector('#dchat-camera-mode .active')?.dataset.cameraMode === 'free'));
+  ok(`${T} hidden choice saved across reload (still First person)`, await p.evaluate(() => !gsTwinSticks.visible && document.getElementById('dchat-twin-sticks').checked === false && document.querySelector('#dchat-camera-mode .active')?.dataset.cameraMode === 'firstperson'));
   await tab('controls'); await p.click('#dchat-twin-sticks'); await sleep(300); await tab('chat');
   ok(`${T} re-checking shows them again`, (await sticks()).visible);
   await mode('off');
   ok(`${T} sticks hidden in Off`, !(await sticks()).visible);
-  await mode('free');
+  await mode('firstperson');
   // VR hides them
   await p.click('#XRButton').catch(() => {});
   for (let i = 0; i < 40 && !(await p.evaluate(() => renderer.xr.isPresenting)); i++) await sleep(250);
@@ -183,10 +187,10 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   for (let i = 0; i < 40 && (await p.evaluate(() => renderer.xr.isPresenting)); i++) await sleep(250);
   await sleep(800);
   ok(`${T} sticks back after leaving VR`, (await sticks()).visible);
-  // Free-roam walk then Orbit: pivot back on the origin
+  // First person walk then Orbit: pivot back on the origin
   await mode('orbit');
   ok(`${T} sticks hidden again in Orbit`, !(await sticks()).visible);
-  await pivotCase('Free-roam, then back to Orbit');
+  await pivotCase('First person, then back to Orbit');
   ok(`${T} no console/page errors`, errs.length === 0, JSON.stringify(errs.slice(0, 4)));
   await p.close();
 }

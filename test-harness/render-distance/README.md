@@ -8,7 +8,7 @@ through the real ENTER VR button.
 Checks:
 - the `gsRenderDistance` defaults are near 0.1 and far 100
 - Orbit: far = 100 + the camera's distance from the VR eye, by default and zoomed out to 50 m
-- Free-roam: the same, and exactly 0.1 / 100 when the camera sits at the eye
+- First person: the same, and exactly 0.1 / 100 when the camera sits at the eye
 - VR is unchanged: XR camera and session `depthNear` / `depthFar` are 0.1 / 100
 - marker boxes at 50 m, 98 m and 140 m from the VR eye: 98 m is drawn everywhere, 140 m nowhere
 - scene code `camera.far = 1000` applies to VR and desktop, and going back to 100 works

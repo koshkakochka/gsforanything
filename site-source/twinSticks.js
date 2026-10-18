@@ -1,12 +1,12 @@
-// On-screen twin joysticks for Free-roam (desktop and phone).
+// On-screen twin joysticks for the First person and Fly camera modes (desktop and phone).
 //
 // Two small, semi-transparent sticks: a thin ring with a small knob in the
 // bottom-left (move) and bottom-right (look) corners, above the bottom dock.
 // They only take pointer events inside their own ring, so taps anywhere else
 // still reach the scene and the panels. Each stick follows one pointer
 // (touch, mouse or pen), so both can be used at once with two fingers.
-// main.js reads the axes every frame and applies the same deadzone and
-// speeds as the gamepad's Free-roam.
+// main.js reads the axes every frame, applies the gamepad deadzone and feeds
+// them to the active stock three.js control (cameraControls.js stick()).
 //
 // Axes use gamepad conventions, -1..1: x = right, y = down
 // (so pushing the left stick up gives y < 0 = forward).
