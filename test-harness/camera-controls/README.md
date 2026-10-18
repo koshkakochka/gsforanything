@@ -14,6 +14,11 @@
   arrows + drag-to-look, First person W/A/S/D + arrows (with a button or
   checkbox focused), lock on canvas click, mouse look, unlock, panels clickable
   without re-locking; phone touch (one finger, pinch).
+- Fly drag-to-look with raw CDP `Input.dispatchMouseEvent` (buttons=1) and raw
+  touch: a 110 px drag across the canvas centre, a same-frame drag, pitch, no
+  turning after release, no turning when the drag is on a panel.
+- Camera at eye height (y = 1.6) on page load in every saved mode, after Reset
+  and in Map.
 - Typing in chat (and a focused select) never moves the camera; Off does nothing.
 - Switching modes 18 times leaves the window / document / canvas listener
   counts unchanged (CDP `DOMDebugger.getEventListeners`).

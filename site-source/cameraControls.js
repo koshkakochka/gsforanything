@@ -42,6 +42,11 @@ const STICK_MOVE_SPEED = 3;      // m/s at full deflection (First person, Fly)
 const STICK_LOOK_SPEED = 2.4;    // rad/s at full deflection
 const STICK_ZOOM_SPEED = 1.5;    // Orbit / Map dolly factor per second (triggers); OrbitControls' _dollyIn/_dollyOut take a scale < 1 like its wheel zoom
 const POINTERLOCK_MOUSE_SENSITIVITY = 0.002; // PointerLockControls' own constant
+// Fly drag-to-look: radians per dragged pixel. Stock FlyControls turns at a rate
+// set by how far the pointer sits from the canvas centre, so a normal drag near
+// the centre (or a quick one) barely turned the view; here the view follows the
+// drag, like PointerLockControls' mouse look.
+const FLY_DRAG_SENSITIVITY = 0.004;
 
 // Text-entry fields keep their keys: the controls are disabled while one has
 // focus. Buttons, checkboxes, radios, sliders and panels do not block keys.
@@ -60,6 +65,7 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 	let controls = null;
 	let typing = isTextEntry(document.activeElement);
 	let stickActive = false;
+	let flyDrag = null; // Fly drag-to-look pointer { id, x, y }
 	// First person keyboard state (pointerlock example).
 	const fp = { forward: false, backward: false, left: false, right: false, velocity: new THREE.Vector3(), direction: new THREE.Vector3() };
 	const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -76,6 +82,7 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 			controls._updateRotationVector();
 		}
 		stickActive = false;
+		flyDrag = null;
 	}
 
 	function refreshEnabled() {
@@ -121,6 +128,29 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 		if (t !== typing) { typing = t; refreshEnabled(); }
 	};
 	const onBlur = () => clearHeldInput();
+	// ---- Fly drag-to-look (see FLY_DRAG_SENSITIVITY) ----
+	const _flyQ = new THREE.Quaternion();
+	const _axisX = new THREE.Vector3(1, 0, 0), _axisY = new THREE.Vector3(0, 1, 0);
+	function onFlyPointerDown(e) {
+		if (mode !== 'fly' || !controls || !controls.enabled || flyDrag) return;
+		if (e.pointerType === 'mouse' && e.button !== 0) return;
+		flyDrag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+	}
+	function onFlyPointerMove(e) {
+		if (!flyDrag || e.pointerId !== flyDrag.id) return;
+		if (mode !== 'fly' || !controls || !controls.enabled) { flyDrag = null; return; }
+		const dx = e.clientX - flyDrag.x, dy = e.clientY - flyDrag.y;
+		flyDrag.x = e.clientX; flyDrag.y = e.clientY;
+		if (!dx && !dy) return;
+		// Same local-frame rotation FlyControls.update applies for yaw / pitch.
+		camera.quaternion.multiply(_flyQ.setFromAxisAngle(_axisY, -dx * FLY_DRAG_SENSITIVITY));
+		camera.quaternion.multiply(_flyQ.setFromAxisAngle(_axisX, -dy * FLY_DRAG_SENSITIVITY));
+	}
+	function onFlyPointerUp(e) { if (flyDrag && e.pointerId === flyDrag.id) flyDrag = null; }
+	domElement.addEventListener('pointerdown', onFlyPointerDown);
+	window.addEventListener('pointermove', onFlyPointerMove);
+	window.addEventListener('pointerup', onFlyPointerUp);
+	window.addEventListener('pointercancel', onFlyPointerUp);
 	document.addEventListener('keydown', onFpKey);
 	document.addEventListener('keyup', onFpKey);
 	domElement.addEventListener('pointerdown', onFpPointerDown);
@@ -178,6 +208,9 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 				c.rollSpeed = Math.PI / 4;
 				c.autoForward = false;
 				c.dragToLook = true; // look only while dragging, so moving the mouse to the panels doesn't spin the view
+				// The view follows the drag (onFlyPointerMove) instead of the stock
+				// "distance from the canvas centre" turn rate; keys are stock.
+				domElement.removeEventListener('pointermove', c._onPointerMove);
 				return c;
 			}
 			case 'firstperson': {

@@ -58,6 +58,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   // ---- defaults
   let s = await st();
   ok(`${T} default is Orbit (OrbitControls) at (0,1.6,4) around the origin`, s.mode === 'orbit' && s.cls === 'OrbitControls' && f2(s.cam) === '[0,1.6,4]' && f2(s.target) === '[0,0,0]' && s.enabled, JSON.stringify({ m: s.mode, c: s.cls, cam: f2(s.cam) }));
+  ok(`${T} page load: camera.position (local) and world position both at eye height y = 1.6 (quaternion x ≈ -0.189 is the downward look at the origin, not a height)`, await p.evaluate(() => Math.abs(camera.position.y - 1.6) < 1e-6 && Math.abs(camera.getWorldPosition(new THREE.Vector3()).y - 1.6) < 1e-6 && Math.abs(camera.quaternion.x + 0.1891) < 1e-3));
   ok(`${T} window.controls and gsControls.controls are the active stock control`, s.same && await p.evaluate(() => gsControls.modes.join() === 'orbit,map,trackball,fly,firstperson,off'));
   await tab('controls');
   const btns = await p.evaluate(() => [...document.querySelectorAll('#dchat-camera-mode [data-camera-mode]')].map(e => e.dataset.cameraMode + ':' + e.textContent.trim()));
@@ -86,9 +87,9 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
 
   // ---- Map
   await mode('map'); await tab('chat'); s = await st();
-  ok(`${T} Map uses MapControls, target at the origin`, s.cls === 'MapControls' && f2(s.target) === '[0,0,0]', s.cls);
+  ok(`${T} Map uses MapControls, target at the origin, camera kept at eye height (y = 1.6)`, s.cls === 'MapControls' && f2(s.target) === '[0,0,0]' && Math.abs(s.cam[1] - 1.6) < 1e-6, `${s.cls} cam ${f2(s.cam)}`);
   a = s; await drag(100, 60); c = await st();
-  ok(`${T} Map: ${touch ? 'one-finger' : 'left'} drag pans over the ground`, V.len(V.sub(c.target, a.target)) > 0.2 && Math.abs(c.target[1]) < 1e-6, `target -> ${f2(c.target)}`);
+  ok(`${T} Map: ${touch ? 'one-finger' : 'left'} drag pans over the ground (camera height unchanged)`, V.len(V.sub(c.target, a.target)) > 0.2 && Math.abs(c.target[1]) < 1e-6 && Math.abs(c.cam[1] - a.cam[1]) < 1e-3, `target -> ${f2(c.target)} cam y ${c.cam[1].toFixed(3)}`);
   if (!touch) {
     a = c; await drag(120, 0, { button: 'right' }); c = await st(); ok(`${T} Map: right-drag rotates`, turned(a, c) > 0.1 && Math.abs(dist(a) - dist(c)) < 0.1);
     a = c; await wheel(-400); c = await st(); ok(`${T} Map: wheel zooms`, dist(c) < dist(a) - 0.3);
@@ -124,6 +125,43 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   ok(`${T} Fly: Q rolls`, V.len(V.sub(c.up, a.up)) > 0.1);
   a = c; await tab('chat'); { const [x, y] = await canvasSpot(); if (touch) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] }); for (let i = 1; i <= 10; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + 8 * i, y, id: 1 }] }); await sleep(40); } await sleep(300); await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); } else { await p.mouse.move(x, y); await p.mouse.down(); for (let i = 1; i <= 10; i++) { await p.mouse.move(x + 20 * i, y); await sleep(40); } await sleep(300); await p.mouse.up(); } await sleep(400); }
   c = await st(); ok(`${T} Fly: drag to look`, turned(a, c) > 0.05, turned(a, c).toFixed(3));
+  // Regression (real-browser report on PR #9): a ~110 px left-drag around the canvas centre,
+  // sent as raw CDP mouse events (buttons=1), left the view unchanged, because stock
+  // FlyControls turns at a rate set by the pointer's offset from the canvas centre.
+  const yawOf = d => Math.atan2(-d[0], -d[2]);
+  async function rawDrag(x0, y0, dx, dy, { steps = 8, gap = 0 } = {}) {
+    if (touch) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y: y0, id: 7 }] });
+      for (let i = 1; i <= steps; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x0 + dx * i / steps, y: y0 + dy * i / steps, id: 7 }] }); if (gap) await sleep(gap); }
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    } else {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x0, y: y0, buttons: 0 });
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: x0, y: y0, button: 'left', buttons: 1, clickCount: 1 });
+      for (let i = 1; i <= steps; i++) { await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x0 + dx * i / steps, y: y0 + dy * i / steps, button: 'left', buttons: 1 }); if (gap) await sleep(gap); }
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: x0 + dx, y: y0 + dy, button: 'left', buttons: 0, clickCount: 1 });
+    }
+    await sleep(300);
+  }
+  {
+    await p.evaluate(() => gsControls.reset()); await sleep(200);
+    // A free canvas row near the vertical centre, drag centred on the canvas centre.
+    const cy = await p.evaluate(() => { const c = renderer.domElement, r = c.getBoundingClientRect(), x = r.left + r.width / 2; for (let d = 0; d < r.height / 2; d += 10) for (const y of [r.top + r.height / 2 - d, r.top + r.height / 2 + d]) if ([-60, 0, 60].every(o => document.elementFromPoint(x + o, y) === c)) return [x, y]; return null; });
+    if (!cy) ok(`${T} Fly: free canvas centre for the raw drag`, false);
+    else {
+      a = await st(); await rawDrag(cy[0] - 55, cy[1], 110, 0, { gap: 16 }); c = await st();
+      const dyaw = yawOf(c.dir) - yawOf(a.dir);
+      ok(`${T} Fly: raw ${touch ? 'touch' : 'CDP mouse (buttons=1)'} 110 px drag across the centre turns the view right`, dyaw < -0.3 && Math.abs(c.cam[1] - a.cam[1]) < 1e-6, `yaw ${dyaw.toFixed(3)} rad`);
+      a = c; await rawDrag(cy[0] + 55, cy[1], -110, 0); c = await st();
+      ok(`${T} Fly: a quick (same-frame) drag back turns it back`, Math.abs(yawOf(c.dir) - yawOf(a.dir) - 0.44) < 0.05, `yaw ${(yawOf(c.dir) - yawOf(a.dir)).toFixed(3)}`);
+      a = c; await rawDrag(cy[0], cy[1], 0, 60, { gap: 16 }); c = await st();
+      ok(`${T} Fly: dragging down pitches down`, c.dir[1] < a.dir[1] - 0.15, `${a.dir[1].toFixed(2)} -> ${c.dir[1].toFixed(2)}`);
+      a = c; await sleep(500); c = await st();
+      ok(`${T} Fly: the view stops turning after release`, turned(a, c) < 1e-6);
+      const panel = await p.evaluate(() => { const r = document.getElementById('desktop-chat').getBoundingClientRect(); return [r.left + 30, r.top + 60]; });
+      a = c; await rawDrag(panel[0], panel[1], 110, 0, { gap: 16 }); c = await st();
+      ok(`${T} Fly: dragging on a panel does not turn the view`, turned(a, c) < 1e-6);
+    }
+  }
   await farOk('Fly');
 
   // ---- First person
@@ -274,10 +312,12 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   for (const [saved, want] of [['free', 'firstperson'], ['orbit', 'orbit'], ['off', 'off'], ['map', 'map'], ['bogus', 'orbit']]) {
     await p.evaluate(v => localStorage.setItem('gs.cameraControlMode', v), saved);
     await p.reload({ waitUntil: 'networkidle2' }); await sleep(1500);
-    legacy[saved] = await p.evaluate(() => [gsControls.mode, localStorage.getItem('gs.cameraControlMode')]);
+    legacy[saved] = await p.evaluate(() => [gsControls.mode, localStorage.getItem('gs.cameraControlMode'), +camera.getWorldPosition(new THREE.Vector3()).y.toFixed(3)]);
+    if (legacy[saved][2] !== 1.6) legacy[saved].push('WANT y 1.6');
     if (legacy[saved][0] !== want) legacy[saved].push('WANT ' + want);
   }
-  ok(`${T} old saved modes map orbit→Orbit, free→First person, off→Off (and are rewritten)`, legacy.free.join() === 'firstperson,firstperson' && legacy.orbit[0] === 'orbit' && legacy.off[0] === 'off' && legacy.map[0] === 'map' && legacy.bogus[0] === 'orbit', JSON.stringify(legacy));
+  ok(`${T} page load in every saved mode starts at eye height (y = 1.6)`, Object.values(legacy).every(v => v[2] === 1.6), JSON.stringify(legacy));
+  ok(`${T} old saved modes map orbit→Orbit, free→First person, off→Off (and are rewritten)`, legacy.free.slice(0, 2).join() === 'firstperson,firstperson' && legacy.orbit[0] === 'orbit' && legacy.off[0] === 'off' && legacy.map[0] === 'map' && legacy.bogus[0] === 'orbit', JSON.stringify(legacy));
   await p.evaluate(() => localStorage.removeItem('gs.cameraControlMode'));
   ok(`${T} no console/page errors`, errs.length === 0, JSON.stringify(errs.slice(0, 4)));
   await p.close();
