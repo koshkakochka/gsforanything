@@ -1,9 +1,19 @@
 {
   "versions": [
     {
-      "id": "0.975",
-      "label": "GS 0.975 (this build)",
+      "id": "0.976",
+      "label": "GS 0.976 (this build)",
       "url": null,
+      "date": "2026-10-17",
+      "changes": [
+        "Orbit now always rotates around the scene's center (0,0,0): on first load, after Clear scene, after loading a scene, and after Reset Camera View or the gamepad View button. Walking with WASD or the left stick in Orbit used to make the camera circle one point while facing another; now it turns around the point it's looking at.",
+        "Free-roam has two small on-screen joysticks in the bottom corners. They are thin see-through rings that fade when idle. The left stick moves forward and back (sideways strafes, like the gamepad's left stick) and the right stick looks around. Both work at once on a phone and can be dragged with the mouse on desktop. They only appear in Free-roam (not in VR), and the Controls tab has a checkbox to hide them."
+      ]
+    },
+    {
+      "id": "0.975",
+      "label": "GS 0.975",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-10-17",
       "changes": [
         "The desktop and phone view now shows everything the VR view shows. Both draw up to 100 m, but on desktop that used to be counted from the camera, which sits behind where you stand in VR (4 m by default, up to 50 m zoomed out), so faraway objects visible in VR could disappear. Desktop now counts from where you'd stand in VR. VR itself is unchanged."

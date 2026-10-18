@@ -16,6 +16,7 @@ import * as GSMerge from './communityMerge.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { initSceneExport } from './exporter.js';
+import { createTwinSticks } from './twinSticks.js';
 // p5.js sketch import (paste / file / zip / URL -> panel in the scene). Self-contained;
 // it only uses the window.gs* hooks set up next to gsCreateP5Surface below.
 import './p5Import.js';
@@ -176,7 +177,11 @@ document.addEventListener('gesturechange', preventPagePanFromTouch, { passive: f
 // automatically while an XR session is presenting (the headset pose drives
 // the camera then) — see setImmersiveUiMode.
 const orbitControls = new OrbitControls(camera, renderer.domElement);
-orbitControls.target.set(0, 1.4, -CHAT_PANEL_DISTANCE);
+// Orbit pivots on the scene origin (0,0,0): ORBIT_PIVOT is in the player
+// rig's space, and the rig sits at the origin whenever the view is reset or
+// re-centred (centerOrbitOnOrigin / resetCameraView / recenterOrbitPivot).
+const ORBIT_PIVOT = new THREE.Vector3(0, 0, 0);
+orbitControls.target.copy(ORBIT_PIVOT);
 orbitControls.enableDamping = true;
 orbitControls.dampingFactor = 0.08;
 orbitControls.minDistance = 0.5;
@@ -3088,6 +3093,7 @@ function clearSceneContent() {
 	const activeCount = loadedScenes.filter(s => s.active).length;
 	const sessionCount = executedCodeBlocks.length;
 	if (userRoots + arExtras + activeCount + sessionCount === 0) {
+		recenterOrbitPivot();
 		updateStatus('Scene is already empty', '');
 		return;
 	}
@@ -3098,6 +3104,7 @@ function clearSceneContent() {
 	for (const sc of loadedScenes) sc.active = false;
 	executedCodeBlocks = [];
 	clearUserObjects();
+	recenterOrbitPivot();
 	notifyCodeEditorExternalChange();
 	renderScenePanel();
 	updateStatus('Scene cleared', 'connected');
@@ -3223,6 +3230,7 @@ function addLoadedScene(data, fallbackName) {
 		...(Array.isArray(data.mergedFrom) ? { mergedFrom: data.mergedFrom } : {})
 	};
 	loadedScenes.push(sc);
+	recenterOrbitPivot();
 
 	// Execute the scene's code blocks (async; surface failures via console)
 	sc.codeBlocks.forEach((code, i) => {
@@ -3711,6 +3719,7 @@ function blankLiveSceneForCommunityLoad() {
 }
 
 function runLoadedSceneCode(sc) {
+	recenterOrbitPivot();
 	const blocks = sc.codeBlocks || [];
 	return Promise.all(blocks.map((code, i) =>
 		Promise.resolve(executeVrCode(code, sceneBlockKey(sc, i))).catch(err => {
@@ -6754,12 +6763,16 @@ function applyLocomotionInput(dt, refCamera, mx, my, rx, ry) {
 			.addScaledVector(_locoRight, mx)    // push right = strafe right
 			.addScaledVector(upVec, ry)          // Q/push right-stick up = ascend
 			.multiplyScalar(MOVE_SPEED * dt);
-		player.position.add(_locoMove);
-		// Keep OrbitControls target in sync on desktop. Moving only the player
-		// rig leaves the orbit target behind; damping then fights WASD (huge
-		// jumps, continued drift after keyup) on both editor and /s/ share views.
-		if (orbitControls && orbitControls.enabled) {
+		if (orbitControls && orbitControls.enabled && !renderer.xr.isPresenting) {
+			// Desktop Orbit: slide the pivot and the camera together and leave the
+			// rig where it is. OrbitControls places the camera around the target in
+			// the rig's space but aims it with lookAt in world space. Moving the rig
+			// as well (as before) pulled those apart, so after WASD the camera
+			// circled one point while facing another, twice the distance away.
 			orbitControls.target.add(_locoMove);
+			camera.position.add(_locoMove);
+		} else {
+			player.position.add(_locoMove);
 		}
 	}
 
@@ -6982,9 +6995,32 @@ function centerOrbitOnOrigin() {
 		_orbitCamWorld.set(-_freeFwd.x * 4, Math.max(_orbitCamWorld.y, 1.6), -_freeFwd.z * 4);
 	}
 	camera.position.copy(_orbitCamWorld);
-	orbitControls.target.set(0, 0, 0);
+	orbitControls.target.copy(ORBIT_PIVOT);
 	orbitControls.update();
 }
+
+// Orbit pivot in world space (the rig-local target through the rig).
+function orbitPivotWorld(out = new THREE.Vector3()) {
+	out.copy(orbitControls.target);
+	if (camera.parent) { camera.parent.updateWorldMatrix(true, false); camera.parent.localToWorld(out); }
+	return out;
+}
+
+// Clear scene and loading a scene put the Orbit pivot back on the scene origin
+// when WASD / the left stick had slid it away (or scene code moved the rig).
+// Same move as switching back to Orbit: the camera stays where it is in the
+// world and turns to orbit the origin.
+function recenterOrbitPivot() {
+	if (cameraControlMode !== 'orbit' || cameraControlsSuspended()) return;
+	if (orbitPivotWorld(_orbitCamWorld).lengthSq() < 1e-8 && (!player || player.position.lengthSq() < 1e-8)) return;
+	centerOrbitOnOrigin();
+}
+
+window.gsOrbit = {
+	/** World position the Orbit camera rotates around. */
+	pivot: () => orbitPivotWorld().toArray(),
+	recenter: () => recenterOrbitPivot()
+};
 
 // Start / "Reset Camera View" pose. Orbit: 4 m back from the origin, orbiting
 // it. Free-roam / Off, headset and Cardboard: the original spawn (eye height
@@ -7005,11 +7041,10 @@ function resetCameraView() {
 	camera.quaternion.identity();
 	if (cameraControlMode === 'orbit' && !cameraControlsSuspended()) {
 		camera.position.set(0, 1.6, 4);
-		orbitControls.target.set(0, 0, 0);
 	} else {
 		camera.position.set(0, 1.6, 0);
-		orbitControls.target.set(0, 1.4, -CHAT_PANEL_DISTANCE);
 	}
+	orbitControls.target.copy(ORBIT_PIVOT);
 	orbitControls.update();
 }
 
@@ -7767,22 +7802,7 @@ function updateGamepadCamera(dt) {
 	const vertical = gsGamepad.button('RB') - gsGamepad.button('LB');
 
 	if (cameraControlMode === 'free') {
-		if (rx || ry) applyFreeLook(rx * GAMEPAD_LOOK_SPEED * dt / FREE_LOOK_SENSITIVITY, ry * GAMEPAD_LOOK_SPEED * dt / FREE_LOOK_SENSITIVITY);
-		if (!player || (!lx && !ly && !vertical)) return;
-		const fast = gsGamepad.button('RT') > 0.5 || gsGamepad.pressed('LS');
-		camera.getWorldQuaternion(_freeQuat);
-		_freeFwd.set(0, 0, -1).applyQuaternion(_freeQuat);
-		_freeRight.set(1, 0, 0).applyQuaternion(_freeQuat);
-		_freeRight.y = 0;
-		if (_freeRight.lengthSq() < 1e-8) _freeRight.set(1, 0, 0);
-		_freeRight.normalize();
-		_freeMove.set(0, 0, 0)
-			.addScaledVector(_freeFwd, -ly)
-			.addScaledVector(_freeRight, lx)
-			.addScaledVector(_LOCO_UP, vertical);
-		if (_freeMove.lengthSq() > 1) _freeMove.normalize();
-		_freeMove.multiplyScalar(FREE_ROAM_SPEED * (fast ? FREE_ROAM_FAST_MULT : 1) * dt);
-		player.position.add(_freeMove);
+		applyFreeRoamSticks(dt, lx, ly, rx, ry, vertical, gsGamepad.button('RT') > 0.5 || gsGamepad.pressed('LS'));
 		return;
 	}
 
@@ -7805,9 +7825,76 @@ function updateGamepadCamera(dt) {
 	}
 }
 
+// Free-roam from stick axes (gamepad or the on-screen twin sticks), already
+// past the deadzone: right stick looks (yaw/pitch), left stick y goes forward
+// and back where you look, left stick x strafes, `vertical` goes up/down.
+function applyFreeRoamSticks(dt, lx, ly, rx, ry, vertical = 0, fast = false) {
+	if (rx || ry) applyFreeLook(rx * GAMEPAD_LOOK_SPEED * dt / FREE_LOOK_SENSITIVITY, ry * GAMEPAD_LOOK_SPEED * dt / FREE_LOOK_SENSITIVITY);
+	if (!player || (!lx && !ly && !vertical)) return;
+	camera.getWorldQuaternion(_freeQuat);
+	_freeFwd.set(0, 0, -1).applyQuaternion(_freeQuat);
+	_freeRight.set(1, 0, 0).applyQuaternion(_freeQuat);
+	_freeRight.y = 0;
+	if (_freeRight.lengthSq() < 1e-8) _freeRight.set(1, 0, 0);
+	_freeRight.normalize();
+	_freeMove.set(0, 0, 0)
+		.addScaledVector(_freeFwd, -ly)
+		.addScaledVector(_freeRight, lx)
+		.addScaledVector(_LOCO_UP, vertical);
+	if (_freeMove.lengthSq() > 1) _freeMove.normalize();
+	_freeMove.multiplyScalar(FREE_ROAM_SPEED * (fast ? FREE_ROAM_FAST_MULT : 1) * dt);
+	player.position.add(_freeMove);
+}
+
+// ============================================================================
+// On-screen twin joysticks (Free-roam on desktop and phone, see twinSticks.js).
+// Left: forward/back (y) and strafe (x). Right: look. Same deadzone and speeds
+// as the gamepad. Hidden in Orbit/Off, VR and Cardboard, or when turned off
+// in the Controls tab (saved per browser).
+// ============================================================================
+const TWIN_STICKS_STORAGE_KEY = 'gs.twinSticks';
+let twinSticksEnabled = true;
+try { twinSticksEnabled = localStorage.getItem(TWIN_STICKS_STORAGE_KEY) !== 'off'; } catch { /* storage blocked */ }
+const twinSticks = createTwinSticks({
+	layout: () => {
+		// Sit just above the bottom dock (the VR / version buttons).
+		const dock = document.getElementById('gs-dock');
+		const r = dock && dock.offsetParent !== null ? dock.getBoundingClientRect() : null;
+		return { bottom: r && r.height ? Math.max(0, window.innerHeight - r.top) + 8 : 0 };
+	}
+});
+const dchatTwinSticksToggle = document.getElementById('dchat-twin-sticks');
+if (dchatTwinSticksToggle) {
+	dchatTwinSticksToggle.checked = twinSticksEnabled;
+	dchatTwinSticksToggle.addEventListener('change', () => {
+		twinSticksEnabled = dchatTwinSticksToggle.checked;
+		try { localStorage.setItem(TWIN_STICKS_STORAGE_KEY, twinSticksEnabled ? 'on' : 'off'); } catch { /* storage blocked */ }
+		refreshTwinSticks();
+	});
+}
+function refreshTwinSticks() {
+	const want = twinSticksEnabled && cameraControlMode === 'free' && !cameraControlsSuspended()
+		&& !document.body.classList.contains('gs-xr-presenting');
+	if (want !== twinSticks.visible) twinSticks.setVisible(want);
+}
+function updateTwinSticksCamera(dt) {
+	refreshTwinSticks();
+	if (!twinSticks.visible || dt <= 0) return;
+	const a = twinSticks.axes();
+	const [lx, ly] = applyStickDeadzone(a.lx, a.ly, gsGamepad.deadzone);
+	const [rx, ry] = applyStickDeadzone(a.rx, a.ry, gsGamepad.deadzone);
+	if (lx || ly || rx || ry) applyFreeRoamSticks(dt, lx, ly, rx, ry);
+}
+window.gsTwinSticks = {
+	get visible() { return twinSticks.visible; },
+	get enabled() { return twinSticksEnabled; },
+	axes: () => twinSticks.axes()
+};
+
 function updateGamepads(dt) {
 	pollGamepads();
 	updateGamepadCamera(dt);
+	updateTwinSticksCamera(dt);
 }
 
 refreshGamepadList();
