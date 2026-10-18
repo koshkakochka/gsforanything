@@ -818,6 +818,8 @@
 			gap: 6px;
 		}
 		#dchat-camera-mode .dchat-btn { padding: 10px 6px; }
+		#dchat-twin-sticks-opt { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: rgba(255, 255, 255, 0.8); cursor: pointer; }
+		#dchat-twin-sticks-opt input { width: 16px; height: 16px; margin: 0; accent-color: #8b5cf6; }
 		#dchat-window-anchor {
 			display: grid;
 			grid-template-columns: repeat(2, 1fr);
@@ -2384,6 +2386,11 @@
 					Click the scene to look around with the mouse, <kbd>Esc</kbd> to release.
 					<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly where you look &middot; <kbd>Q</kbd>/<kbd>E</kbd> up/down &middot;
 					hold <kbd>Shift</kbd> to go faster. On touch screens, drag to look.
+					On-screen joysticks: left stick moves forward and back (sideways strafes), right stick looks around.
+					<label id="dchat-twin-sticks-opt">
+						<input type="checkbox" id="dchat-twin-sticks" checked />
+						Show on-screen joysticks
+					</label>
 				</div>
 				<div class="dchat-controls-help" data-camera-help="off" hidden>
 					Camera input is off. The camera stays where it is until you pick another mode.

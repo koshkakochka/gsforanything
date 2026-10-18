@@ -1,0 +1,10 @@
+{
+  "name": "gs-twin-sticks-test",
+  "private": true,
+  "type": "module",
+  "description": "Headless check: Orbit pivots on the scene origin, and the Free-roam on-screen twin joysticks work (desktop + phone).",
+  "dependencies": {
+    "iwer": "^2.6.0",
+    "puppeteer-core": "^24.0.0"
+  }
+}
