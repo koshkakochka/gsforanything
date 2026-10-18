@@ -1,11 +1,18 @@
 {
-  // Cloudflare Worker "gs" (https://gs.krossruiz.workers.dev).
+  // Cloudflare Worker "gs": https://gsforanything.com (+ www), with
+  // https://gs.krossruiz.workers.dev kept on as a fallback (workers_dev).
   // Secrets (CLAUDE_API_KEY, OPENAI_API_KEY, ...) are stored in Cloudflare with
   // `wrangler secret put` and are NOT in this repo; deploys keep them.
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "gs",
   "main": "index.js",
   "compatibility_date": "2026-10-04",
+  "workers_dev": true,
+  // Workers Custom Domains (Cloudflare creates the DNS records and certificates).
+  "routes": [
+    { "pattern": "gsforanything.com", "custom_domain": true },
+    { "pattern": "www.gsforanything.com", "custom_domain": true }
+  ],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",

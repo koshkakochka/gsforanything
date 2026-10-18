@@ -1,6 +1,7 @@
 # GS Cloudflare Worker (`gs`)
 
-Source of https://gs.krossruiz.workers.dev. The browser app is the same as on
+Source of https://gsforanything.com (and www.gsforanything.com; fallback
+https://gs.krossruiz.workers.dev). The browser app is the same as on
 Vercel (`site-source/`); this Worker serves it as static assets and implements
 the `server.js` API on Cloudflare:
 

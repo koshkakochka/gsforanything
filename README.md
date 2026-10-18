@@ -2,7 +2,7 @@
 
 A WebXR app that lets you talk to Claude (or a local Ollama model) inside
 VR and have it modify the 3D scene live. Live deploy:
-https://gs.krossruiz.workers.dev. See [howIWork.md](howIWork.md) for how the
+https://gsforanything.com (fallback: https://gs.krossruiz.workers.dev). See [howIWork.md](howIWork.md) for how the
 pieces fit together.
 
 ## Quick start

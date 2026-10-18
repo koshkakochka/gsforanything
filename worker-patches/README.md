@@ -3,7 +3,7 @@
 > **Since 0.973 the Worker source is in this repo (`worker/`) and `0001` is already
 > applied to `worker/index.js`.** Edit `worker/index.js` directly; this folder is kept for history.
 
-The Cloudflare Worker (`gs`, https://gs.krossruiz.workers.dev) is deployed from a
+The Cloudflare Worker (`gs`, https://gsforanything.com; fallback https://gs.krossruiz.workers.dev) is deployed from a
 separate local project (`worker/index.js` + `public/` + `wrangler.jsonc`) that is
 not in this repo. API changes the Worker needs are kept here as patches against
 that project's `worker/index.js` so they can be reviewed with the rest of a
