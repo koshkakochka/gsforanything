@@ -1,9 +1,23 @@
 {
   "versions": [
     {
-      "id": "0.977",
-      "label": "GS 0.977 (this build)",
+      "id": "0.978",
+      "label": "GS 0.978 (this build)",
       "url": null,
+      "date": "2026-10-18",
+      "changes": [
+        "Phones: while you type in the chat box or the code editor, the panel fills the space above the on-screen keyboard, so the text you are typing, the Send button and the newest messages stay in view. The header, tabs, bottom dock, Hide UI and joysticks step aside while the keyboard is up and come back when it closes. Send keeps the keyboard open.",
+        "Phones: less crowded controls. Buttons, tabs, menus and checkboxes are at least 44px tall, text boxes use a 16px font so iOS no longer zooms in, and the screen edges and notch are respected.",
+        "Phones: the tabs sit in one row you can scroll sideways, and the chat tools moved behind a \"+\" button next to the chat box.",
+        "Phones in landscape: the chat is a full-height column on the left and the bottom dock moves to the right.",
+        "Fixed the on-screen joysticks overlapping the bottom dock on phones.",
+        "Desktop, tablet and VR layouts are unchanged."
+      ]
+    },
+    {
+      "id": "0.977",
+      "label": "GS 0.977",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-10-18",
       "changes": [
         "The desktop camera now uses the standard three.js camera controls, picked in the Controls tab: Orbit (the default, rotating around the scene's center at 0,0,0), Map, Trackball, Fly (drag to look) and First person (click the scene to look around with the mouse, Esc to release, WASD or arrows to walk), plus Off. Each mode lists its keys in the Controls tab.",

@@ -4,7 +4,7 @@
  * See DEPLOY.md.
  */
 
-export const GS_VERSION = '0.977';
+export const GS_VERSION = '0.978';
 
 /** @typedef {{ id: string, label?: string, url?: string|null, date?: string, changes?: string[] }} GsVersionEntry */
 

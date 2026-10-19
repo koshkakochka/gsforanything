@@ -34,4 +34,4 @@ node gen-prompts.mjs
 npx wrangler deploy
 ```
 
-Local test: `npx wrangler dev --local --port 8787 --persist-to /tmp/gs-kv` (needs secrets in `.dev.vars` for chat; everything else works without them).
+Local test: `npx wrangler dev --local --port 8787 --local-upstream 127.0.0.1:8787 --persist-to /tmp/gs-kv` (needs secrets in `.dev.vars` for chat; everything else works without them). Keep `--local-upstream`: with the custom-domain `routes` in `wrangler.jsonc`, `wrangler dev` otherwise presents requests as `gsforanything.com`, so share links made locally point at the live site.

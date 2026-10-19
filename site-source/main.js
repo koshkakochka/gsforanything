@@ -16,7 +16,7 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { initSceneExport } from './exporter.js';
 import { createTwinSticks } from './twinSticks.js';
-import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, ORBIT_TARGET } from './cameraControls.js';
+import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, ORBIT_TARGET, isTextEntry } from './cameraControls.js';
 // p5.js sketch import (paste / file / zip / URL -> panel in the scene). Self-contained;
 // it only uses the window.gs* hooks set up next to gsCreateP5Surface below.
 import './p5Import.js';
@@ -7668,7 +7668,8 @@ const twinSticks = createTwinSticks({
 	layout: () => {
 		// Sit just above the bottom dock (the VR / version buttons).
 		const dock = document.getElementById('gs-dock');
-		const r = dock && dock.offsetParent !== null ? dock.getBoundingClientRect() : null;
+		// (offsetParent is always null for a position:fixed element, so check display)
+		const r = dock && getComputedStyle(dock).display !== 'none' ? dock.getBoundingClientRect() : null;
 		return { bottom: r && r.height ? Math.max(0, window.innerHeight - r.top) + 8 : 0 };
 	}
 });
@@ -7940,7 +7941,9 @@ function saveDesktopChatSize() {
 }
 
 function isNarrowDesktopChat() {
-	return window.matchMedia('(max-width: 720px)').matches;
+	// Phones in landscape are wider than 720px but get the same "stay inside
+	// the visible area" handling (_phoneLayout is set further down).
+	return window.matchMedia('(max-width: 720px)').matches || !!_phoneLayout;
 }
 
 let _safeAreaProbe = null;
@@ -8102,6 +8105,9 @@ function fitDesktopChatToViewport() {
 		return;
 	}
 	if (desktopChat.classList.contains('dragging') || desktopChat.classList.contains('resizing')) return;
+	// Keyboard up: CSS (html.gs-kb-chat) sizes the panel to the visible area;
+	// don't shrink its saved size, so it comes back when the keyboard closes.
+	if (_kbChat) return;
 	const box = desktopChatVisibleBox();
 	if (box.right - box.left < 32 || box.bottom - box.top < 32) return;
 	const shift = desktopChatFixedShift();
@@ -8188,6 +8194,221 @@ window.addEventListener('pageshow', scheduleFitDesktopChat);
 document.addEventListener('visibilitychange', () => {
 	if (document.visibilityState === 'visible') scheduleFitDesktopChat();
 });
+
+// ============================================================================
+// Phone layout + on-screen keyboard (phones only; desktop, tablets and VR
+// never get these classes, see index.html "Phones").
+// ============================================================================
+// html.gs-phone   a touch screen whose short side is <= 600px.
+// html.gs-kb      a text field has focus and the on-screen keyboard is (or is
+//                 about to be) up. Hides the dock, Hide UI, joysticks.
+// html.gs-kb-chat the field is inside the GS panel: the panel fills the
+//                 visible area above the keyboard (--gs-kb-*) with only the
+//                 messages / editor and the input row, like a messaging app.
+// The keyboard is detected from the visual viewport: Android Chrome with
+// interactive-widget=resizes-content shrinks the window, iOS Safari only
+// shrinks visualViewport. Both shrink visualViewport.height.
+const _coarsePointer = window.matchMedia('(pointer: coarse)');
+const KB_MIN_SHRINK = 120;    // px of lost height that means "keyboard up"
+const KB_SETTLE_MS = 900;     // keyboard animation; after this a focused field with no shrink = no keyboard
+var _phoneLayout = false;
+var _kbOpen = false;
+var _kbChat = false; // var: read by functions that run before this point
+var _kbFocusAt = 0;
+var _kbTimer = 0;
+var _vvBase = { width: 0, height: 0 };
+
+function computePhoneLayout() {
+	if (!_coarsePointer.matches) return false;
+	const sw = window.screen ? Math.min(window.screen.width || 0, window.screen.height || 0) : 0;
+	const short = sw > 0 ? sw : Math.min(window.innerWidth, window.innerHeight);
+	return short <= 600;
+}
+function isPhoneLayout() { return _phoneLayout; }
+
+// The SVG menu buttons (Scenes, Export, Themes) are laid out at a fixed width
+// and scaled to the panel, so on a phone a 44px row renders ~40px. Taller rows
+// keep them at least 44px on screen. Desktop keeps the base height.
+function phoneMenuButtonHeight(base, layoutWidth) {
+	if (!computePhoneLayout()) return base;
+	const short = window.screen ? Math.min(window.screen.width || 0, window.screen.height || 0) : 0;
+	const panelInner = Math.max(240, (short || Math.min(window.innerWidth, window.innerHeight)) - 44);
+	return Math.ceil(46 * layoutWidth / Math.min(layoutWidth, panelInner));
+}
+
+function visualViewportSize() {
+	const vv = window.visualViewport;
+	return {
+		width: vv && vv.width > 0 ? vv.width : window.innerWidth,
+		height: vv && vv.height > 0 ? vv.height : window.innerHeight,
+		top: vv ? vv.offsetTop : 0,
+		left: vv ? vv.offsetLeft : 0
+	};
+}
+
+// Tallest visible height seen at this width = the height without a keyboard.
+function updateViewportBase(v) {
+	const w = Math.round(v.width);
+	if (Math.abs(w - _vvBase.width) > 2) _vvBase = { width: w, height: 0 };
+	const h = Math.max(v.height, _kbOpen ? 0 : window.innerHeight);
+	if (h > _vvBase.height) _vvBase.height = h;
+}
+
+function keyboardTextField() {
+	const el = document.activeElement;
+	if (!el || !isTextEntry(el) || el.tagName === 'SELECT') return null;
+	if (el.disabled || el.readOnly) return null;
+	return el;
+}
+
+function syncKeyboardViewportVars(v) {
+	const root = document.documentElement.style;
+	if (!_kbOpen) {
+		for (const n of ['--gs-kb-top', '--gs-kb-left', '--gs-kb-width', '--gs-kb-height']) root.removeProperty(n);
+		return;
+	}
+	const safe = readSafeAreaInsets();
+	const m = 4;
+	// Same fixed-position correction the panel uses (iOS keeps position:fixed
+	// on the layout viewport while visualViewport scrolls).
+	const shift = desktopChatFixedShift();
+	const top = v.top + safe.top + m;
+	const left = v.left + safe.left + m;
+	root.setProperty('--gs-kb-top', `${Math.round(top + (shift.top - v.top))}px`);
+	root.setProperty('--gs-kb-left', `${Math.round(left + (shift.left - v.left))}px`);
+	root.setProperty('--gs-kb-width', `${Math.round(Math.max(0, v.width - safe.left - safe.right - 2 * m))}px`);
+	// The keyboard covers the home indicator, so no bottom safe area here.
+	root.setProperty('--gs-kb-height', `${Math.round(Math.max(0, v.height - safe.top - 2 * m))}px`);
+}
+
+function chatMessagesNearBottom(el) {
+	return el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+}
+function pinKeyboardView(force) {
+	// Latest messages stay in view, and the focused field is fully visible.
+	for (const id of ['desktop-chat-messages', 'dchat-theme-chat-messages']) {
+		const list = document.getElementById(id);
+		if (list && list.offsetParent && (force || list.dataset.gsPinned === '1')) list.scrollTop = list.scrollHeight;
+	}
+	const f = keyboardTextField();
+	if (f && !f.closest('#desktop-chat')) f.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	else if (f && f.tagName === 'TEXTAREA' && f.id === 'dchat-code-editor') {
+		// Keep the caret line inside the shrunken editor.
+		const lh = parseFloat(getComputedStyle(f).lineHeight) || 20;
+		const line = f.value.slice(0, f.selectionStart || 0).split('\n').length;
+		const caretY = line * lh;
+		if (caretY > f.scrollTop + f.clientHeight - lh) f.scrollTop = caretY - f.clientHeight + lh;
+	}
+}
+
+function updateKeyboardState(reason = '') {
+	const v = visualViewportSize();
+	const phone = computePhoneLayout();
+	if (phone !== _phoneLayout) {
+		_phoneLayout = phone;
+		document.documentElement.classList.toggle('gs-phone', phone);
+		scheduleFitDesktopChat();
+		twinSticks.place(); // the phone dock is taller
+	}
+	updateViewportBase(v);
+	const field = phone && !document.body.classList.contains('gs-xr-presenting') && !document.body.classList.contains('gs-cardboard-active') ? keyboardTextField() : null;
+	const shrink = _vvBase.height - v.height;
+	let open = false;
+	if (field) {
+		if (shrink >= KB_MIN_SHRINK) open = true;
+		else if (reason === 'focus' || reason === 'tap') { open = true; _kbFocusAt = performance.now(); }
+		else open = _kbOpen && performance.now() - _kbFocusAt < KB_SETTLE_MS;
+	}
+	const chat = open && !!field.closest('#desktop-chat');
+	const changed = open !== _kbOpen || chat !== _kbChat;
+	if (changed && open) {
+		for (const id of ['desktop-chat-messages', 'dchat-theme-chat-messages']) {
+			const list = document.getElementById(id);
+			if (list) list.dataset.gsPinned = '1';
+		}
+	}
+	_kbOpen = open;
+	_kbChat = chat;
+	document.documentElement.classList.toggle('gs-kb', open);
+	document.documentElement.classList.toggle('gs-kb-chat', chat);
+	syncKeyboardViewportVars(v);
+	if (open) pinKeyboardView(changed);
+	if (changed) {
+		scheduleFitDesktopChat();
+		if (!open) scheduleRendererResize();
+	}
+	clearTimeout(_kbTimer);
+	if (open && shrink < KB_MIN_SHRINK) _kbTimer = setTimeout(() => updateKeyboardState('settle'), KB_SETTLE_MS + 50);
+}
+
+function isKeyboardLayoutActive() { return _kbChat; }
+
+document.addEventListener('focusin', () => updateKeyboardState('focus'));
+document.addEventListener('focusout', () => setTimeout(() => updateKeyboardState('blur'), 150));
+// Tapping a field that kept focus after the keyboard was dismissed reopens it.
+document.addEventListener('pointerdown', (e) => {
+	if (_phoneLayout && e.target === document.activeElement && keyboardTextField()) setTimeout(() => updateKeyboardState('tap'), 0);
+}, true);
+// Remember whether each chat list is scrolled to the bottom, so the keyboard
+// opening or closing keeps the newest messages in view.
+for (const id of ['desktop-chat-messages', 'dchat-theme-chat-messages']) {
+	const list = document.getElementById(id);
+	if (!list) continue;
+	list.addEventListener('scroll', () => { list.dataset.gsPinned = chatMessagesNearBottom(list) ? '1' : '0'; }, { passive: true });
+	new MutationObserver(() => { if (list.dataset.gsPinned !== '0') list.scrollTop = list.scrollHeight; }).observe(list, { childList: true, subtree: true });
+}
+// Send / More / tools: keep the field focused (keyboard stays up) on phones,
+// like a messaging app. mousedown's default action is what moves focus.
+for (const id of ['desktop-send-button', 'desktop-chat-more', 'dchat-theme-chat-send']) {
+	const btn = document.getElementById(id);
+	if (btn) btn.addEventListener('mousedown', (e) => { if (_phoneLayout && keyboardTextField()) e.preventDefault(); });
+}
+const _onViewportChange = () => updateKeyboardState('viewport');
+window.addEventListener('resize', _onViewportChange);
+window.addEventListener('orientationchange', () => setTimeout(_onViewportChange, 350));
+if (window.visualViewport) {
+	window.visualViewport.addEventListener('resize', _onViewportChange);
+	window.visualViewport.addEventListener('scroll', _onViewportChange);
+}
+_coarsePointer.addEventListener?.('change', _onViewportChange);
+updateKeyboardState('init');
+
+// "More" (+) in the chat input row on phones: attach / files / mic / history.
+(function initChatMoreButton() {
+	const compose = document.getElementById('desktop-chat-compose-row');
+	const row = document.getElementById('desktop-chat-input-row');
+	if (!compose || !row || document.getElementById('desktop-chat-more')) return;
+	const more = document.createElement('button');
+	more.type = 'button';
+	more.id = 'desktop-chat-more';
+	more.title = 'More: attach, files, voice, history';
+	more.setAttribute('aria-label', 'More actions');
+	more.setAttribute('aria-expanded', 'false');
+	more.setAttribute('aria-controls', 'desktop-chat-tools-row');
+	more.textContent = '+';
+	more.addEventListener('click', () => {
+		const open = !row.classList.contains('gs-tools-open');
+		row.classList.toggle('gs-tools-open', open);
+		more.setAttribute('aria-expanded', String(open));
+		more.textContent = open ? '×' : '+';
+	});
+	compose.insertBefore(more, compose.firstChild);
+})();
+
+// Phone tab row scrolls sideways: keep the active tab in view and drop the
+// right-edge fade at the end of the row.
+(function initPhoneTabRow() {
+	const tabs = document.getElementById('desktop-chat-tabs');
+	if (!tabs) return;
+	const edge = () => tabs.classList.toggle('gs-at-end', tabs.scrollLeft + tabs.clientWidth >= tabs.scrollWidth - 4);
+	tabs.addEventListener('scroll', edge, { passive: true });
+	tabs.addEventListener('click', (e) => {
+		const t = e.target.closest('.dchat-tab');
+		if (t && _phoneLayout) t.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+	});
+	window.addEventListener('resize', edge);
+	edge();
+})();
 
 // Dragging via the header. Uses document-level mouse listeners (rather than
 // pointer capture) so it keeps tracking even if the cursor briefly leaves the
@@ -8698,12 +8919,12 @@ dchatResetCameraBtn.addEventListener('click', resetCameraView);
 // EXPORT_COMBINED_BUTTON, COMMUNITY_BUTTONS) mounted once - their content
 // never changes, only EXPORT_COMBINED_BUTTON's visibility does (toggled in
 // renderDomSceneList via the .visible class on its mount div).
-mountButtonsToDOM(dchatScenesButtonsMount, SCENES_BUTTONS_DOM, { width: 384, height: 44, gap: 8, minWidth: 100, fontSize: 12 }, handleMenuAction);
-mountButtonsToDOM(dchatExportCombinedMount, EXPORT_COMBINED_BUTTON, { width: 384, height: 44, gap: 8, perRow: 1, fontSize: 13 }, handleMenuAction);
+mountButtonsToDOM(dchatScenesButtonsMount, SCENES_BUTTONS_DOM, { width: 384, height: phoneMenuButtonHeight(44, 384), gap: 8, minWidth: 100, fontSize: 12 }, handleMenuAction);
+mountButtonsToDOM(dchatExportCombinedMount, EXPORT_COMBINED_BUTTON, { width: 384, height: phoneMenuButtonHeight(44, 384), gap: 8, perRow: 1, fontSize: 13 }, handleMenuAction);
 renderCommunityDesktopButtons();
 renderCommunityLoadModeControls();
 if (dchatThemesButtonsMount) {
-	mountButtonsToDOM(dchatThemesButtonsMount, THEME_BUTTONS, { width: 384, height: 44, gap: 8, perRow: 3, fontSize: 11 }, handleMenuAction);
+	mountButtonsToDOM(dchatThemesButtonsMount, THEME_BUTTONS, { width: 384, height: phoneMenuButtonHeight(44, 384), gap: 8, perRow: 3, fontSize: 11 }, handleMenuAction);
 }
 
 // Switches between the desktop chat window (windowed browser) and the slim
@@ -8758,10 +8979,36 @@ function setImmersiveUiMode(immersive) {
 // ============================================================================
 // Window Resize
 // ============================================================================
-function onWindowResize() {
-	camera.aspect = window.innerWidth / window.innerHeight;
+var _rendererSize = { w: window.innerWidth, h: window.innerHeight };
+var _rendererResizeTimer = 0;
+function applyRendererSize() {
+	_rendererResizeTimer = 0;
+	const w = window.innerWidth, h = window.innerHeight;
+	// While the phone keyboard is up (Android shrinks the window), keep the
+	// canvas at its full size: it sits behind the panel, and resizing it on
+	// every keyboard animation frame just thrashes WebGL.
+	if (isKeyboardLayoutActive() && w === _rendererSize.w) return;
+	if (w === _rendererSize.w && h === _rendererSize.h && renderer.domElement.width) {
+		const px = renderer.getPixelRatio();
+		if (Math.round(w * px) === renderer.domElement.width && Math.round(h * px) === renderer.domElement.height) return;
+	}
+	_rendererSize = { w, h };
+	camera.aspect = w / h;
 	camera.updateProjectionMatrix();
-	renderer.setSize(window.innerWidth, window.innerHeight);
+	renderer.setSize(w, h);
+}
+function scheduleRendererResize() {
+	clearTimeout(_rendererResizeTimer);
+	_rendererResizeTimer = setTimeout(applyRendererSize, 150);
+}
+function onWindowResize() {
+	// Phones: debounce (keyboard and URL-bar animations fire many resizes).
+	// Desktop, tablets and VR / Cardboard resize immediately as before.
+	if (isPhoneLayout() && !renderer.xr.isPresenting && !document.body.classList.contains('gs-cardboard-active')) {
+		scheduleRendererResize();
+		return;
+	}
+	applyRendererSize();
 }
 
 window.addEventListener('resize', onWindowResize);
