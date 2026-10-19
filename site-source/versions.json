@@ -1,9 +1,20 @@
 {
   "versions": [
     {
-      "id": "0.978",
-      "label": "GS 0.978 (this build)",
+      "id": "0.979",
+      "label": "GS 0.979 (this build)",
       "url": null,
+      "date": "2026-10-18",
+      "changes": [
+        "The browser tab now reads \"GS For Anything\" instead of \"Claude VR Chat\".",
+        "Shared scene pages (/e/ and /s/ links) title the tab with the scene name followed by \"GS For Anything\".",
+        "The GitHub repo is renamed to krossruiz/gsforanything (https://github.com/krossruiz/gsforanything). Old krossruiz/gs links redirect."
+      ]
+    },
+    {
+      "id": "0.978",
+      "label": "GS 0.978",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-10-18",
       "changes": [
         "Phones: while you type in the chat box or the code editor, the panel fills the space above the on-screen keyboard, so the text you are typing, the Send button and the newest messages stay in view. The header, tabs, bottom dock, Hide UI and joysticks step aside while the keyboard is up and come back when it closes. Send keeps the keyboard open.",
