@@ -16,7 +16,7 @@ Current shipped version at time of writing this doc workflow: see `GS_VERSION` i
 | Surface | Path / notes |
 |--------|----------------|
 | PC repo | `C:\Users\KROSS\Desktop\programming projects\carljr\carljr` (machine `Kross_G16`) |
-| GitHub | `krossruiz/carljr` (also renamed notes → `krossruiz/gs`); push `origin/main` |
+| GitHub | `krossruiz/gsforanything` (https://github.com/krossruiz/gsforanything; renamed from `krossruiz/gs`, earlier `krossruiz/carljr`; the old URLs redirect); push `origin/main` |
 | Vercel prod | https://vrclaudeinterface.vercel.app |
 | Cloudflare Worker | Worker name **`gs`** → https://gsforanything.com (also https://www.gsforanything.com; fallback https://gs.krossruiz.workers.dev). Custom domains are set in `worker/wrangler.jsonc` `routes`; keep `workers_dev: true` |
 | Unrelated | **https://gs.vercel.app is not this project** — ignore it |

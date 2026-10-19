@@ -4286,7 +4286,7 @@ async function bootSharedScene() {
 	try {
 		updateStatus('Loading scene...', 'connecting');
 		const sc = await loadCommunitySceneById(route.sceneId, { activate: true });
-		document.title = sc.name ? `${sc.name} — Claude VR` : 'Claude VR Chat';
+		document.title = sc.name ? `${sc.name} — GS For Anything` : 'GS For Anything';
 		if (editorLink) editorLink.href = sc.editorUrl || `/e/${route.sceneId}`;
 		updateStatus(route.displayOnly ? '' : `Loaded "${sc.name}"`, route.displayOnly ? '' : 'connected');
 	} catch (err) {
