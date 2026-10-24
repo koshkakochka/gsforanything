@@ -1,9 +1,20 @@
 {
   "versions": [
     {
-      "id": "0.982",
-      "label": "GS 0.982 (this build)",
+      "id": "0.983",
+      "label": "GS 0.983 (this build)",
       "url": null,
+      "date": "2026-10-24",
+      "changes": [
+        "Chat: the Scene and Theme chat input fields are now multi-line, so you can see long messages instead of one scrolling line. They start one line tall, grow a line at a time as you type and wrap long text, and scroll after 7 lines (6 on phones) while keeping the chat history in view.",
+        "Chat keys: on desktop Enter sends and Shift+Enter adds a new line. On phones Enter adds a new line and the Send button sends, and the keyboard stays up after sending.",
+        "VR: the taller chat field is drawn wrapped line by line in the VR menu, with the typing ring around it, and the VR keyboard's Enter key still sends."
+      ]
+    },
+    {
+      "id": "0.982",
+      "label": "GS 0.982",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-10-24",
       "changes": [
         "Environment → Origin rotation (under Camera): turn the scene's origin so the scene lines up with the view you want, using a 2D gizmo of the X/Y/Z axes as seen from the camera. Drag the ball to rotate, drag the outer ring to roll, click or tap an axis end to point that axis straight at you, or type Yaw/Pitch/Roll. Shift or the Snap 15° toggle snaps, and Reset origin undoes it.",

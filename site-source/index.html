@@ -1279,6 +1279,40 @@
 			color: #fff;
 			outline: none;
 		}
+		/* Chat inputs are auto-growing textareas (main.js initChatTextarea):
+		   one line to start, up to --gs-chat-max-lines, then they scroll.
+		   Long text wraps instead of running off one line. */
+		.gs-chat-textarea {
+			--gs-chat-lh: 18px;
+			--gs-chat-max-lines: 7;
+			display: block;
+			box-sizing: border-box;
+			font: inherit;
+			font-size: 14px;
+			line-height: var(--gs-chat-lh);
+			resize: none;
+			overflow-y: hidden;
+			overflow-wrap: anywhere;
+			white-space: pre-wrap;
+			min-height: calc(var(--gs-chat-lh) + 20px);
+			max-height: calc(var(--gs-chat-lh) * var(--gs-chat-max-lines) + 20px);
+			scrollbar-width: thin;
+			/* Fill the compose row up to the Send button. A textarea's
+			   intrinsic width comes from its cols, so pin both the flex basis
+			   and the width rather than relying on flex-grow alone. */
+			flex: 1 1 0%;
+			width: 100%;
+			min-width: 0;
+			max-width: none;
+			margin: 0;
+		}
+		#desktop-chat-compose-row > .gs-chat-textarea,
+		#dchat-theme-chat-row > .gs-chat-textarea { flex: 1 1 0%; width: 100%; min-width: 0; }
+		/* History bubbles keep their full height when the input grows; the
+		   history scrolls instead. */
+		.dchat-msg, .dchat-theme-msg { flex-shrink: 0; }
+		.gs-chat-textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		#desktop-chat-compose-row { align-items: flex-end; }
 
 		#desktop-chat-input::placeholder { color: rgba(255, 255, 255, 0.72); }
 		#desktop-chat-input:focus { background: rgba(255, 255, 255, 0.15); }
@@ -1958,9 +1992,14 @@
 			display: flex;
 			gap: 6px;
 			flex-shrink: 0;
+			align-items: flex-end;
 		}
 		#dchat-theme-chat-input {
+			--gs-chat-lh: 16px;
 			flex: 1;
+			min-width: 0;
+			min-height: calc(var(--gs-chat-lh) + 16px);
+			max-height: calc(var(--gs-chat-lh) * var(--gs-chat-max-lines) + 16px);
 			background: var(--dchat-input-bg, rgba(255,255,255,0.1));
 			border: 1px solid var(--dchat-field-border, rgba(255,255,255,0.5));
 			border-radius: 8px;
@@ -2273,7 +2312,8 @@
 		html.gs-phone #desktop-chat-tools-row { display: none; }
 		html.gs-phone #desktop-chat-input-row.gs-tools-open #desktop-chat-tools-row { display: flex; }
 		html.gs-phone #desktop-chat-input-row { padding: 8px 10px; gap: 8px; }
-		html.gs-phone #desktop-chat-input { min-height: 44px; }
+		html.gs-phone #desktop-chat-input { min-height: 44px; --gs-chat-lh: 22px; --gs-chat-max-lines: 6; padding-top: 10px; padding-bottom: 10px; }
+		html.gs-phone #dchat-theme-chat-input { --gs-chat-lh: 22px; --gs-chat-max-lines: 6; min-height: 44px; font-size: 16px; }
 		html.gs-phone #desktop-send-button { min-height: 44px; padding: 0 16px; }
 		/* Side resize strips would swallow taps on the tabs and buttons at the
 		   panel edge; phones keep the bottom edge and the corners. */
@@ -2353,6 +2393,9 @@
 		html.gs-kb-chat .dchat-panel { border-radius: 12px; }
 		html.gs-kb-chat #desktop-chat-messages { padding: 8px 12px; }
 		html.gs-kb-chat #desktop-chat-input-row { padding: 6px 8px; }
+		/* Keyboard up: the growing input never takes more than ~a third of
+		   the visible area, so recent messages stay in view. */
+		html.gs-kb-chat #desktop-chat .gs-chat-textarea { max-height: min(calc(var(--gs-chat-lh) * var(--gs-chat-max-lines) + 22px), calc(var(--gs-kb-height, 50vh) * 0.34)); }
 		html.gs-kb-chat #dchat-code-toolbar { flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding: 6px 8px; }
 		html.gs-kb-chat #dchat-code-toolbar > * { flex-shrink: 0; white-space: nowrap; }
 	</style>
@@ -2512,7 +2555,7 @@
 						<button id="desktop-mic-button" title="Toggle always-on voice input">🎤</button>
 					</div>
 					<div id="desktop-chat-compose-row">
-						<input type="text" id="desktop-chat-input" placeholder="Ask about the scene..." autocomplete="off" />
+						<textarea id="desktop-chat-input" class="gs-chat-textarea" rows="1" placeholder="Ask about the scene..." autocomplete="off" enterkeyhint="send" aria-label="Message" data-gs-wrap data-gs-history="#desktop-chat-messages"></textarea>
 						<button id="desktop-send-button">Send</button>
 					</div>
 				</div>
@@ -2560,7 +2603,7 @@
 					<div id="dchat-theme-attachments" hidden></div>
 					<div id="dchat-theme-chat-row">
 						<button type="button" id="theme-files-picker-button" title="Choose from Files library">📄</button>
-						<input type="text" id="dchat-theme-chat-input" placeholder="e.g. dark emerald glass, soft rounded tabs..." autocomplete="off" />
+						<textarea id="dchat-theme-chat-input" class="gs-chat-textarea" rows="1" placeholder="e.g. dark emerald glass, soft rounded tabs..." autocomplete="off" enterkeyhint="send" aria-label="Theme request" data-gs-wrap data-gs-history="#dchat-theme-chat-messages"></textarea>
 						<button type="button" id="dchat-theme-chat-send">Send</button>
 					</div>
 				</div>
