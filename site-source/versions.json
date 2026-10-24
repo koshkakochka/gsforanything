@@ -1,9 +1,20 @@
 {
   "versions": [
     {
-      "id": "0.983",
-      "label": "GS 0.983 (this build)",
+      "id": "0.984",
+      "label": "GS 0.984 (this build)",
       "url": null,
+      "date": "2026-10-24",
+      "changes": [
+        "Phones and tablets: drag the GS window around by its header with a finger, the same as with a mouse on desktop. Only the header moves the window, so the chat, tabs and fields still scroll normally, and on touch screens the header is at least 44px tall.",
+        "The window can't be dragged off screen: on phones it stays inside the visible area above the on-screen keyboard and safe areas.",
+        "After a reload the window always opens in its default spot, even if you dragged or resized it. Only its size is remembered, and there is no double-tap reset."
+      ]
+    },
+    {
+      "id": "0.983",
+      "label": "GS 0.983",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-10-24",
       "changes": [
         "Chat: the Scene and Theme chat input fields are now multi-line, so you can see long messages instead of one scrolling line. They start one line tall, grow a line at a time as you type and wrap long text, and scroll after 7 lines (6 on phones) while keeping the chat history in view.",
