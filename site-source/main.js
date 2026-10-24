@@ -13,6 +13,7 @@ import {
 } from './version.js';
 import * as GSContext from './creationContext.js';
 import * as GSMerge from './communityMerge.js';
+import { normalizeEnvironmentHdri, environmentHdriLoadUrl, environmentHdriSignature, hdriFormatFromName, HDRI_FILE_MAX_BYTES } from './sceneHdri.js';
 import * as ChatPrompt from './chatPrompt.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
@@ -655,6 +656,11 @@ let hdriPMREM = null;
 let hdriObjectUrl = null;
 let hdriPersistUrl = null;
 let hdriUseAsBackground = true;
+let hdriCurrentUrl = null; // http(s) or /api/... URL of the active HDRI (null for a local file)
+let hdriFormat = null; // 'hdr' | 'exr' | 'image' of the active HDRI
+let hdriLocalFile = null; // File picked from this computer (uploaded with Community scenes)
+let hdriSceneDesc = null; // environmentHdri of the scene that set the active HDRI, else null
+let hdriApplySeq = 0; // newest applyHdriFromUrl call wins
 let pmremGenerator = null;
 const HDRI_URL_STORAGE_KEY = 'gs-hdri-url';
 let codeEditorApplying = false;
@@ -2154,6 +2160,7 @@ function buildSceneData(name) {
 		name,
 		createdAt: new Date().toISOString(),
 		thumbnail: pendingExportThumbnail || '',
+		...environmentHdriForScene(), // { environmentHdri } when an HDRI is active (URL ones; files on upload)
 		codeBlocks,
 		...originRotationForScene(), // { originRotation } only when rotated
 		...GSMerge.sceneCredits(loadedScenes) // mergedFrom / credits of a merged scene
@@ -2225,6 +2232,7 @@ function addLoadedScene(data, fallbackName) {
 		...(Array.isArray(data.mergedFrom) ? { mergedFrom: data.mergedFrom } : {})
 	};
 	loadedScenes.push(sc);
+	applySceneEnvironmentHdri(data);
 	recenterOrbitPivot();
 	applySceneOriginRotation(data);
 
@@ -2426,18 +2434,25 @@ async function uploadCurrentSceneToCommunity() {
 		updateStatus('Upload cancelled', '');
 		return null;
 	}
+	// A custom HDRI file from this computer goes up right after the scene.
+	const hdriFile = hdriFileForUpload();
+	if (hdriFile) sceneData = { ...sceneData, environmentHdri: hdriFile.desc };
+	const uploadHdriSig = hdriShareSig();
 	updateStatus('Uploading to community...', 'connecting');
 	return fetch('/api/community-scenes', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(sceneData)
-	}).then(res => res.json().then(data => ({ ok: res.ok, data }))).then(({ ok, data }) => {
+	}).then(res => res.json().then(data => ({ ok: res.ok, data }))).then(async ({ ok, data }) => {
 		if (!ok || data.error) throw new Error(data.error || 'Upload failed');
-		updateStatus(`Uploaded "${data.scene?.name || name}" to community`, 'connected');
+		const sceneId = data.id || data.scene?.id;
+		const hdriNote = hdriFile && sceneId ? await uploadSceneHdriFile(sceneId, hdriFile.file) : '';
+		updateStatus(`Uploaded "${data.scene?.name || name}" to community${hdriNote}`, hdriNote ? 'error' : 'connected');
 		refreshCommunityScenes();
 		const share = sharePayloadFromMeta(data.scene || { name, id: data.id }, data);
 		lastUploadedShare = { sig: shareSignature(sceneData.codeBlocks), share };
 		showShareModal(share);
+		lastUploadedShare.hdriSig = uploadHdriSig;
 		return share;
 	}).catch(err => {
 		updateStatus(`Upload error: ${err.message}`, 'error');
@@ -2462,6 +2477,12 @@ function shareCurrentScene() {
 		share = sharePayloadFromMeta({ id: active[0].communityId, name: active[0].name }, active[0]);
 	} else if (lastUploadedShare && lastUploadedShare.sig === sig) {
 		share = lastUploadedShare.share;
+	}
+	// The environment HDRI is part of what was shared too.
+	const hdriSig = hdriShareSig();
+	const hdriMatches = (s) => (s === lastUploadedShare?.share ? lastUploadedShare.hdriSig : (active[0]?.communityHdri ?? 'null')) === hdriSig;
+	if (share && !hdriMatches(share)) {
+		share = lastUploadedShare && lastUploadedShare.sig === sig && lastUploadedShare.hdriSig === hdriSig ? lastUploadedShare.share : null;
 	}
 	const copyInXr = (s) => {
 		if (s && renderer.xr.isPresenting) {
@@ -2752,6 +2773,7 @@ function upsertCommunityLoadedScene(data, fallbackName, key) {
 		sc.communityKey = key;
 		if (data.id) sc.communityId = data.id;
 	}
+	sc.communityHdri = environmentHdriSignature(data.environmentHdri); // shareCurrentScene: same HDRI?
 	sc.communitySig = JSON.stringify(sc.codeBlocks); // shareCurrentScene: unchanged since load?
 	sc.communityOrigin = JSON.stringify(isIdentityOriginRotation(data.originRotation) ? null : normalizeOriginRotation(data.originRotation));
 	if (data.editorUrl) sc.editorUrl = data.editorUrl;
@@ -2813,11 +2835,13 @@ function loadCommunityScene(cs, { mode = communityLoadMode } = {}) {
 			if (loadMode === 'clear') {
 				// Replace in place: one entry, world blanked, code run once.
 				blankLiveSceneForCommunityLoad();
+				const hdriApplied = applySceneEnvironmentHdri(data, { replace: true });
 				const sc = upsertCommunityLoadedScene(data, data.name || name, resolvedKey);
 				applySceneOriginRotation(data, { replace: true });
 				await runLoadedSceneCode(sc);
 				finishCommunityLoadUi();
 				updateStatus(`Loaded "${sc.name}"`, 'connected');
+				hdriApplied.then((note) => { if (note) updateStatus(`Loaded "${sc.name}"${note}`, 'error'); });
 				GSContext.restoreFromScene(data, { key: resolvedKey, source: 'community' }).catch(err => console.warn('creation context restore failed:', err));
 				return sc;
 			}
@@ -6874,31 +6898,42 @@ function disposeHdriTextures({ revokeBlob = true } = {}) {
 }
 
 function clearHdriEnvironment() {
+	hdriApplySeq += 1; // drop any HDRI still loading
 	disposeHdriTextures({ revokeBlob: true });
 	hdriPersistUrl = null;
+	hdriCurrentUrl = null;
+	hdriFormat = null;
+	hdriLocalFile = null;
+	hdriSceneDesc = null;
 	try { localStorage.removeItem(HDRI_URL_STORAGE_KEY); } catch { /* ignore */ }
 	applyEnvironmentMode();
 	setHdriStatus('Cleared', '');
 }
 
-async function loadHdriTextureFromUrl(url) {
-	const lower = String(url).split('?')[0].toLowerCase();
-	if (lower.endsWith('.hdr') || lower.endsWith('.hdri')) {
-		return new HDRLoader().loadAsync(url);
-	}
-	if (lower.endsWith('.exr')) {
-		return new EXRLoader().loadAsync(url);
-	}
+async function loadHdriTextureFromUrl(url, format = hdriFormatFromName(url)) {
+	if (format === 'hdr') return new HDRLoader().loadAsync(url);
+	if (format === 'exr') return new EXRLoader().loadAsync(url);
 	return new THREE.TextureLoader().loadAsync(url);
 }
 
-async function applyHdriFromUrl(url, { persist = false, objectUrl = null } = {}) {
-	if (!url) return;
+/**
+ * Load an equirect HDRI / 360 image as scene.environment (+ background).
+ * - persist: remember an http(s) URL in localStorage (the user's own choice)
+ * - objectUrl + file: a file picked from this computer
+ * - fromScene: the environmentHdri of the scene that asked for it (not
+ *   remembered as the user's default; see applySceneEnvironmentHdri)
+ * Resolves true when this HDRI is now active.
+ */
+async function applyHdriFromUrl(url, { persist = false, objectUrl = null, file = null, format = null, fromScene = null } = {}) {
+	if (!url) return false;
+	const seq = ++hdriApplySeq;
+	const fmt = format || (file ? hdriFormatFromName(file.name) : hdriFormatFromName(url));
 	setHdriStatus('Loading…', 'pending');
 	try {
-		const tex = await loadHdriTextureFromUrl(url);
+		const tex = await loadHdriTextureFromUrl(url, fmt);
+		if (seq !== hdriApplySeq) { tex.dispose(); return false; } // a newer HDRI (or Clear) won
 		tex.mapping = THREE.EquirectangularReflectionMapping;
-		const isHdr = /\.(hdr|hdri|exr)($|\?)/i.test(url);
+		const isHdr = fmt === 'hdr' || fmt === 'exr';
 		tex.colorSpace = isHdr ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
 		tex.needsUpdate = true;
 
@@ -6912,7 +6947,11 @@ async function applyHdriFromUrl(url, { persist = false, objectUrl = null } = {})
 		hdriUseAsBackground = !!(dchatHdriBg ? dchatHdriBg.checked : true);
 		applyEnvironmentMode();
 
-		if (persist && /^https?:\/\//i.test(url)) {
+		hdriFormat = fmt;
+		hdriLocalFile = objectUrl ? file : null;
+		hdriCurrentUrl = objectUrl ? null : url;
+		hdriSceneDesc = fromScene || null;
+		if (persist && !fromScene && /^https?:\/\//i.test(url)) {
 			hdriPersistUrl = url;
 			try { localStorage.setItem(HDRI_URL_STORAGE_KEY, url); } catch { /* ignore */ }
 		} else if (objectUrl) {
@@ -6920,13 +6959,136 @@ async function applyHdriFromUrl(url, { persist = false, objectUrl = null } = {})
 		} else {
 			hdriPersistUrl = /^https?:\/\//i.test(url) ? url : null;
 		}
-		setHdriStatus(hdriPersistUrl ? 'Loaded (URL kept for reload)' : 'Loaded (local file — not persisted)', 'ok');
+		setHdriStatus(fromScene ? 'Loaded from the scene (kept with it when shared)'
+			: hdriLocalFile ? 'Loaded (local file — uploaded with Community scenes)'
+			: hdriPersistUrl ? 'Loaded (URL kept for reload)' : 'Loaded', 'ok');
+		return true;
 	} catch (err) {
+		if (seq !== hdriApplySeq) return false;
 		console.error('HDRI load failed:', err);
 		setHdriStatus('Error: ' + (err && err.message ? err.message : err), 'error');
+		return false;
 	}
 }
 
+/** environmentHdri for the current HDRI, or null. A file picked from this
+ *  computer only exists here, so it is described only for a Community
+ *  upload (`forUpload`), which then sends the bytes too. */
+function currentEnvironmentHdri({ forUpload = false } = {}) {
+	if (!hdriEquirect) return null;
+	const background = !!hdriUseAsBackground;
+	if (hdriLocalFile) {
+		if (!forUpload) return null;
+		return normalizeEnvironmentHdri({ kind: 'file', name: hdriLocalFile.name, size: hdriLocalFile.size, format: hdriFormat, background });
+	}
+	if (!hdriCurrentUrl) return null;
+	return normalizeEnvironmentHdri({ kind: 'url', url: hdriCurrentUrl, format: hdriFormat, background });
+}
+
+function environmentHdriForScene() {
+	const desc = currentEnvironmentHdri();
+	return desc ? { environmentHdri: desc } : {};
+}
+
+/** Signature of the current HDRI for "unchanged since shared?" checks. */
+function hdriShareSig() {
+	return environmentHdriSignature(currentEnvironmentHdri({ forUpload: true }));
+}
+
+/** { desc, file } when the active HDRI is a local file that fits a Community
+ *  upload, else null (an oversized file is left out with a note). */
+function hdriFileForUpload() {
+	if (!hdriEquirect || !hdriLocalFile) return null;
+	if (hdriLocalFile.size > HDRI_FILE_MAX_BYTES) {
+		setHdriStatus(`Local HDRI is over ${Math.round(HDRI_FILE_MAX_BYTES / (1024 * 1024))} MB, so Community uploads use the default environment`, 'error');
+		return null;
+	}
+	return { desc: currentEnvironmentHdri({ forUpload: true }), file: hdriLocalFile };
+}
+
+/** PUT the custom HDRI bytes for a just-uploaded scene. Resolves '' on
+ *  success, else a short note for the status line. */
+async function uploadSceneHdriFile(sceneId, file) {
+	const url = `/api/community-scenes/${encodeURIComponent(sceneId)}/hdri`;
+	for (let attempt = 0; attempt < 2; attempt++) {
+		try {
+			const res = await fetch(url, {
+				method: 'PUT',
+				headers: { 'Content-Type': file.type || 'application/octet-stream' },
+				body: file
+			});
+			if (res.ok) return '';
+			if (res.status === 413) return ` (HDRI "${file.name}" is too large for this server, so the scene opens with the default environment)`;
+			if (res.status !== 404) {
+				let msg = `HTTP ${res.status}`;
+				try { msg = (await res.json()).error || msg; } catch { /* not JSON */ }
+				return ` (HDRI not saved: ${msg})`;
+			}
+		} catch (err) {
+			if (attempt) return ` (HDRI not saved: ${err.message})`;
+		}
+		await new Promise(r => setTimeout(r, 1500)); // a just-written scene may not be listed yet
+	}
+	return ' (HDRI not saved)';
+}
+
+/** Put back the user's own HDRI (their remembered URL, or none) after a
+ *  scene-supplied one. */
+function restoreUserHdri() {
+	hdriSceneDesc = null;
+	let saved = null;
+	try { saved = localStorage.getItem(HDRI_URL_STORAGE_KEY); } catch { /* ignore */ }
+	if (saved && /^https?:\/\//i.test(saved)) {
+		if (dchatHdriUrl) dchatHdriUrl.value = saved;
+		return applyHdriFromUrl(saved, { persist: true });
+	}
+	hdriApplySeq += 1;
+	disposeHdriTextures({ revokeBlob: true });
+	hdriPersistUrl = null;
+	hdriCurrentUrl = null;
+	hdriFormat = null;
+	hdriLocalFile = null;
+	applyEnvironmentMode();
+	setHdriStatus('', '');
+	return Promise.resolve(true);
+}
+
+/**
+ * A loaded scene brings its environment HDRI when it is the only thing in
+ * the scene (replace / first load); layering onto other content keeps the
+ * current one (same rule as the origin rotation). Scenes without
+ * environmentHdri (saved before it existed, or with no HDRI) keep the viewer's own
+ * environment; one left behind by a previous scene is replaced by it.
+ * Resolves '' or a short note when the scene's HDRI could not be loaded.
+ */
+function applySceneEnvironmentHdri(data, { replace = false } = {}) {
+	const others = loadedScenes.filter((sc) => sc.active).length - 1 + executedCodeBlocks.length;
+	if (!replace && others > 0) return Promise.resolve('');
+	const desc = normalizeEnvironmentHdri(data && data.environmentHdri);
+	const url = environmentHdriLoadUrl(desc);
+	if (!desc || !url) {
+		if (hdriSceneDesc) restoreUserHdri();
+		return Promise.resolve('');
+	}
+	const prevBackground = hdriUseAsBackground;
+	if (dchatHdriBg) dchatHdriBg.checked = desc.background;
+	hdriUseAsBackground = desc.background;
+	if (hdriEquirect && hdriCurrentUrl === url) {
+		// Already showing it; just follow the scene's background choice.
+		hdriSceneDesc = hdriSceneDesc || desc;
+		applyEnvironmentMode();
+		return Promise.resolve('');
+	}
+	if (dchatHdriUrl && desc.kind === 'url') dchatHdriUrl.value = url;
+	return applyHdriFromUrl(url, { format: desc.format, fromScene: desc }).then((ok) => {
+		if (ok) return '';
+		if (dchatHdriBg) dchatHdriBg.checked = prevBackground;
+		hdriUseAsBackground = prevBackground;
+		if (hdriSceneDesc) restoreUserHdri();
+		else applyEnvironmentMode();
+		return ' (its HDRI could not be loaded, so the default environment is used)';
+	});
+}
 
 // ============================================================================
 // GS version badge + picker (bottom of screen)
@@ -7059,7 +7221,7 @@ function initHdriControls() {
 			dchatHdriFile.value = '';
 			if (!file) return;
 			const obj = URL.createObjectURL(file);
-			await applyHdriFromUrl(obj, { persist: false, objectUrl: obj });
+			await applyHdriFromUrl(obj, { persist: false, objectUrl: obj, file });
 		});
 	}
 	if (dchatHdriUrlLoad && dchatHdriUrl) {

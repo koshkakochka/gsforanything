@@ -8,6 +8,7 @@ import dns from 'dns';
 import fs from 'fs';
 import selfsigned from 'selfsigned';
 import { randomBytes } from 'crypto';
+import { environmentHdriForRecord, HDRI_FILE_MAX_BYTES, hdriContentType } from './sceneHdri.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -890,6 +891,10 @@ app.post('/api/community-scenes', async (req, res) => {
 			createdAt: sceneData.createdAt || now,
 			updatedAt: now
 		};
+		// Environment HDRI (see sceneHdri.js): keep a clean copy or drop it.
+		delete record.environmentHdri;
+		const hdri = environmentHdriForRecord(sceneData.environmentHdri, id);
+		if (hdri) record.environmentHdri = hdri;
 		if (creationContext != null) {
 			if (!validCreationContext(creationContext)) {
 				return res.status(400).json({ error: 'Invalid creationContext' });
@@ -969,6 +974,64 @@ app.get('/api/community-scenes/:id/context', async (req, res) => {
 		res.json(await ctxRes.json());
 	} catch (error) {
 		console.error('Community context get error:', error);
+		res.status(500).json({ error: error.message });
+	}
+});
+
+// Custom environment HDRI file of a community scene (environmentHdri.kind
+// 'file'). The browser uploads the bytes right after the scene with
+// PUT .../hdri; it is accepted once, only for a scene that declared a file
+// HDRI, within HDRI_UPLOAD_WINDOW_MS of the upload. Vercel itself rejects
+// request bodies over ~4.5 MB (413); the scene then opens with the default
+// environment. Stored as its own blob: community-scene-hdri/{id}.
+const HDRI_PREFIX = 'community-scene-hdri/';
+const HDRI_UPLOAD_WINDOW_MS = 15 * 60 * 1000;
+
+async function findHdriBlob(id) {
+	const { blobs } = await blobList(`${HDRI_PREFIX}${id}`);
+	return (blobs || []).find(b => b.pathname === `${HDRI_PREFIX}${id}`) || null;
+}
+
+app.put('/api/community-scenes/:id/hdri', express.raw({ type: () => true, limit: HDRI_FILE_MAX_BYTES }), async (req, res) => {
+	if (!requireBlob(res)) return;
+	try {
+		const id = req.params.id;
+		const meta = await findCommunityBlob(id);
+		if (!meta) return res.status(404).json({ error: 'Scene not found' });
+		const record = await readCommunitySceneRecord(meta);
+		const hdri = record.environmentHdri;
+		if (!hdri || hdri.kind !== 'file') return res.status(409).json({ error: 'This scene has no custom HDRI' });
+		const age = Date.now() - new Date(record.updatedAt || record.createdAt || 0).getTime();
+		if (!(age >= 0 && age <= HDRI_UPLOAD_WINDOW_MS)) return res.status(409).json({ error: 'HDRI upload window has closed' });
+		if (await findHdriBlob(id)) return res.status(409).json({ error: 'HDRI already uploaded' });
+		const body = Buffer.isBuffer(req.body) ? req.body : null;
+		if (!body || !body.length) return res.status(400).json({ error: 'Empty HDRI' });
+		const type = String(req.headers['content-type'] || '');
+		const contentType = hdri.format === 'image' && /^image\/[a-z0-9.+-]+$/i.test(type) ? type : hdriContentType(hdri.format);
+		const blob = await blobPut(`${HDRI_PREFIX}${id}`, body, contentType);
+		res.json({ ok: true, size: body.length, url: hdri.url, blobUrl: blob.url });
+	} catch (error) {
+		if (error && error.type === 'entity.too.large') return res.status(413).json({ error: 'HDRI file is too large' });
+		console.error('Community HDRI upload error:', error);
+		res.status(500).json({ error: error.message });
+	}
+});
+
+app.get('/api/community-scenes/:id/hdri', async (req, res) => {
+	if (!requireBlob(res)) return;
+	try {
+		const id = req.params.id;
+		if (!SCENE_ID_RE.test(id)) return res.status(404).json({ error: 'Scene not found' });
+		const b = await findHdriBlob(id);
+		if (!b) return res.status(404).json({ error: 'This scene has no stored HDRI' });
+		const r = await fetch(b.url);
+		if (!r.ok) return res.status(502).json({ error: `Failed to fetch HDRI: ${r.status}` });
+		const buf = Buffer.from(await r.arrayBuffer());
+		res.set('Content-Type', r.headers.get('content-type') || 'application/octet-stream');
+		res.set('Cache-Control', 'public, max-age=86400');
+		res.send(buf);
+	} catch (error) {
+		console.error('Community HDRI get error:', error);
 		res.status(500).json({ error: error.message });
 	}
 });

@@ -1,0 +1,33 @@
+// Unit tests for site-source/sceneHdri.js (shared by browser, server.js, Worker).
+import * as H from '../../site-source/sceneHdri.js';
+let fails = 0, n = 0;
+const ok = (name, cond, extra = '') => { n++; if (!cond) fails++; console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`); };
+const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+ok('format .hdr', H.hdriFormatFromName('a/b/Studio.HDR?x=1') === 'hdr');
+ok('format .exr', H.hdriFormatFromName('x.exr') === 'exr');
+ok('format image', H.hdriFormatFromName('pano.jpg') === 'image');
+ok('url kind normalised', eq(H.normalizeEnvironmentHdri({ kind: 'url', url: ' https://x.test/a.hdr ' }), { kind: 'url', url: 'https://x.test/a.hdr', format: 'hdr', background: true }));
+ok('background false kept', H.normalizeEnvironmentHdri({ kind: 'url', url: 'https://x.test/a.jpg', background: false }).background === false);
+ok('javascript: url rejected', H.normalizeEnvironmentHdri({ kind: 'url', url: 'javascript:alert(1)' }) === null);
+ok('blob: url rejected', H.normalizeEnvironmentHdri({ kind: 'url', url: 'blob:http://x/1' }) === null);
+ok('data: url rejected', H.normalizeEnvironmentHdri({ kind: 'url', url: 'data:image/png;base64,AAAA' }) === null);
+ok('community hdri path accepted', H.normalizeEnvironmentHdri({ kind: 'url', url: '/api/community-scenes/abcdefgh123/hdri', format: 'exr' })?.format === 'exr');
+ok('other relative path rejected', H.normalizeEnvironmentHdri({ kind: 'url', url: '/etc/passwd' }) === null);
+ok('too long url rejected', H.normalizeEnvironmentHdri({ kind: 'url', url: 'https://x.test/' + 'a'.repeat(3000) }) === null);
+ok('unknown kind -> null', H.normalizeEnvironmentHdri({ kind: 'preset', id: 'x' }) === null);
+ok('garbage -> null', H.normalizeEnvironmentHdri('x') === null && H.normalizeEnvironmentHdri(null) === null);
+ok('bad format falls back to name', H.normalizeEnvironmentHdri({ kind: 'url', url: 'https://x/a.exr', format: 'svg' }).format === 'exr');
+const f = H.normalizeEnvironmentHdri({ kind: 'file', name: 'st\u0000udio.exr', size: 1234.7, url: 'https://evil.test/x' });
+ok('file kind cleaned', f.name === 'studio.exr' && f.size === 1234 && f.format === 'exr');
+const rec = H.environmentHdriForRecord({ kind: 'file', name: 'studio.exr', size: 10, url: 'https://evil.test/x' }, 'abcdefgh1234');
+ok('record: file url is the server path', rec.url === '/api/community-scenes/abcdefgh1234/hdri', rec.url);
+ok('record: url kind untouched', H.environmentHdriForRecord({ kind: 'url', url: 'https://x/a.hdr' }, 'abcdefgh1234').url === 'https://x/a.hdr');
+ok('load url: file without url -> null', H.environmentHdriLoadUrl({ kind: 'file', name: 'a.hdr' }) === null);
+ok('load url: record file', H.environmentHdriLoadUrl(rec) === rec.url);
+ok('signature: loaded file == re-saved url', H.environmentHdriSignature(rec) === H.environmentHdriSignature({ kind: 'url', url: rec.url, format: 'exr', background: true }));
+ok('signature: background matters', H.environmentHdriSignature({ kind: 'url', url: 'https://x/a.hdr' }) !== H.environmentHdriSignature({ kind: 'url', url: 'https://x/a.hdr', background: false }));
+ok('signature: none', H.environmentHdriSignature(undefined) === 'null');
+ok('content types', H.hdriContentType('hdr') === 'image/vnd.radiance' && H.hdriContentType('exr') === 'image/x-exr');
+console.log(`\n${n - fails}/${n} passed`);
+process.exit(fails ? 1 : 0);
