@@ -1653,6 +1653,18 @@ function applyEnvironmentMode() {
 	renderer.setClearColor(0x000000, 0.0);
 }
 
+/**
+ * "Use as background" means the HDRI is the background. Scene code often sets
+ * its own (`scene.background = new THREE.Color(...)`), and it runs after (or,
+ * when the HDRI is still downloading, before) the HDRI is applied, so the box
+ * stayed checked while a solid colour showed until it was toggled off and on.
+ * Called every frame before rendering: puts the HDRI back if anything replaced
+ * it. With the box off, scene code / the background colour keep control.
+ */
+function keepHdriBackground() {
+	if (hdriEquirect && hdriUseAsBackground && scene.background !== hdriEquirect) applyEnvironmentMode();
+}
+
 // ============================================================================
 // Scene Manager
 // ============================================================================
@@ -1700,6 +1712,7 @@ function captureScreenshot() {
 	const size = 256;
 	const rt = new THREE.WebGLRenderTarget(size, size);
 	renderer.setRenderTarget(rt);
+	keepHdriBackground();
 	renderer.render(scene, camera);
 	renderer.setRenderTarget(null);
 
@@ -8071,6 +8084,9 @@ renderer.setAnimationLoop((time) => {
 
 	// Match the VR render distance (see syncRenderDistance) before any render.
 	syncRenderDistance();
+
+	// An HDRI with "Use as background" on stays the background (see keepHdriBackground).
+	keepHdriBackground();
 
 	if (mobileXRMode === 'cardboard') {
 		// Manual side-by-side stereo render (no OpenXR session to do this for us).

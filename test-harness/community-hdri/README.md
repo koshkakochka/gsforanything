@@ -16,10 +16,17 @@ Community upload (and Share link) and restored when the scene is opened fresh.
   Community list and checks `scene.environment` / `scene.background`, the
   background-off URL case, legacy scenes, the viewer's own saved HDRI and that
   share links of unchanged scenes are reused. `SHOTS=/dir` saves screenshots.
+- `background.mjs`: "Use as background" works on load with no toggling. The
+  scene code sets its own `scene.background` colour + fog (like the live Del
+  Amo Gazebo scenes); checks `scene.background` is the HDRI texture with the
+  box checked on `/e/:id`, `/s/:id` and a Community list load, with the scene's
+  HDRI, a colour set 2 s later and a legacy scene + the viewer's saved HDRI,
+  then one click off / one click on. Same `HOSTS` / `SHOTS`.
 
 ```bash
 python3 make-hdr.py /tmp/sunset.hdr sunset && python3 make-hdr.py /tmp/teal.hdr teal
 node vercel-sim.mjs &
 HOSTS=vercel-sim=http://localhost:3611,cf=http://127.0.0.1:3612 node api.mjs
 HOSTS=vercel-sim=http://localhost:3611,cf=http://127.0.0.1:3612 SHOTS=/tmp/hdri-shots node test.mjs
+HOSTS=vercel-sim=http://localhost:3611,cf=http://127.0.0.1:3612 SHOTS=/tmp/hdri-shots node background.mjs
 ```
