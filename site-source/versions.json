@@ -1,9 +1,21 @@
 {
   "versions": [
     {
-      "id": "0.981",
-      "label": "GS 0.981 (this build)",
+      "id": "0.982",
+      "label": "GS 0.982 (this build)",
       "url": null,
+      "date": "2026-10-24",
+      "changes": [
+        "Environment → Origin rotation (under Camera): turn the scene's origin so the scene lines up with the view you want, using a 2D gizmo of the X/Y/Z axes as seen from the camera. Drag the ball to rotate, drag the outer ring to roll, click or tap an axis end to point that axis straight at you, or type Yaw/Pitch/Roll. Shift or the Snap 15° toggle snaps, and Reset origin undoes it.",
+        "The origin rotation is saved in this browser and with the scene, so Save, scene files, Community uploads and share links keep it. Older scenes open unrotated.",
+        "The player, the menus and the lights are not rotated. Physics gravity turns with the scene, GLB/glTF/FBX/OBJ exports bake the rotation in, and the AI is told about the rotation only while one is set.",
+        "Works with mouse, touch (44px tap targets on phones) and in VR: the gizmo is painted into the VR menu window and the controller ray can drag it."
+      ]
+    },
+    {
+      "id": "0.981",
+      "label": "GS 0.981",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-10-24",
       "changes": [
         "VR: every window (the menu, the keyboard and the Hide/Show UI button) is now drawn one way, by painting the real page UI with the HTML canvas renderer. The old hand-drawn VR panels (chat, input bar, side panel, Scenes panel, keyboard, status badge) are gone, and the VR menu is the full menu with all its tabs.",

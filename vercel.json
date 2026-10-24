@@ -21,6 +21,7 @@
           "site-source/twinSticks.js",
           "site-source/cameraControls.js",
           "site-source/chatPrompt.js",
+          "site-source/originGizmo.js",
           "site-source/threejsAddons/**",
           "site-source/vendor_modules/**"
         ],
