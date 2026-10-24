@@ -4,7 +4,8 @@ The Scene and Theme chat inputs are auto-growing `<textarea class="gs-chat-texta
 (`initChatTextarea` in `site-source/main.js`). `npm install` (puppeteer-core; Chrome at
 `/usr/bin/google-chrome`), serve `site-source`, then:
 
-    BASE=https://localhost:3488 node test.mjs
+    BASE=https://localhost:3488 node test.mjs   # desktop, theme chat, html-in-canvas paint, phones
+    BASE=https://localhost:3488 node vr.mjs     # IWER Quest 3 session (uses ../vr-windows/node_modules for iwer)
 
 Screenshots go to `SHOT_DIR` (default `/workspace/gs-multiline-shots`). `/api/chat` and
 `/api/theme-chat` are intercepted (no real calls). Checks:
@@ -21,3 +22,7 @@ Screenshots go to `SHOT_DIR` (default `/workspace/gs-multiline-shots`). `/api/ch
   input and Send; Enter on the on-screen keyboard adds a new line and Send sends (focus
   stays, back to 44px); with the keyboard up the input and Send stay visible and the
   input takes at most about a third of the visible height, so messages stay in view.
+- VR (`vr.mjs`): ray click on the chat textarea opens the in-scene keyboard with the
+  focus ring and a "Send" Enter key; keys type into it; it grows; the menu texture paints
+  the wrapped lines and the cyan focus ring; capped and scrolled to the caret; the
+  keyboard's Send sends the whole message and the field returns to one line.
