@@ -1,9 +1,21 @@
 {
   "versions": [
     {
-      "id": "0.979",
-      "label": "GS 0.979 (this build)",
+      "id": "0.980",
+      "label": "GS 0.980 (this build)",
       "url": null,
+      "date": "2026-10-24",
+      "changes": [
+        "Chat has a new Prompt tab next to Scene and Theme. It shows the full default Scene chat prompt, and you can edit it, Save it, Discard unsaved edits or Reset to default. Your edit is kept in this browser and used for Scene chat and community merges; a \"Custom prompt active\" badge shows while it is on.",
+        "A short required technical section (vr-exec blocks, scene globals, floor and facing) is always added after a custom prompt so scene code keeps running. Custom prompts can be up to 40,000 characters. The auto-fix and theme prompts are shown read-only, and in VR the prompt is read-only.",
+        "The default prompt has a new photorealistic lighting and materials section: one motivated shadow-casting key light instead of flat, even lighting, weak fill and ambient, RoomEnvironment reflections, ACES tone mapping, physically based intensities and PBR material values, correct colour spaces, and VR performance limits.",
+        "GS's built-in lights are named gsDefaultAmbient and gsDefaultKey so scene code can dim or replace them."
+      ]
+    },
+    {
+      "id": "0.979",
+      "label": "GS 0.979",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-10-18",
       "changes": [
         "The browser tab now reads \"GS For Anything\" instead of \"Claude VR Chat\".",
