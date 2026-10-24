@@ -8,6 +8,7 @@ rm -rf public && mkdir -p public
 for f in index.html main.js version.js versions.json syntaxHighlight.js htmlInCanvas.js menuSystem.js vrWindows.js exporter.js creationContext.js p5Import.js communityMerge.js twinSticks.js cameraControls.js chatPrompt.js; do
   cp "$SRC/$f" public/
 done
+cp "$SRC/sceneHdri.js" public/ # environment HDRI saved with scenes
 cp -a "$SRC/threejsAddons" "$SRC/vendor_modules" public/
 test -f public/vendor_modules/three/build/three.module.js || { echo "missing vendor_modules/three/build/three.module.js" >&2; exit 1; }
 echo "public/ synced: $(find public -type f | wc -l) files"

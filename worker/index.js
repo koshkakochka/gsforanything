@@ -1,3 +1,4 @@
+import { environmentHdriForRecord, HDRI_FILE_MAX_BYTES, hdriContentType } from "../site-source/sceneHdri.js";
 import { CHAT_PROMPT_REQUIRED, FIX_CODE_PROMPT, MAX_CUSTOM_PROMPT_CHARS, SYSTEM_PROMPT, THEME_SYSTEM_PROMPT } from "./prompts.js";
 
 // Hosted Worker for Carl Junior. Local-only HTTPS / self-signed certs / port
@@ -29,7 +30,7 @@ function json(data, status = 200, extraHeaders = {}) {
     headers: {
       "content-type": "application/json; charset=utf-8",
       "access-control-allow-origin": "*",
-      "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
+      "access-control-allow-methods": "GET,POST,PUT,PATCH,OPTIONS",
       "access-control-allow-headers": "content-type",
       ...extraHeaders,
     },
@@ -236,6 +237,8 @@ function sanitizeThemePayload(body) {
 const CONTEXT_FORMAT = "gs-creation-context";
 const CONTEXT_MAX_CHARS = 20 * 1024 * 1024;
 const contextKey = (id) => `scene:${id}:context`;
+const hdriKey = (id) => `scene:${id}:hdri`;
+const HDRI_UPLOAD_WINDOW_MS = 15 * 60 * 1000;
 
 function validCreationContext(cc) {
   return !!(cc && typeof cc === "object" && cc.format === CONTEXT_FORMAT &&
@@ -388,6 +391,49 @@ async function handleApi(request, env) {
     return json({ error: "This scene has no creation context" }, 404);
   }
   const themeIdMatch = path.match(/^\/api\/community-themes\/([^/]+)$/);
+  // Custom environment HDRI file of a community scene (same rules as
+  // server.js): PUT once, right after the upload, only for a scene that
+  // declared environmentHdri.kind 'file'; stored as raw bytes under its own
+  // KV key (KV values max 25 MiB; HDRI_FILE_MAX_BYTES is 20 MB).
+  const sceneHdriMatch = path.match(/^\/api\/community-scenes\/([^/]+)\/hdri$/);
+  if (sceneHdriMatch && (method === "GET" || method === "HEAD")) {
+    const missing = requireStore(env);
+    if (missing) return missing;
+    const id = decodeURIComponent(sceneHdriMatch[1]);
+    if (!SCENE_ID_RE.test(id)) return json({ error: "Scene not found" }, 404);
+    const { value, metadata } = await env.SCENES.getWithMetadata(hdriKey(id), "arrayBuffer");
+    if (!value) return json({ error: "This scene has no stored HDRI" }, 404);
+    return new Response(method === "HEAD" ? null : value, {
+      headers: {
+        "content-type": (metadata && metadata.contentType) || "application/octet-stream",
+        "content-length": String(value.byteLength),
+        "cache-control": "public, max-age=86400",
+        "access-control-allow-origin": "*",
+      },
+    });
+  }
+  if (sceneHdriMatch && method === "PUT") {
+    const missing = requireStore(env);
+    if (missing) return missing;
+    const id = decodeURIComponent(sceneHdriMatch[1]);
+    if (!SCENE_ID_RE.test(id)) return json({ error: "Scene not found" }, 404);
+    const record = await kvGetJson(env, `cs:${id}`);
+    if (!record) return json({ error: "Scene not found" }, 404);
+    const hdri = record.environmentHdri;
+    if (!hdri || hdri.kind !== "file") return json({ error: "This scene has no custom HDRI" }, 409);
+    const age = Date.now() - new Date(record.updatedAt || record.createdAt || 0).getTime();
+    if (!(age >= 0 && age <= HDRI_UPLOAD_WINDOW_MS)) return json({ error: "HDRI upload window has closed" }, 409);
+    if ((await env.SCENES.list({ prefix: hdriKey(id), limit: 1 })).keys.some((k) => k.name === hdriKey(id))) return json({ error: "HDRI already uploaded" }, 409);
+    const declared = Number(request.headers.get("content-length") || 0);
+    if (declared > HDRI_FILE_MAX_BYTES) return json({ error: "HDRI file is too large" }, 413);
+    const body = await request.arrayBuffer();
+    if (!body.byteLength) return json({ error: "Empty HDRI" }, 400);
+    if (body.byteLength > HDRI_FILE_MAX_BYTES) return json({ error: "HDRI file is too large" }, 413);
+    const type = request.headers.get("content-type") || "";
+    const contentType = hdri.format === "image" && /^image\/[a-z0-9.+-]+$/i.test(type) ? type : hdriContentType(hdri.format);
+    await env.SCENES.put(hdriKey(id), body, { metadata: { contentType, size: body.byteLength, name: hdri.name || "" } });
+    return json({ ok: true, size: body.byteLength, url: hdri.url });
+  }
 
   if (path === "/api/community-scenes" && method === "POST") {
     const missing = requireStore(env);
@@ -401,6 +447,10 @@ async function handleApi(request, env) {
     const now = new Date().toISOString();
     const { creationContext, ...sceneFields } = sceneData;
     const record = { ...sceneFields, id, name, createdAt: sceneData.createdAt || now, updatedAt: now };
+    // Environment HDRI (see site-source/sceneHdri.js): keep a clean copy or drop it.
+    delete record.environmentHdri;
+    const hdri = environmentHdriForRecord(sceneData.environmentHdri, id);
+    if (hdri) record.environmentHdri = hdri;
     if (creationContext != null) {
       if (!validCreationContext(creationContext)) return json({ error: "Invalid creationContext" }, 400);
       const ctxEncoded = JSON.stringify(creationContext);

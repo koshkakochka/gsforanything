@@ -1,0 +1,9 @@
+{
+  "name": "gs-community-hdri-test",
+  "private": true,
+  "type": "module",
+  "description": "Environment HDRI saved with Community scenes: shared-helper unit tests, API tests (Vercel sim + Worker) and a browser end-to-end check.",
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}
