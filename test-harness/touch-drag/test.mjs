@@ -111,15 +111,19 @@ async function touchSuite(dev) {
   // leave it somewhere distinctive
   g = await headerGrab(p);
   await touchDrag(p, g.x, g.y, g.x + (dev.phone && !dev.landscapePhone ? 0 : 90), g.y + (dev.landscapePhone ? 0 : 60));
-  const rSaved = await rect(p);
+  const rMoved = await rect(p);
   const st = await stored(p);
-  ok(`${T} position saved after the drag`, st && near(st.left, rSaved.l, 1.5) && near(st.top, rSaved.t, 1.5), JSON.stringify({ st, rSaved }));
+  ok(`${T} a drag is not saved`, st === null, JSON.stringify(st));
 
-  // 3. reload restores it
+  // 3. reload: back at the default place (drags are not remembered)
   await p.reload({ waitUntil: 'networkidle2' }); await sleep(2000);
-  const rR = await rect(p);
-  ok(`${T} position restored after reload`, near(rR.l, rSaved.l, 2) && near(rR.t, rSaved.t, 2), JSON.stringify({ rSaved, rR }));
+  const rLoad = await rect(p);
+  ok(`${T} position NOT restored after reload (default place)`, near(rLoad.l, r0.l, 2) && near(rLoad.t, r0.t, 2) && !(near(rLoad.l, rMoved.l, 2) && near(rLoad.t, rMoved.t, 2)), JSON.stringify({ r0, rMoved, rLoad }));
   p._cdp = await p.createCDPSession();
+  // move it somewhere distinctive again for the checks below
+  g = await headerGrab(p);
+  await touchDrag(p, g.x, g.y, g.x + (dev.phone && !dev.landscapePhone ? 0 : 90), g.y + (dev.landscapePhone ? 0 : 60));
+  const rR = await rect(p);
 
   // 4. taps on tabs and header buttons still work and don't move the window
   await tapEl(p, '.dchat-tab[data-tab="controls"]');
@@ -168,13 +172,15 @@ async function touchSuite(dev) {
     ok(`${T} scene drag doesn't move the window`, near(rc.l, rc1.l) && near(rc.t, rc1.t), JSON.stringify({ rc, rc1 }));
   } else ok(`${T} (no free scene area beside the window to drag the camera; skipped)`, true);
 
-  // 7. double-tap the header: back to the default place and size, saved spot cleared
+  // 7. double-tap the header: nothing special (no reset, no expand, no hide)
+  const rB = await rect(p);
   g = await headerGrab(p);
   await doubleTap(p, g.x, g.y);
-  const rD = await rect(p); const stD = await stored(p);
-  ok(`${T} double-tap on the header resets the window to its default rect`, near(rD.l, r0.l, 2) && near(rD.t, r0.t, 2) && near(rD.w, r0.w, 2) && near(rD.h, r0.h, 2), JSON.stringify({ r0, rD }));
-  ok(`${T} reset clears the saved position`, stD === null, JSON.stringify(stD));
-  await shot(p, `${dev.name}-3-reset`);
+  const rD = await rect(p);
+  const stateD = await p.evaluate(() => { const c = document.getElementById('desktop-chat'); return { expanded: c.classList.contains('expanded'), hidden: c.classList.contains('hidden') || !c.getClientRects().length }; });
+  ok(`${T} double-tap on the header leaves the window where it is`, near(rD.l, rB.l, 2) && near(rD.t, rB.t, 2) && near(rD.w, rB.w, 2) && near(rD.h, rB.h, 2), JSON.stringify({ rB, rD }));
+  ok(`${T} double-tap doesn't expand or hide the window`, !stateD.expanded && !stateD.hidden, JSON.stringify(stateD));
+  await shot(p, `${dev.name}-3-after-double-tap`);
   ok(`${T} no console errors`, p._errs.length === 0, JSON.stringify(p._errs.slice(0, 3)));
   await p.close();
 }
@@ -207,7 +213,7 @@ async function phoneKeyboard(dev) {
   await p.close();
 }
 
-// Desktop mouse: unchanged behaviour plus the new save + double-click reset.
+// Desktop mouse: unchanged behaviour (drag not saved, double-click does nothing).
 async function desktopSuite(dev) {
   const T = `[${dev.name} mouse]`;
   const p = await open(dev);
@@ -243,13 +249,15 @@ async function desktopSuite(dev) {
   ok(`${T} press-and-move on a header button doesn't drag`, near(rBtn.l, rNear.l) && near(rBtn.t, rNear.t) || await p.evaluate(() => document.getElementById('desktop-chat').classList.contains('expanded')), JSON.stringify(rBtn));
   if (await p.evaluate(() => document.getElementById('desktop-chat').classList.contains('expanded'))) await p.evaluate(() => document.getElementById('desktop-chat-expand').click());
   await sleep(150);
-  // move to a spot, save, reload
+  // move to a spot, reload: not remembered. (Expand/restore and resize save
+  // the rect, unchanged from main, so clear what the Expand press above saved.)
+  await p.evaluate(() => localStorage.removeItem('carljr-chat-window'));
   g = await headerGrab(p);
   await p.mouse.move(g.x, g.y); await p.mouse.down(); await p.mouse.move(g.x + 200, g.y + 120, { steps: 6 }); await p.mouse.up(); await sleep(200);
   const rS = await rect(p);
   await p.reload({ waitUntil: 'networkidle2' }); await sleep(1800);
   const rR = await rect(p);
-  ok(`${T} dragged position restored after reload`, near(rR.l, rS.l, 2) && near(rR.t, rS.t, 2), JSON.stringify({ rS, rR }));
+  ok(`${T} dragged position NOT restored after reload (default place)`, near(rR.l, r0.l, 2) && near(rR.t, r0.t, 2) && !(near(rR.l, rS.l, 2) && near(rR.t, rS.t, 2)), JSON.stringify({ r0, rS, rR }));
   // resize still works (SE corner)
   const se = await rect(p, '.dchat-resize.corner-se');
   await p.mouse.move(se.l + se.w / 2, se.t + se.h / 2); await p.mouse.down(); await p.mouse.move(se.l + se.w / 2 + 60, se.t + se.h / 2 + 40, { steps: 6 }); await p.mouse.up(); await sleep(200);
@@ -268,11 +276,13 @@ async function desktopSuite(dev) {
   const c1 = await camPose(p); const rc1 = await rect(p);
   ok(`${T} mouse drag on the scene still moves the camera, not the window`, c0 !== c1 && near(rc.l, rc1.l) && near(rc.t, rc1.t), `${c0} | ${c1}`);
   await shot(p, `${dev.name}-1-dragged`);
-  // double-click the header: default rect
+  // double-click the header: nothing special
+  const rB = await rect(p);
   g = await headerGrab(p);
   await p.mouse.click(g.x, g.y, { clickCount: 1 }); await sleep(80); await p.mouse.click(g.x, g.y, { clickCount: 2 }); await sleep(300);
   const rD = await rect(p);
-  ok(`${T} double-click on the header resets the window`, near(rD.l, r0.l, 2) && near(rD.t, r0.t, 2) && near(rD.w, r0.w, 2) && near(rD.h, r0.h, 2), JSON.stringify({ r0, rD }));
+  const stateD = await p.evaluate(() => { const c = document.getElementById('desktop-chat'); return { expanded: c.classList.contains('expanded'), hidden: c.classList.contains('hidden') }; });
+  ok(`${T} double-click on the header leaves the window as it was`, near(rD.l, rB.l, 2) && near(rD.t, rB.t, 2) && near(rD.w, rB.w, 2) && near(rD.h, rB.h, 2) && !stateD.expanded && !stateD.hidden, JSON.stringify({ rB, rD, stateD }));
   // VR mirror: the parked html-in-canvas source never drags
   const vr = await p.evaluate(() => {
     const c = document.getElementById('desktop-chat'); const h = document.getElementById('desktop-chat-header');
