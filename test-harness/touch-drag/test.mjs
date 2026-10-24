@@ -249,9 +249,7 @@ async function desktopSuite(dev) {
   ok(`${T} press-and-move on a header button doesn't drag`, near(rBtn.l, rNear.l) && near(rBtn.t, rNear.t) || await p.evaluate(() => document.getElementById('desktop-chat').classList.contains('expanded')), JSON.stringify(rBtn));
   if (await p.evaluate(() => document.getElementById('desktop-chat').classList.contains('expanded'))) await p.evaluate(() => document.getElementById('desktop-chat-expand').click());
   await sleep(150);
-  // move to a spot, reload: not remembered. (Expand/restore and resize save
-  // the rect, unchanged from main, so clear what the Expand press above saved.)
-  await p.evaluate(() => localStorage.removeItem('carljr-chat-window'));
+  // move to a spot, reload: not remembered (no storage clearing needed).
   g = await headerGrab(p);
   await p.mouse.move(g.x, g.y); await p.mouse.down(); await p.mouse.move(g.x + 200, g.y + 120, { steps: 6 }); await p.mouse.up(); await sleep(200);
   const rS = await rect(p);
@@ -302,6 +300,64 @@ async function desktopSuite(dev) {
   await p.close();
 }
 
+// Reload always opens at the default spot; only the size from resize (and
+// expand/restore) is kept. Works with touch or mouse.
+async function persistSuite(dev) {
+  const touch = !!dev.touch;
+  const T = `[${dev.name} reload]`;
+  const p = await open(dev);
+  const r0 = await rect(p);
+  const drag = async (x0, y0, x1, y1) => {
+    if (touch) return touchDrag(p, x0, y0, x1, y1);
+    await p.mouse.move(x0, y0); await p.mouse.down(); await p.mouse.move(x1, y1, { steps: 8 }); await p.mouse.up(); await sleep(200);
+  };
+  const moveAway = async () => {
+    const g = await headerGrab(p);
+    const dx = dev.phone && !dev.landscapePhone ? 0 : (r0.l > 200 ? -120 : 120);
+    const dy = dev.landscapePhone ? 0 : 90;
+    await drag(g.x, g.y, g.x + dx, g.y + dy);
+    return rect(p);
+  };
+  const reload = async () => { await p.reload({ waitUntil: 'networkidle2' }); await sleep(2000); if (touch) p._cdp = await p.createCDPSession(); return rect(p); };
+  const fullH = !!dev.landscapePhone; // phone landscape column: height is fixed by CSS
+
+  // 1. drag, then resize (SE corner): reload -> default spot, resized size
+  const rm = await moveAway();
+  const se = await rect(p, '.dchat-resize.corner-se');
+  await drag(se.l + se.w / 2, se.t + se.h / 2, se.l + se.w / 2 - 40, se.t + se.h / 2 - 50);
+  const rz = await rect(p);
+  ok(`${T} corner resize after a drag changes the size`, near(rz.w, rm.w - 40, 3) && (fullH || near(rz.h, rm.h - 50, 3)), JSON.stringify({ rm, rz }));
+  const st1 = await stored(p);
+  ok(`${T} resize saves the size only (no position)`, st1 && st1.width && st1.height && !('left' in st1) && !('top' in st1), JSON.stringify(st1));
+  const rl1 = await reload();
+  ok(`${T} drag + resize, reload: window at the default spot`, near(rl1.l, r0.l, 2) && near(rl1.t, r0.t, 2), JSON.stringify({ r0, rz, rl1 }));
+  ok(`${T} drag + resize, reload: resized size kept`, near(rl1.w, rz.w, 2) && (fullH || near(rl1.h, rz.h, 2)), JSON.stringify({ rz, rl1 }));
+  await shot(p, `${dev.name}-5-reload-after-resize`);
+
+  // 2. drag, then expand / restore: back at the dragged spot this session; reload -> default spot, size kept
+  const rm2 = await moveAway();
+  await p.evaluate(() => document.getElementById('desktop-chat-expand').click()); await sleep(250);
+  await p.evaluate(() => document.getElementById('desktop-chat-expand').click()); await sleep(250);
+  const ru = await rect(p);
+  ok(`${T} expand / restore returns to the dragged spot (same session)`, near(ru.l, rm2.l, 2) && near(ru.t, rm2.t, 2), JSON.stringify({ rm2, ru }));
+  const st2 = await stored(p);
+  ok(`${T} expand / restore saves no position`, !st2 || (!('left' in st2) && !('top' in st2)), JSON.stringify(st2));
+  const rl2 = await reload();
+  ok(`${T} drag + expand / restore, reload: window at the default spot`, near(rl2.l, r0.l, 2) && near(rl2.t, r0.t, 2), JSON.stringify({ r0, ru, rl2 }));
+  ok(`${T} drag + expand / restore, reload: size kept`, near(rl2.w, ru.w, 2) && (fullH || near(rl2.h, ru.h, 2)), JSON.stringify({ ru, rl2 }));
+
+  // 3. a position stored by an older version is ignored and dropped
+  const legacy = { left: Math.round(r0.l + 60), top: Math.round(r0.t + 70), width: Math.round(r0.w - 20), height: Math.round(r0.h - 30) };
+  await p.evaluate(v => localStorage.setItem('carljr-chat-window', JSON.stringify(v)), legacy);
+  const rl3 = await reload();
+  const st3 = await stored(p);
+  ok(`${T} old stored left/top ignored: default spot`, near(rl3.l, r0.l, 2) && near(rl3.t, r0.t, 2), JSON.stringify({ r0, legacy, rl3 }));
+  ok(`${T} old stored size still used`, near(rl3.w, legacy.width, 2) && (fullH || near(rl3.h, legacy.height, 2)), JSON.stringify({ legacy, rl3 }));
+  ok(`${T} old stored left/top cleared from storage`, st3 && !('left' in st3) && !('top' in st3) && near(st3.width, legacy.width, 1), JSON.stringify(st3));
+  ok(`${T} no console errors`, p._errs.length === 0, JSON.stringify(p._errs.slice(0, 3)));
+  await p.close();
+}
+
 const DEVICES = [
   { name: 'phone-390x844', w: 390, h: 844, touch: true, phone: true, ua: ANDROID },
   { name: 'phone-844x390', w: 844, h: 390, touch: true, phone: true, landscapePhone: true, ua: ANDROID },
@@ -312,8 +368,9 @@ const DEVICES = [
 ];
 const want = n => !ONLY || ONLY.split(',').some(o => n.startsWith(o));
 for (const dev of DEVICES) if (want(dev.name)) await touchSuite(dev);
+for (const dev of DEVICES) if (want(dev.name)) await persistSuite(dev);
 if (want('phone-390x844')) await phoneKeyboard(DEVICES[0]);
-for (const dev of [{ name: 'desktop-1280x800', w: 1280, h: 800 }, { name: 'desktop-1920x1080', w: 1920, h: 1080 }]) if (want(dev.name)) await desktopSuite(dev);
+for (const dev of [{ name: 'desktop-1280x800', w: 1280, h: 800 }, { name: 'desktop-1920x1080', w: 1920, h: 1080 }]) if (want(dev.name)) { await desktopSuite(dev); await persistSuite(dev); }
 await b.close();
 const fails = results.filter(r => r.startsWith('FAIL'));
 console.log(`\n${results.length - fails.length}/${results.length} passed`);
