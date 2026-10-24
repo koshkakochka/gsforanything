@@ -19,6 +19,7 @@ import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { initSceneExport } from './exporter.js';
 import { createTwinSticks } from './twinSticks.js';
 import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, ORBIT_TARGET, isTextEntry } from './cameraControls.js';
+import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
 // p5.js sketch import (paste / file / zip / URL -> panel in the scene). Self-contained;
 // it only uses the window.gs* hooks set up next to gsCreateP5Surface below.
 import './p5Import.js';
@@ -711,6 +712,30 @@ arPlacementRoot.name = 'arPlacementRoot';
 scene.add(arPlacementRoot);
 window.arPlacementRoot = arPlacementRoot;
 
+// Origin rotation (Environment tab, originGizmo.js): the frame the scene's
+// content lives in. It sits at the origin inside arPlacementRoot, so Walk-in-AR
+// still moves it as a whole. While it is rotated, everything scene code adds to
+// `scene` is moved in here every frame (keeping its local transform, so code
+// keeps working in scene coordinates); the player rig, panels, system lights
+// and `hud` stay outside. Identity rotation leaves content directly under `scene`.
+const gsOriginRoot = new THREE.Group();
+gsOriginRoot.name = 'gsOriginRoot';
+arPlacementRoot.add(gsOriginRoot);
+window.gsOriginRoot = gsOriginRoot;
+let originRotation = null; // createOriginRotation(), set up with the Environment tab below
+// Scene code removes with scene.remove(obj); that must still work for objects
+// that were moved into the origin / AR placement group.
+{
+	const sceneRemove = scene.remove;
+	scene.remove = function (...objects) {
+		for (const o of objects) {
+			if (o && o.parent && o.parent !== this && (o.parent === gsOriginRoot || o.parent === arPlacementRoot)) o.parent.remove(o);
+			else sceneRemove.call(this, o);
+		}
+		return this;
+	};
+}
+
 let arPlacementMarker = null; // subtle ring shown only in Walk-in-AR
 let arDragging = false;
 let arDragPointerId = null;
@@ -880,9 +905,41 @@ function raycastGround(clientX, clientY, out) {
 	return _arRaycaster.ray.intersectPlane(_arGroundPlane, out) !== null;
 }
 
-/** Parent for world content: AR placement root while Walk-in-AR is active. */
+/** Parent for world content: the origin root while it is rotated or Walk-in-AR is active. */
 function getWorldContentParent() {
-	return mobileXRMode === 'ar' ? arPlacementRoot : scene;
+	return mobileXRMode === 'ar' || originRotationActive() ? gsOriginRoot : scene;
+}
+
+function originRotationActive() {
+	return !!originRotation && !originRotation.isIdentity();
+}
+
+/** Every top-level user object: under the scene root, the AR placement group
+ *  and the origin root (clear, export, hot-reload attribution all use this). */
+function userContentRoots() {
+	const out = [];
+	for (const child of scene.children) {
+		if (child === player || child === arPlacementRoot || systemObjectIds.has(child.uuid)) continue;
+		out.push(child);
+	}
+	for (const parent of [arPlacementRoot, gsOriginRoot]) {
+		for (const child of parent.children) {
+			if (child === arPlacementMarker || child === gsOriginRoot || systemObjectIds.has(child.uuid)) continue;
+			out.push(child);
+		}
+	}
+	return out;
+}
+
+/** Move scene-root content into the (rotated) origin root, keeping each
+ *  object's local transform: scene code places things in scene coordinates,
+ *  so they land where the code meant inside the rotated frame. */
+function adoptSceneContentIntoOrigin() {
+	for (const child of gatherMovableSceneRoots()) {
+		if (child.userData && child.userData.gsWorldLocked) continue;
+		if (menuPriorityRoots.includes(child)) continue;
+		gsOriginRoot.add(child);
+	}
 }
 
 function gatherMovableSceneRoots() {
@@ -899,14 +956,19 @@ function gatherMovableSceneRoots() {
 
 function adoptSceneContentIntoArPlacement() {
 	for (const child of gatherMovableSceneRoots()) {
-		arPlacementRoot.attach(child);
+		gsOriginRoot.attach(child);
 	}
 }
 
 function releaseArPlacementContentToScene() {
 	for (const child of [...arPlacementRoot.children]) {
-		if (child === arPlacementMarker) continue;
+		if (child === arPlacementMarker || child === gsOriginRoot) continue;
 		scene.attach(child);
+	}
+	// A rotated origin keeps its content (it is the scene's frame); otherwise
+	// hand it back to the scene root where the AR placement left it.
+	if (!originRotationActive()) {
+		for (const child of [...gsOriginRoot.children]) scene.attach(child);
 	}
 }
 
@@ -1605,15 +1667,9 @@ let pendingExportCombined = false;
 // GLB / FBX export (exporter.js). Roots = everything clearUserObjects would
 // remove: user content under the scene root and the Walk-in-AR placement group.
 const sceneModelExport = initSceneExport({
-	getRoots: () => {
-		const roots = scene.children.filter((c) => !systemObjectIds.has(c.uuid) && c !== player && c !== arPlacementRoot);
-		if (typeof arPlacementRoot !== 'undefined' && arPlacementRoot) {
-			for (const c of arPlacementRoot.children) {
-				if (c !== arPlacementMarker && !systemObjectIds.has(c.uuid)) roots.push(c);
-			}
-		}
-		return roots;
-	},
+	// World transforms are exported, so a rotated origin is baked in (the file
+	// matches what is on screen).
+	getRoots: () => userContentRoots(),
 	getSceneName: () => loadedScenes.filter((sc) => sc.active).map((sc) => sc.name).filter(Boolean).join(' + ') || 'GS scene',
 	notify: (text, kind) => updateStatus(text, kind),
 	isImmersive: () => renderer.xr.isPresenting
@@ -2006,16 +2062,12 @@ function clearUserObjects() {
 			disposeRecursive(child);
 		}
 	}
-	// Walk-in-AR may have adopted user meshes under arPlacementRoot (a system
-	// object), so also strip those — keep the placement marker itself.
-	if (typeof arPlacementRoot !== 'undefined' && arPlacementRoot) {
-		for (let i = arPlacementRoot.children.length - 1; i >= 0; i--) {
-			const child = arPlacementRoot.children[i];
-			if (child === arPlacementMarker) continue;
-			if (systemObjectIds.has(child.uuid)) continue;
-			arPlacementRoot.remove(child);
-			disposeRecursive(child);
-		}
+	// Walk-in-AR / the origin rotation may have adopted user meshes under
+	// arPlacementRoot or gsOriginRoot (system objects), so also strip those —
+	// keep the placement marker and the origin root itself.
+	for (const child of userContentRoots()) {
+		if (child.parent) child.parent.remove(child);
+		disposeRecursive(child);
 	}
 	window._vrAnimations = [];
 	const overlay = document.getElementById('overlay-root');
@@ -2030,10 +2082,8 @@ function clearUserObjects() {
 /** Remove every user-placed object from the live 3D scene. Keeps imported
  *  scene files in the Scenes list (unchecked), Files library, and Community. */
 function clearSceneContent() {
-	const userRoots = scene.children.filter(c => !systemObjectIds.has(c.uuid)).length;
-	const arExtras = (arPlacementRoot
-		? arPlacementRoot.children.filter(c => c !== arPlacementMarker && !systemObjectIds.has(c.uuid)).length
-		: 0);
+	const userRoots = userContentRoots().length;
+	const arExtras = 0;
 	const activeCount = loadedScenes.filter(s => s.active).length;
 	const sessionCount = executedCodeBlocks.length;
 	if (userRoots + arExtras + activeCount + sessionCount === 0) {
@@ -2105,6 +2155,7 @@ function buildSceneData(name) {
 		createdAt: new Date().toISOString(),
 		thumbnail: pendingExportThumbnail || '',
 		codeBlocks,
+		...originRotationForScene(), // { originRotation } only when rotated
 		...GSMerge.sceneCredits(loadedScenes) // mergedFrom / credits of a merged scene
 	};
 }
@@ -2175,6 +2226,7 @@ function addLoadedScene(data, fallbackName) {
 	};
 	loadedScenes.push(sc);
 	recenterOrbitPivot();
+	applySceneOriginRotation(data);
 
 	// Execute the scene's code blocks (async; surface failures via console)
 	sc.codeBlocks.forEach((code, i) => {
@@ -2384,7 +2436,7 @@ async function uploadCurrentSceneToCommunity() {
 		updateStatus(`Uploaded "${data.scene?.name || name}" to community`, 'connected');
 		refreshCommunityScenes();
 		const share = sharePayloadFromMeta(data.scene || { name, id: data.id }, data);
-		lastUploadedShare = { sig: JSON.stringify(sceneData.codeBlocks), share };
+		lastUploadedShare = { sig: shareSignature(sceneData.codeBlocks), share };
 		showShareModal(share);
 		return share;
 	}).catch(err => {
@@ -2402,10 +2454,11 @@ let lastUploadedShare = null;
 function shareCurrentScene() {
 	if (displayOnlyMode) return Promise.resolve(null);
 	const active = loadedScenes.filter(s => s.active);
-	const sig = JSON.stringify(buildSceneData('').codeBlocks);
+	const sig = shareSignature(buildSceneData('').codeBlocks);
 	let share = null;
 	if (active.length === 1 && active[0].communityId && executedCodeBlocks.length === 0
-		&& JSON.stringify(active[0].codeBlocks) === active[0].communitySig) {
+		&& JSON.stringify(active[0].codeBlocks) === active[0].communitySig
+		&& JSON.stringify(originRotationActive() ? originRotation.rotation : null) === (active[0].communityOrigin ?? 'null')) {
 		share = sharePayloadFromMeta({ id: active[0].communityId, name: active[0].name }, active[0]);
 	} else if (lastUploadedShare && lastUploadedShare.sig === sig) {
 		share = lastUploadedShare.share;
@@ -2700,6 +2753,7 @@ function upsertCommunityLoadedScene(data, fallbackName, key) {
 		if (data.id) sc.communityId = data.id;
 	}
 	sc.communitySig = JSON.stringify(sc.codeBlocks); // shareCurrentScene: unchanged since load?
+	sc.communityOrigin = JSON.stringify(isIdentityOriginRotation(data.originRotation) ? null : normalizeOriginRotation(data.originRotation));
 	if (data.editorUrl) sc.editorUrl = data.editorUrl;
 	if (data.viewUrl) sc.viewUrl = data.viewUrl;
 	if (Array.isArray(data.mergedFrom)) sc.mergedFrom = data.mergedFrom;
@@ -2760,6 +2814,7 @@ function loadCommunityScene(cs, { mode = communityLoadMode } = {}) {
 				// Replace in place: one entry, world blanked, code run once.
 				blankLiveSceneForCommunityLoad();
 				const sc = upsertCommunityLoadedScene(data, data.name || name, resolvedKey);
+				applySceneOriginRotation(data, { replace: true });
 				await runLoadedSceneCode(sc);
 				finishCommunityLoadUi();
 				updateStatus(`Loaded "${sc.name}"`, 'connected');
@@ -3564,17 +3619,7 @@ function compileVrBlock(code) {
 }
 
 function liveUserRoots() {
-	const out = [];
-	for (const child of scene.children) {
-		if (!systemObjectIds.has(child.uuid)) out.push(child);
-	}
-	if (typeof arPlacementRoot !== 'undefined' && arPlacementRoot) {
-		for (const child of arPlacementRoot.children) {
-			if (child === arPlacementMarker || systemObjectIds.has(child.uuid)) continue;
-			out.push(child);
-		}
-	}
-	return out;
+	return userContentRoots();
 }
 
 function newBlockRuntime(key, code) {
@@ -3681,7 +3726,12 @@ function syncAmmoBodyToObject(obj, vel) {
 	try {
 		obj.updateWorldMatrix(true, false);
 		const p = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
-		obj.matrixWorld.decompose(p, q, sc);
+		// Physics runs in the scene's own frame: relative to the origin root
+		// when the object lives under it (rotated origin / Walk-in-AR).
+		let inOrigin = false;
+		for (let a = obj.parent; a; a = a.parent) if (a === gsOriginRoot) { inOrigin = true; break; }
+		if (inOrigin) new THREE.Matrix4().copy(gsOriginRoot.matrixWorld).invert().multiply(obj.matrixWorld).decompose(p, q, sc);
+		else obj.matrixWorld.decompose(p, q, sc);
 		const t = body.getWorldTransform();
 		t.getOrigin().setValue(p.x, p.y, p.z);
 		const bq = t.getRotation();
@@ -3831,6 +3881,8 @@ function reanchorStrayObjects() {
 			}
 		}
 	}
+	// A rotated origin takes new scene-root content (in scene coordinates).
+	if (originRotationActive()) adoptSceneContentIntoOrigin();
 	// While Walk-in-AR is active, also pull newly added scene-root content into
 	// the draggable placement group so chat-generated objects stay with the scene.
 	if (mobileXRMode === 'ar') adoptSceneContentIntoArPlacement();
@@ -5022,6 +5074,75 @@ document.addEventListener('change', (e) => {
 }
 
 // ============================================================================
+// Origin rotation (Environment tab → Origin rotation; originGizmo.js)
+// ============================================================================
+// Rotates gsOriginRoot (the scene's content frame) about the origin. Saved in
+// localStorage for this browser, and with the scene (`originRotation`
+// { yaw, pitch, roll } in degrees) in scene files and Community uploads, so
+// share links keep it. Scenes without the field load unrotated. Physics runs
+// in the scene's own frame, so gravity turns with the scene; exports bake the
+// rotation in (they use world transforms).
+const ORIGIN_ROTATION_STORAGE_KEY = 'gs.originRotation';
+const _originViewQ = new THREE.Quaternion();
+originRotation = createOriginRotation({
+	THREE,
+	root: gsOriginRoot,
+	getViewQuaternion: () => {
+		const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+		return cam.getWorldQuaternion(_originViewQ);
+	},
+	onChange: (rot, why) => {
+		if (!isIdentityOriginRotation(rot)) adoptSceneContentIntoOrigin();
+		if (why !== 'load') {
+			try { localStorage.setItem(ORIGIN_ROTATION_STORAGE_KEY, JSON.stringify(rot)); } catch { /* storage blocked */ }
+		}
+		// The VR menu mirror only repaints while presenting (and runs before
+		// its state is initialised when a saved rotation loads at startup).
+		if (renderer.xr.isPresenting) vrWindows?.byName("menu")?.markDirty();
+	},
+	onRedraw: () => { if (renderer.xr.isPresenting) vrWindows?.byName("menu")?.markDirty(); }
+});
+{
+	const mount = document.getElementById('dchat-origin');
+	if (mount) originRotation.mount(mount);
+	let saved = null;
+	try { saved = JSON.parse(localStorage.getItem(ORIGIN_ROTATION_STORAGE_KEY) || 'null'); } catch { saved = null; }
+	if (saved) originRotation.set(normalizeOriginRotation(saved), 'load');
+}
+
+/** A loaded scene brings its own origin rotation when it is the only thing in
+ *  the scene (replace / first load); layering onto other content keeps the
+ *  current one. Scenes saved before 0.98 have none (= unrotated). */
+function applySceneOriginRotation(data, { replace = false } = {}) {
+	const others = loadedScenes.filter((sc) => sc.active).length - 1 + executedCodeBlocks.length;
+	if (!replace && others > 0) return;
+	originRotation.set(normalizeOriginRotation(data && data.originRotation), 'scene');
+}
+
+function originRotationForScene() {
+	return originRotationActive() ? { originRotation: originRotation.rotation } : {};
+}
+
+/** Signature for "has this scene changed since it was shared?" */
+function shareSignature(codeBlocks) {
+	return JSON.stringify([codeBlocks, originRotationActive() ? originRotation.rotation : null]);
+}
+
+window.gsOrigin = {
+	/** The group scene content lives in while the origin is rotated. */
+	root: gsOriginRoot,
+	get rotation() { return originRotation.rotation; },
+	set: (r) => originRotation.set(r),
+	reset: () => originRotation.reset(),
+	alignAxis: (axis, sign = 1) => originRotation.alignAxis(axis, sign),
+	/** World point (e.g. the camera position or a raycast hit) → scene coordinates. */
+	toLocal: (v) => { gsOriginRoot.updateWorldMatrix(true, false); return gsOriginRoot.worldToLocal(v.clone()); },
+	/** Scene coordinates → world point. */
+	toWorld: (v) => { gsOriginRoot.updateWorldMatrix(true, false); return gsOriginRoot.localToWorld(v.clone()); },
+	_gizmo: originRotation
+};
+
+// ============================================================================
 // Environment (2D / 3D) + Dependencies (THREE.js / ammo.js / p5.js)
 // ============================================================================
 // The dependency loader itself lives in index.html (it has to run before this
@@ -5498,6 +5619,10 @@ function buildGsSettingsNote() {
 		} else {
 			lines.push('ammo.js is switched off in Dependencies: only use it if the user asks for real physics; simple hand-written motion is fine otherwise.');
 		}
+	}
+	if (originRotationActive()) {
+		const r = originRotation.rotation;
+		lines.push(`Origin rotation: the user turned the scene's frame (yaw ${r.yaw}°, pitch ${r.pitch}°, roll ${r.roll}°) in Environment. Keep writing in scene coordinates with scene.add(...) as usual (floor y = 0); the app rotates it. Convert world points (camera position, raycast hits) with gsOrigin.toLocal(v) before using them as positions.`);
 	}
 	lines.push("Game controllers (Xbox, PlayStation, other USB/Bluetooth pads): `gsGamepad.connected`, `gsGamepad.axis('leftX' | 'leftY' | 'rightX' | 'rightY')` (-1..1, deadzone applied, up is negative), `gsGamepad.button('A' | 'B' | 'X' | 'Y' | 'LB' | 'RB' | 'LT' | 'RT' | 'View' | 'Menu' | 'LS' | 'RS' | 'Up' | 'Down' | 'Left' | 'Right')` (0..1), `gsGamepad.pressed(name)`, `gsGamepad.justPressed(name)` (true for one frame), `gsGamepad.onButton(name, fn)`, `gsGamepad.rumble(ms, strength)`. The sticks move the editor camera by default; set `gsGamepad.captureCamera = true` when the scene uses the sticks itself (a game character, a vehicle). Headset (WebXR) controllers are separate and are not covered by gsGamepad.");
 	return lines.join('\n');
@@ -7610,6 +7735,11 @@ renderer.setAnimationLoop((time) => {
 			// Silently skip broken animation functions
 		}
 	}
+
+	// Rotated origin: pull anything scene code added to `scene` this frame into
+	// the origin root, and repaint the Environment gizmo if the view turned.
+	if (originRotationActive()) adoptSceneContentIntoOrigin();
+	originRotation.tick(renderer.xr.isPresenting);
 
 	// Re-apply after user animations so children parented to the menu this
 	// frame (and any material swapped onto a panel) still render on layer 1.

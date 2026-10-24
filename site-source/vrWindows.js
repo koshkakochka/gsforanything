@@ -27,6 +27,11 @@ export const HTML_PAINT_MIN_MS = 66;             // cap repaints at ~15/s while 
 export const HTML_PAINT_IDLE_MS = 2000;          // safety refresh for CSS-only changes
 const SCROLL_DRAG_PX = 8;
 const HOVER_MIN_MS = 50;
+// Synthetic pointer event at a window point (ray drags on data-gs-ray-drag widgets).
+const rayPointer = (type, p, pointerId, button, buttons) => new PointerEvent(type, {
+	bubbles: true, cancelable: true, composed: true, pointerId, pointerType: 'mouse',
+	isPrimary: true, button, buttons, clientX: p.x, clientY: p.y
+});
 const ACTIONABLE = 'button, a, label, select, input, textarea, summary, [data-action], [role="button"], [role="radio"], [role="tab"], .menu-btn';
 const SOURCE_CLASS = 'html-in-canvas-source';
 
@@ -302,6 +307,17 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			if (!p) return false;
 			const el = win.elementAt(p.x, p.y);
 			if (!el || blocked(el)) return false;
+			// Widgets that need a real drag (the Env tab's origin gizmo, marked
+			// data-gs-ray-drag) get pointer events that follow the ray while the
+			// trigger is held.
+			const dragTarget = el.closest('[data-gs-ray-drag]');
+			if (dragTarget && source.contains(dragTarget)) {
+				const pointerId = 20 + hand;
+				win.drag[hand] = { uv: { x: uv.x, y: uv.y }, pointerTarget: dragTarget, pointerId, moved: true };
+				dragTarget.dispatchEvent(rayPointer('pointerdown', p, pointerId, 0, 1));
+				markDirty();
+				return true;
+			}
 			const scroll = win.scrollableAt(el);
 			if (!scroll) return false;
 			win.drag[hand] = {
@@ -320,6 +336,13 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 
 		win.moveDrag = (hand, uv) => {
 			const d = win.drag[hand];
+			if (d && d.pointerTarget) {
+				const p = win.pointFromUV(uv);
+				if (p) d.pointerTarget.dispatchEvent(rayPointer('pointermove', p, d.pointerId, -1, 1));
+				d.uv = { x: uv.x, y: uv.y };
+				markDirty();
+				return;
+			}
 			if (!d || !d.scroller.isConnected) { win.drag[hand] = null; return; }
 			const p = win.pointFromUV(uv);
 			if (!p) return;
@@ -336,6 +359,12 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			const d = win.drag[hand];
 			if (!d) return;
 			win.drag[hand] = null;
+			if (d.pointerTarget) {
+				const p = win.pointFromUV(d.uv);
+				d.pointerTarget.dispatchEvent(rayPointer('pointerup', p || { x: 0, y: 0 }, d.pointerId, 0, 0));
+				win.tick(true);
+				return;
+			}
 			if (!d.moved) win.click(d.uv);
 			else win.tick(true);
 		};
