@@ -6220,11 +6220,10 @@ function saveDesktopChatSize() {
 	if (desktopChat.classList.contains('expanded')) return;
 	// Off-screen while painted into VR; don't persist the parked rect.
 	if (desktopChat.classList.contains('html-in-canvas-source')) return;
+	// Size only: the window always opens at its default spot after a reload.
 	try {
 		const rect = desktopChat.getBoundingClientRect();
 		localStorage.setItem(CHAT_SIZE_KEY, JSON.stringify({
-			left: rect.left,
-			top: rect.top,
 			width: rect.width,
 			height: rect.height
 		}));
@@ -6339,32 +6338,33 @@ function syncDesktopChatViewportVars(box, shift) {
 	}
 }
 
+// Restores the saved size only. The window always opens at its default spot
+// (the CSS top/left); left/top saved by older versions are ignored and
+// dropped from storage. If the saved size would run past the viewport from
+// the default spot, the window is nudged in (phones: fitDesktopChatToViewport).
 function restoreDesktopChatSize() {
 	try {
 		const raw = localStorage.getItem(CHAT_SIZE_KEY);
 		if (!raw) return;
 		const s = JSON.parse(raw);
-		if (!s || !s.width || !s.height) return;
+		if (!s || !s.width || !s.height) {
+			localStorage.removeItem(CHAT_SIZE_KEY);
+			return;
+		}
+		if ('left' in s || 'top' in s) {
+			localStorage.setItem(CHAT_SIZE_KEY, JSON.stringify({ width: s.width, height: s.height }));
+		}
 		const narrow = isNarrowDesktopChat();
 		let w = s.width;
 		let h = s.height;
-		let left = s.left ?? 24;
-		let top = s.top ?? 80;
 		if (narrow) {
-			// Saved left/top are visual coordinates. Do not trust them on their
-			// own: clamp into the current visual viewport, then convert to the
-			// fixed-position coordinate system.
 			const box = desktopChatVisibleBox();
 			if (box.right - box.left >= 32 && box.bottom - box.top >= 32) {
-				const clamped = clampRectToBox({ left, top, width: w, height: h }, box, 280, 220);
-				const shift = desktopChatFixedShift();
+				const clamped = clampRectToBox({ left: box.left, top: box.top, width: w, height: h }, box, 280, 220);
 				w = clamped.width;
 				h = clamped.height;
-				left = clamped.left + shift.left;
-				top = clamped.top + shift.top;
 			}
 		} else {
-			const margin = 0;
 			const vw = window.innerWidth;
 			const vh = window.innerHeight;
 			const maxW = Math.max(280, vw - 16);
@@ -6373,14 +6373,21 @@ function restoreDesktopChatSize() {
 			const minH = Math.min(220, maxH);
 			w = Math.max(minW, Math.min(maxW, s.width));
 			h = Math.max(minH, Math.min(maxH, s.height));
-			left = Math.max(margin, Math.min(vw - w - margin, s.left ?? 24));
-			top = Math.max(margin, Math.min(vh - h - margin, s.top ?? 80));
 		}
+		desktopChat.style.removeProperty('left');
+		desktopChat.style.removeProperty('top');
 		desktopChat.style.width = `${w}px`;
 		desktopChat.style.height = `${h}px`;
-		desktopChat.style.left = `${left}px`;
-		desktopChat.style.top = `${top}px`;
-		if (narrow) desktopChat.style.right = 'auto';
+		if (narrow) {
+			desktopChat.style.right = 'auto';
+			return; // fitDesktopChatToViewport() runs next and clamps it in.
+		}
+		// Desktop / tablets: default spot, nudged in only if the size overflows.
+		const rect = desktopChat.getBoundingClientRect();
+		const left = Math.max(0, Math.min(rect.left, window.innerWidth - rect.width));
+		const top = Math.max(0, Math.min(rect.top, window.innerHeight - rect.height));
+		if (Math.abs(left - rect.left) > 0.5) desktopChat.style.left = `${left}px`;
+		if (Math.abs(top - rect.top) > 0.5) desktopChat.style.top = `${top}px`;
 	} catch { /* ignore */ }
 }
 
@@ -6710,8 +6717,8 @@ updateKeyboardState('init');
 // tapping, and the canvas keeps the camera.
 // The VR mirror (html-in-canvas-source) and the phone keyboard layout
 // (html.gs-kb-chat, header hidden) never start a drag.
-// A drag is not saved: after a reload the window is back at its default (or
-// last resized) place, as before. Only resize persists (saveDesktopChatSize).
+// A drag is not saved: after any reload the window is back at its default
+// spot. Only the size from resize persists (saveDesktopChatSize).
 const DRAG_TOUCH_SLOP = 6;      // px a finger may wobble before a press becomes a drag
 
 (function initDesktopChatDrag() {
