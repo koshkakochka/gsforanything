@@ -295,6 +295,10 @@ function drawFormValue(ctx, el, style, ox, oy) {
 	// whole program as one line on every refresh.
 	const textFill = style.webkitTextFillColor || style.color;
 	if (!faded && isTransparent(textFill)) return;
+	if (el instanceof HTMLTextAreaElement && el.hasAttribute('data-gs-wrap')) {
+		drawWrappedFieldText(ctx, el, style, text, faded, x, y, rect);
+		return;
+	}
 	// A form field shows one line here; never hand fillText a whole document.
 	const nl = text.indexOf('\n');
 	if (nl >= 0) text = text.slice(0, nl);
@@ -310,6 +314,67 @@ function drawFormValue(ctx, el, style, ox, oy) {
 	ctx.clip();
 	ctx.fillText(text, x + padL, midY);
 	ctx.restore();
+}
+
+// Auto-growing chat textareas (data-gs-wrap): wrap the value the way the
+// browser does (newlines kept, words wrapped, over-long words broken) and
+// follow the element's own scroll, so the snapshot matches what is typed.
+function wrapFieldLines(ctx, text, width) {
+	const lines = [];
+	for (const para of String(text).split('\n')) {
+		if (!para) { lines.push(''); continue; }
+		let line = '';
+		for (const word of para.split(/(\s+)/)) {
+			if (!word) continue;
+			const trial = line + word;
+			if (!line || ctx.measureText(trial).width <= width) { line = trial; }
+			else { lines.push(line.replace(/\s+$/, '')); line = /^\s+$/.test(word) ? '' : word; }
+			// Break a single word longer than the line.
+			while (line && ctx.measureText(line).width > width && line.length > 1) {
+				let n = line.length - 1;
+				while (n > 1 && ctx.measureText(line.slice(0, n)).width > width) n--;
+				lines.push(line.slice(0, n));
+				line = line.slice(n);
+			}
+		}
+		lines.push(line);
+	}
+	return lines;
+}
+
+function drawWrappedFieldText(ctx, el, style, text, faded, x, y, rect) {
+	const padL = parseFloat(style.paddingLeft) || 0;
+	const padR = parseFloat(style.paddingRight) || 0;
+	const padT = parseFloat(style.paddingTop) || 0;
+	const bl = parseFloat(style.borderLeftWidth) || 0;
+	const bt = parseFloat(style.borderTopWidth) || 0;
+	const lh = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 14) * 1.25;
+	const innerW = Math.max(1, el.clientWidth - padL - padR);
+	if (text.length > 4000) text = text.slice(-4000);
+	const lines = wrapFieldLines(ctx, text, innerW);
+	let fadedColor = 'rgba(255,255,255,0.72)';
+	if (faded) {
+		try { fadedColor = getComputedStyle(el, '::placeholder').color || fadedColor; } catch { /* no pseudo support */ }
+	}
+	ctx.fillStyle = faded ? fadedColor : (style.color || '#fff');
+	ctx.textBaseline = 'middle';
+	ctx.save();
+	ctx.beginPath();
+	ctx.rect(x + bl, y + bt, Math.max(0, el.clientWidth), Math.max(0, el.clientHeight));
+	ctx.clip();
+	const top = y + bt + padT - (el.scrollTop || 0);
+	const first = Math.max(0, Math.floor((el.scrollTop - padT) / lh));
+	const last = Math.min(lines.length, Math.ceil((el.scrollTop + el.clientHeight) / lh) + 1);
+	for (let i = first; i < last; i++) ctx.fillText(lines[i], x + bl + padL, top + i * lh + lh / 2);
+	ctx.restore();
+	// Scrolled: a thin thumb on the right, like the page's thin scrollbar.
+	if (el.scrollHeight > el.clientHeight + 1) {
+		const trackH = el.clientHeight - 4;
+		const thumbH = Math.max(12, trackH * el.clientHeight / el.scrollHeight);
+		const t = el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight);
+		ctx.fillStyle = 'rgba(255,255,255,0.35)';
+		ctx.fillRect(x + rect.width - bl - 5, y + bt + 2 + t * (trackH - thumbH), 3, thumbH);
+	}
 }
 
 function paintNode(ctx, el, ox, oy, clip) {

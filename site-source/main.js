@@ -6045,24 +6045,78 @@ initModelSelect();
 // ============================================================================
 // Desktop (non-AR) chat window: movable, resizable, floats over the 3D scene
 // ============================================================================
-desktopSendButton.addEventListener('click', () => {
+// Chat inputs (Scene and Theme) are auto-growing <textarea>s: one line to
+// start, growing with the text up to a max height (CSS max-height, ~7 lines)
+// and scrolling after that. Any .value write (send clears it, voice input,
+// the VR keyboard, tests) re-measures, because the instance's value setter
+// is wrapped. A width change (panel resize, phone rotation) re-measures too.
+function autosizeChatTextarea(el) {
+	if (!el || !(el instanceof HTMLTextAreaElement)) return;
+	if (!el.clientWidth) return; // hidden (other sub-tab): measured when shown
+	const cs = getComputedStyle(el);
+	const max = parseFloat(cs.maxHeight);
+	const border = (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+	if (!el.value) {
+		// Empty: one line (rows=1); a long placeholder must not make it grow.
+		el.style.height = '';
+		el.style.overflowY = 'hidden';
+		return;
+	}
+	const prevScroll = el.scrollTop;
+	el.style.height = 'auto'; // (resets scrollTop; restored below)
+	const want = el.scrollHeight + border;
+	const capped = Number.isFinite(max) && want > max;
+	el.style.height = `${Math.ceil(capped ? max : want)}px`;
+	el.style.overflowY = capped ? 'auto' : 'hidden';
+	if (!capped) return;
+	// Typing at the end keeps the caret line in view once it scrolls.
+	el.scrollTop = el.selectionEnd === el.value.length ? el.scrollHeight : prevScroll;
+}
+
+// Enter sends; Shift+Enter (or Alt/Ctrl+Enter) adds a new line. On phones the
+// on-screen keyboard has no Shift+Enter, so Enter adds a new line there and
+// the Send button sends (the input keeps focus, so the keyboard stays up).
+function chatEnterSends(e) {
+	if (e.key !== 'Enter' || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return false;
+	if (e.isComposing || e.keyCode === 229) return false; // IME candidate confirm
+	if (e.isTrusted && _phoneLayout && !xrSessionActive()) return false;
+	return true;
+}
+
+function initChatTextarea(el, onSend) {
+	if (!el || !(el instanceof HTMLTextAreaElement)) return;
+	const proto = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+	Object.defineProperty(el, 'value', {
+		configurable: true,
+		get() { return proto.get.call(this); },
+		set(v) { proto.set.call(this, v); autosizeChatTextarea(this); }
+	});
+	el.addEventListener('input', () => autosizeChatTextarea(el));
+	el.addEventListener('keydown', (e) => {
+		if (!chatEnterSends(e)) return;
+		e.preventDefault();
+		onSend();
+	});
+	if (typeof ResizeObserver !== 'undefined') {
+		let lastW = 0;
+		new ResizeObserver(() => {
+			const w = el.clientWidth;
+			if (w && Math.abs(w - lastW) > 0.5) { lastW = w; autosizeChatTextarea(el); }
+		}).observe(el);
+	}
+	autosizeChatTextarea(el);
+}
+
+function sendDesktopChatInput() {
 	const message = desktopChatInput.value.trim();
 	if (message || pendingAttachments.length > 0) {
 		sendMessage(message);
 		desktopChatInput.value = '';
 	}
-});
+}
 
-desktopChatInput.addEventListener('keydown', (e) => {
-	if (e.key === 'Enter' && !e.shiftKey) {
-		e.preventDefault();
-		const message = desktopChatInput.value.trim();
-		if (message || pendingAttachments.length > 0) {
-			sendMessage(message);
-			desktopChatInput.value = '';
-		}
-	}
-});
+desktopSendButton.addEventListener('click', sendDesktopChatInput);
+initChatTextarea(desktopChatInput, sendDesktopChatInput);
 
 desktopAttachButton?.addEventListener('click', () => desktopAttachInput.click());
 desktopAttachInput?.addEventListener('change', (e) => {
@@ -6836,11 +6890,7 @@ if (dchatThemeRememberCommunity) {
 	dchatThemeRememberCommunity.addEventListener('change', () => setRememberTheme(dchatThemeRememberCommunity.checked));
 }
 if (dchatThemeChatSend) dchatThemeChatSend.addEventListener('click', sendThemeChat);
-if (dchatThemeChatInput) {
-	dchatThemeChatInput.addEventListener('keydown', (e) => {
-		if (e.key === 'Enter') { e.preventDefault(); sendThemeChat(); }
-	});
-}
+if (dchatThemeChatInput) initChatTextarea(dchatThemeChatInput, () => sendThemeChat());
 
 
 // ============================================================================
@@ -7526,7 +7576,8 @@ function dispatchKeyToDomField(el, key) {
 			renderVrKeyboard();
 			break;
 		case 'enter':
-			if (el instanceof HTMLTextAreaElement) write('\n');
+			// The chat inputs are textareas too, but their Enter is Send.
+			if (el instanceof HTMLTextAreaElement && !el.classList.contains('gs-chat-textarea')) write('\n');
 			else el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
 			break;
 	}
