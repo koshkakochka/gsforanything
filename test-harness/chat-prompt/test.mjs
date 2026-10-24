@@ -169,23 +169,24 @@ const CUSTOM_LINE = '\n\n## House style\nAlways add a small brass plaque that re
   const s2 = await st(p2);
   ok(`${H} a second tab picks up the saved prompt`, s2.value === CUSTOM && s2.badge === 'Custom prompt active');
   await p2.close();
-  // headset panel
+  // headset: since 0.981 the VR menu window paints this same DOM view (vrWindows.js),
+  // so the editor is the one under test; only Reset differs (no confirm() in XR).
   await click(p, '[data-chat-section="prompt"]'); await sleep(200);
-  const vr = await p.evaluate(() => { const c = window.gsChatPanel.canvas; return { url: c.toDataURL('image/png'), w: c.width, h: c.height }; });
-  fs.writeFileSync(`${SHOT_DIR}/vr-panel-prompt-custom.png`, Buffer.from(vr.url.split(',')[1], 'base64'));
-  ok(`${H} headset panel draws the Prompt section`, vr.url.length > 20000, String(vr.url.length));
-  await p.evaluate(() => window.gsChatPanel.xrSend('Prefer warm evening light.')); await sleep(200);
+  await p.evaluate(() => { window.gsChatPanel.simulateHeadset = true; });
+  await p.evaluate(() => { const e = document.getElementById('dchat-prompt-editor'); e.value += '\n\nPrefer warm evening light.'; e.dispatchEvent(new Event('input', { bubbles: true })); });
+  await click(p, '#dchat-prompt-save'); await sleep(200);
   s = await st(p);
-  ok(`${H} headset Send in Prompt appends a line to the prompt`, s.stored === CUSTOM + '\n\nPrefer warm evening light.' && s.value === s.stored);
-  await p.evaluate(() => window.gsChatPanel.action('prompt:reset'));
-  ok(`${H} headset Reset needs a second press`, (await st(p)).stored !== null);
-  await p.evaluate(() => window.gsChatPanel.action('prompt:reset')); await sleep(100);
+  ok(`${H} headset: an edit typed into the editor saves`, s.stored === CUSTOM + '\n\nPrefer warm evening light.' && s.value === s.stored);
+  let confirms = 0; const onXrDlg = (d) => { confirms++; d.dismiss(); }; p.on("dialog", onXrDlg);
+  await click(p, '#dchat-prompt-reset'); await sleep(100);
+  ok(`${H} headset Reset needs a second press (no confirm dialog)`, (await st(p)).stored !== null && confirms === 0 && await p.$eval('#dchat-prompt-reset', b => b.textContent) === 'Press again to reset');
+  await click(p, '#dchat-prompt-reset'); await sleep(100);
   s = await st(p);
-  ok(`${H} headset Reset (second press) restores the default`, s.stored === null && s.badge === 'Default prompt');
-  const vr2 = await p.evaluate(() => window.gsChatPanel.canvas.toDataURL('image/png'));
-  fs.writeFileSync(`${SHOT_DIR}/vr-panel-prompt-default.png`, Buffer.from(vr2.split(',')[1], 'base64'));
+  ok(`${H} headset Reset (second press) restores the default`, s.stored === null && s.badge === 'Default prompt' && confirms === 0 && await p.$eval('#dchat-prompt-reset', b => b.textContent) === 'Reset to default');
+  p.off("dialog", onXrDlg);
+  await p.evaluate(() => { window.gsChatPanel.simulateHeadset = false; });
   await p.evaluate(() => window.gsChatPanel.action('chatSection:scene'));
-  ok(`${H} headset subtab back to Scene`, await p.evaluate(() => window.gsChatPanel.section === 'scene' && document.getElementById('dchat-chat-section-scene').classList.contains('active')));
+  ok(`${H} menu action back to Scene`, await p.evaluate(() => window.gsChatPanel.section === 'scene' && document.getElementById('dchat-chat-section-scene').classList.contains('active')));
   // the lighting recipe in the prompt runs as written
   req = await sendChat(p, 'make it photoreal');
   await p.waitForFunction(() => window.__litOk === true, { timeout: 15000 }).catch(() => {});

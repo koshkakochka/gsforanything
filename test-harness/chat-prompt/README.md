@@ -27,8 +27,9 @@ request bodies) and runs `worker/index.js` in Node with a mocked `fetch`.
   survives a reload and reaches a second tab; over 40,000 characters can't be
   saved; saving the default text counts as the default.
 - Reset to default asks first (Cancel keeps it, OK resets).
-- Headset panel: the Prompt section draws, Send appends a line, Reset takes two
-  presses, the subtabs switch the DOM sections too.
+- Headset (since 0.981 the VR menu window paints this same DOM view): an edit
+  saves, Reset takes two presses and opens no confirm() dialog, menu actions
+  switch the DOM sections.
 - The lighting recipe the prompt describes runs as a vr-exec block
   (RoomEnvironment dynamic import, PCFSoft shadows, ACES, named default lights).
 - Phones (390x844, 844x390): 16px editor, 44px buttons, Android-style keyboard
