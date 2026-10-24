@@ -70,7 +70,10 @@ export function effectivePrompt() {
 // ---------------------------------------------------------------------------
 // DOM view (Chat → Prompt). Elements live in index.html.
 
-export function initPromptEditor({ onOpenPrompt, onStatus } = {}) {
+// In a headset the same DOM view is painted into the VR menu window
+// (vrWindows.js) and edited with the VR keyboard; window.confirm() is not
+// usable there, so Reset asks for a second press instead.
+export function initPromptEditor({ onOpenPrompt, onStatus, inHeadset } = {}) {
 	const $ = (id) => document.getElementById(id);
 	const editor = $('dchat-prompt-editor');
 	if (!editor) return null;
@@ -137,8 +140,28 @@ export function initPromptEditor({ onOpenPrompt, onStatus } = {}) {
 		return true;
 	}
 	function revert() { fill(true); say('Unsaved changes discarded.'); refresh(); }
+	const resetLabel = resetBtn?.textContent || 'Reset to default';
+	let resetArmedUntil = 0;
+	let resetArmTimer = 0;
+	function disarmReset() {
+		resetArmedUntil = 0;
+		clearTimeout(resetArmTimer);
+		if (resetBtn) resetBtn.textContent = resetLabel;
+	}
 	function reset() {
-		if (isCustom() && !window.confirm('Reset the Scene chat prompt to the default? Your custom prompt will be deleted.')) return false;
+		if (isCustom()) {
+			if (inHeadset?.()) {
+				if (performance.now() >= resetArmedUntil) {
+					resetArmedUntil = performance.now() + 4000;
+					if (resetBtn) resetBtn.textContent = 'Press again to reset';
+					say('Press Reset again to delete your custom prompt.');
+					clearTimeout(resetArmTimer);
+					resetArmTimer = setTimeout(disarmReset, 4000);
+					return false;
+				}
+				disarmReset();
+			} else if (!window.confirm('Reset the Scene chat prompt to the default? Your custom prompt will be deleted.')) return false;
+		}
 		clearCustom();
 		fill(true);
 		say('Reset to the default prompt.', 'ok');

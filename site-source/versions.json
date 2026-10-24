@@ -1,9 +1,22 @@
 {
   "versions": [
     {
-      "id": "0.980",
-      "label": "GS 0.980 (this build)",
+      "id": "0.981",
+      "label": "GS 0.981 (this build)",
       "url": null,
+      "date": "2026-10-24",
+      "changes": [
+        "VR: every window (the menu, the keyboard and the Hide/Show UI button) is now drawn one way, by painting the real page UI with the HTML canvas renderer. The old hand-drawn VR panels (chat, input bar, side panel, Scenes panel, keyboard, status badge) are gone, and the VR menu is the full menu with all its tabs.",
+        "VR: all windows share the same size scale, frame, Fixed/Follow anchoring and controller behaviour: an amber ring shows what the ray points at, trigger clicks, trigger-drag or the thumbstick (with locomotion off) scrolls, and pointing at a text field opens the in-scene keyboard with a cyan typing ring.",
+        "VR: better contrast. Text, tab labels, buttons, borders, the selected-tab outline and placeholders now meet WCAG AA in the headset (0 of 39 measured pairs fail, down from 19 of 34), and a renderer bug that drew some labels black on dark backgrounds is fixed.",
+        "VR: the Lay down / Sit up option is removed from the VR menu. A saved lay-down setting is cleared and the view starts upright.",
+        "VR: Chat → Prompt now works in the headset like on desktop: you can edit the prompt with the VR keyboard and Save it, and Reset asks for a second press instead of a pop-up."
+      ]
+    },
+    {
+      "id": "0.980",
+      "label": "GS 0.980",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-10-24",
       "changes": [
         "Chat has a new Prompt tab next to Scene and Theme. It shows the full default Scene chat prompt, and you can edit it, Save it, Discard unsaved edits or Reset to default. Your edit is kept in this browser and used for Scene chat and community merges; a \"Custom prompt active\" badge shows while it is on.",
