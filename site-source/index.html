@@ -449,9 +449,21 @@
 			flex-shrink: 0;
 			border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 			user-select: none;
+			-webkit-user-select: none;
+			/* The header is the drag handle (main.js initDesktopChatDrag, Pointer
+			   Events): a finger drag here moves the window instead of panning or
+			   zooming the page. Only the header: messages, tabs and fields keep
+			   their own scrolling. Buttons in it still get taps. */
+			touch-action: none;
+			-webkit-touch-callout: none;
 		}
 
 		#desktop-chat-header:active { cursor: grabbing; }
+		#desktop-chat.dragging #desktop-chat-header { cursor: grabbing; }
+		/* Touch screens (tablets too): a handle at least 44px tall. */
+		@media (pointer: coarse) {
+			#desktop-chat-header { min-height: 44px; box-sizing: border-box; }
+		}
 
 		#desktop-chat-tabs {
 			display: flex;
@@ -2509,7 +2521,7 @@
 
 	<!-- Desktop (non-AR) chat window: movable, resizable, floats over the 3D scene -->
 	<div id="desktop-chat">
-		<div id="desktop-chat-header">
+		<div id="desktop-chat-header" title="Drag to move. Double-click or double-tap to reset the window.">
 			<div id="desktop-chat-title"><span class="dot"></span>Claude</div>
 			<div id="desktop-chat-header-buttons">
 				<button id="desktop-chat-expand" title="Expand window" aria-label="Expand window">&#x26F6;</button>

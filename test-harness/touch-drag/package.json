@@ -1,0 +1,9 @@
+{
+  "name": "gs-touch-drag-test",
+  "private": true,
+  "type": "module",
+  "description": "Headless check that the GS window drags by its header with touch (phone 390x844 + landscape, tablets 820x1180 / 1024x1366 portrait and landscape) via CDP Input.dispatchTouchEvent, plus desktop mouse regressions.",
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}

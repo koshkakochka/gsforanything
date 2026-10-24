@@ -6701,61 +6701,141 @@ updateKeyboardState('init');
 	edge();
 })();
 
-// Dragging via the header. Uses document-level mouse listeners (rather than
-// pointer capture) so it keeps tracking even if the cursor briefly leaves the
-// header while moving fast.
-(function initDesktopChatDrag() {
-	let dragging = false;
-	let startX = 0, startY = 0, startLeft = 0, startTop = 0;
-	let shiftLeft = 0, shiftTop = 0;
-	let phoneBox = null;
+// Dragging via the header, with any pointer: mouse on desktop, a finger on
+// phones and tablets, a pen. Pointer Events + setPointerCapture keep tracking
+// when the pointer leaves the header mid-drag (the job the document-level
+// mouse listeners used to do), and the header has touch-action:none
+// (index.html) so a finger drag moves the window instead of panning the page.
+// Only the header is a handle: messages, tabs and fields keep scrolling and
+// tapping, and the canvas keeps the camera.
+// A double-tap / double-click on the header (not its buttons) puts the window
+// back at its default place and size, for when it was dragged somewhere awkward.
+// The VR mirror (html-in-canvas-source) and the phone keyboard layout
+// (html.gs-kb-chat, header hidden) never start a drag.
+const DRAG_TOUCH_SLOP = 6;      // px a finger may wobble before a press becomes a drag
+const DOUBLE_TAP_MS = 350;
+const DOUBLE_TAP_PX = 24;
 
-	desktopChatHeader.addEventListener('mousedown', (e) => {
-		if (e.target.closest('#desktop-chat-header-buttons')) return;
-		dragging = true;
-		desktopChat.classList.add('dragging');
-		const rect = desktopChat.getBoundingClientRect();
-		startX = e.clientX;
-		startY = e.clientY;
-		startLeft = rect.left;
-		startTop = rect.top;
-		if (isNarrowDesktopChat()) {
-			const shift = desktopChatFixedShift();
-			shiftLeft = shift.left;
-			shiftTop = shift.top;
-			phoneBox = desktopChatVisibleBox();
-		} else {
-			shiftLeft = 0;
-			shiftTop = 0;
-			phoneBox = null;
+function resetDesktopChatWindow() {
+	if (desktopChat.classList.contains('expanded')) toggleDesktopChatExpanded();
+	for (const prop of ['left', 'top', 'right', 'width', 'height']) desktopChat.style.removeProperty(prop);
+	try { localStorage.removeItem(CHAT_SIZE_KEY); } catch { /* ignore */ }
+	fitDesktopChatToViewport();
+}
+
+(function initDesktopChatDrag() {
+	let drag = null; // { pointerId, type, startX, startY, startLeft, startTop, shiftLeft, shiftTop, phone, moved }
+	let lastTap = null; // { time, x, y, type }
+	let suppressClickUntil = 0;
+	document.addEventListener('click', (e) => {
+		if (!suppressClickUntil) return;
+		const late = performance.now() > suppressClickUntil;
+		suppressClickUntil = 0;
+		if (late) return;
+		e.preventDefault();
+		e.stopPropagation();
+	}, true);
+
+	function dragBox(phone) {
+		if (phone) return desktopChatVisibleBox();
+		// Desktop and tablets: the visible viewport (same as the window unless
+		// pinch-zoomed), with no margin, as before.
+		const vv = window.visualViewport;
+		const w = Math.min(window.innerWidth, vv && vv.width > 0 ? vv.width : window.innerWidth);
+		const h = Math.min(window.innerHeight, vv && vv.height > 0 ? vv.height : window.innerHeight);
+		return { left: 0, top: 0, right: w, bottom: h };
+	}
+
+	function endDrag(e, cancelled) {
+		if (!drag || (e && e.pointerId !== drag.pointerId)) return;
+		const d = drag;
+		drag = null;
+		desktopChat.classList.remove('dragging');
+		try { if (desktopChatHeader.hasPointerCapture(d.pointerId)) desktopChatHeader.releasePointerCapture(d.pointerId); } catch { /* ignore */ }
+		if (d.moved) {
+			lastTap = null;
+			fitDesktopChatToViewport();
+			if (!cancelled) saveDesktopChatSize();
+			return;
 		}
+		if (cancelled || !e) return;
+		// A press that didn't move: count it toward a double-tap reset.
+		const now = performance.now();
+		if (lastTap && lastTap.type === d.type && now - lastTap.time < DOUBLE_TAP_MS &&
+			Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < DOUBLE_TAP_PX) {
+			lastTap = null;
+			resetDesktopChatWindow();
+			// The window jumps under the finger before this tap's click fires;
+			// don't let that click land on whatever is there now (Minimize!).
+			suppressClickUntil = now + 500;
+		} else {
+			lastTap = { time: now, x: e.clientX, y: e.clientY, type: d.type };
+		}
+	}
+
+	desktopChatHeader.addEventListener('pointerdown', (e) => {
+		if (drag) return;
+		if (!e.isPrimary) return;
+		if (e.pointerType === 'mouse' && e.button !== 0) return;
+		if (e.target.closest('#desktop-chat-header-buttons')) return;
+		if (desktopChat.classList.contains('expanded')) return;
+		if (desktopChat.classList.contains('html-in-canvas-source')) return;
+		if (typeof _kbChat !== 'undefined' && _kbChat) return;
+		const rect = desktopChat.getBoundingClientRect();
+		const phone = isNarrowDesktopChat();
+		const shift = phone ? desktopChatFixedShift() : { left: 0, top: 0 };
+		drag = {
+			pointerId: e.pointerId,
+			type: e.pointerType || 'mouse',
+			startX: e.clientX,
+			startY: e.clientY,
+			startLeft: rect.left,
+			startTop: rect.top,
+			shiftLeft: shift.left,
+			shiftTop: shift.top,
+			phone,
+			moved: false
+		};
+		try { desktopChatHeader.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+		// No text selection / focus change from the header press.
 		e.preventDefault();
 	});
 
-	document.addEventListener('mousemove', (e) => {
-		if (!dragging) return;
-		const rect = desktopChat.getBoundingClientRect();
-		let newLeft = startLeft + (e.clientX - startX);
-		let newTop = startTop + (e.clientY - startY);
-		if (phoneBox) {
-			newLeft = Math.max(phoneBox.left, Math.min(phoneBox.right - rect.width, newLeft));
-			newTop = Math.max(phoneBox.top, Math.min(phoneBox.bottom - rect.height, newTop));
-			desktopChat.style.left = `${newLeft + shiftLeft}px`;
-			desktopChat.style.top = `${newTop + shiftTop}px`;
-		} else {
-			newLeft = Math.max(0, Math.min(window.innerWidth - rect.width, newLeft));
-			newTop = Math.max(0, Math.min(window.innerHeight - rect.height, newTop));
-			desktopChat.style.left = `${newLeft}px`;
-			desktopChat.style.top = `${newTop}px`;
+	desktopChatHeader.addEventListener('pointermove', (e) => {
+		if (!drag || e.pointerId !== drag.pointerId) return;
+		const dx = e.clientX - drag.startX;
+		const dy = e.clientY - drag.startY;
+		if (!drag.moved) {
+			const slop = drag.type === 'mouse' ? 0 : DRAG_TOUCH_SLOP;
+			if (Math.abs(dx) <= slop && Math.abs(dy) <= slop) return;
+			drag.moved = true;
+			desktopChat.classList.add('dragging');
+			if (drag.phone) {
+				// The phone layout stretches the panel between left and right
+				// insets (width:auto). Pin its size so it moves instead of
+				// squeezing as left changes.
+				const r = desktopChat.getBoundingClientRect();
+				desktopChat.style.width = `${Math.round(r.width)}px`;
+				desktopChat.style.height = `${Math.round(r.height)}px`;
+				desktopChat.style.right = 'auto';
+			}
 		}
+		const rect = desktopChat.getBoundingClientRect();
+		const box = dragBox(drag.phone);
+		let newLeft = drag.startLeft + dx;
+		let newTop = drag.startTop + dy;
+		newLeft = Math.max(box.left, Math.min(box.right - rect.width, newLeft));
+		newTop = Math.max(box.top, Math.min(box.bottom - rect.height, newTop));
+		desktopChat.style.left = `${Math.round(newLeft + drag.shiftLeft)}px`;
+		desktopChat.style.top = `${Math.round(newTop + drag.shiftTop)}px`;
+		if (e.cancelable) e.preventDefault();
 	});
 
-	document.addEventListener('mouseup', () => {
-		if (!dragging) return;
-		dragging = false;
-		desktopChat.classList.remove('dragging');
-		fitDesktopChatToViewport();
-	});
+	desktopChatHeader.addEventListener('pointerup', (e) => endDrag(e, false));
+	desktopChatHeader.addEventListener('pointercancel', (e) => endDrag(e, true));
+	desktopChatHeader.addEventListener('lostpointercapture', (e) => { if (drag && e.pointerId === drag.pointerId) endDrag(null, false); });
+	// The phone keyboard taking over the panel, or entering VR, ends a drag.
+	window.addEventListener('blur', () => { if (drag) endDrag(null, true); });
 })();
 
 // Resizing via any edge or corner (hold and drag). Each handle carries a
