@@ -84,6 +84,13 @@ await p.evaluate((t) => { const e = document.getElementById('desktop-chat-input'
 for (const c of ['z']) await key(`#gs-vr-keyboard [data-kb-value="${c}"]`);
 a = await H();
 check('Capped at max height in VR, scrolled to the caret', a.oy === 'auto' && a.st + a.ch >= a.sh - 2, a);
+const vrLay = await p.evaluate(() => {
+  const e = document.getElementById('desktop-chat-input'), send = document.getElementById('desktop-send-button'), row = e.parentElement, h = document.getElementById('desktop-chat-messages');
+  const r = e.getBoundingClientRect(), s = send.getBoundingClientRect(), rr = row.getBoundingClientRect(), hr = h.getBoundingClientRect(), gap = parseFloat(getComputedStyle(row).columnGap) || 0;
+  return { fill: Math.abs(r.left - rr.left) <= 1.5 && Math.abs(s.left - gap - r.right) <= 1.5 && Math.abs(s.right - rr.right) <= 1.5, ta: Math.round(r.height), hist: Math.round(hr.height) };
+});
+check('VR menu: capped textarea fills its row up to Send', vrLay.fill, vrLay);
+check(`VR menu: history keeps at least half the input+history space (${vrLay.hist}px vs input ${vrLay.ta}px)`, vrLay.hist >= vrLay.ta - 1, vrLay);
 const p2 = await p.evaluate(() => { const w = __t.win('menu'); w.tick(true); return w.canvas.toDataURL('image/png'); });
 fs.writeFileSync(`${SHOT_DIR}/vr-menu-texture-capped.png`, Buffer.from(p2.split(',')[1], 'base64'));
 // Send on the VR keyboard

@@ -6050,24 +6050,66 @@ initModelSelect();
 // and scrolling after that. Any .value write (send clears it, voice input,
 // the VR keyboard, tests) re-measures, because the instance's value setter
 // is wrapped. A width change (panel resize, phone rotation) re-measures too.
+// The input may also take at most CHAT_INPUT_PANEL_FRAC of its chat window
+// and at most CHAT_INPUT_SHARE_FRAC of the space it shares with the history
+// (data-gs-history), so a long draft never squeezes the history to a strip.
+const CHAT_INPUT_PANEL_FRAC = 0.35;
+const CHAT_INPUT_SHARE_FRAC = 0.5;
+const CHAT_HISTORY_MIN_PX = 72;
+function chatTextareaHistory(el) {
+	const sel = el.dataset.gsHistory;
+	return sel ? document.querySelector(sel) : null;
+}
+function chatTextareaCap(el, cs) {
+	let max = parseFloat(cs.maxHeight);
+	if (!Number.isFinite(max)) max = Infinity;
+	const lh = parseFloat(cs.lineHeight) || 18;
+	const chrome = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
+		+ (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+	const min = Math.max(parseFloat(cs.minHeight) || 0, lh + chrome);
+	const panel = el.closest('#desktop-chat');
+	if (panel && panel.clientHeight) max = Math.min(max, panel.clientHeight * CHAT_INPUT_PANEL_FRAC);
+	const hist = chatTextareaHistory(el);
+	if (hist && hist.clientHeight) {
+		const shared = hist.getBoundingClientRect().height + el.getBoundingClientRect().height;
+		max = Math.min(max, shared * CHAT_INPUT_SHARE_FRAC);
+	}
+	if (!Number.isFinite(max)) return max;
+	// Whole lines only. At least two when the history still keeps
+	// CHAT_HISTORY_MIN_PX next to them (a short window), else one.
+	let floorLines = 1;
+	if (hist && hist.clientHeight) {
+		const shared = hist.getBoundingClientRect().height + el.getBoundingClientRect().height;
+		if (shared - (2 * lh + chrome) >= CHAT_HISTORY_MIN_PX) floorLines = 2;
+	}
+	const lines = Math.max(floorLines, Math.floor((max - chrome + 0.5) / lh));
+	return Math.max(min, Math.min(parseFloat(cs.maxHeight) || Infinity, lines * lh + chrome));
+}
+
 function autosizeChatTextarea(el) {
 	if (!el || !(el instanceof HTMLTextAreaElement)) return;
 	if (!el.clientWidth) return; // hidden (other sub-tab): measured when shown
 	const cs = getComputedStyle(el);
-	const max = parseFloat(cs.maxHeight);
 	const border = (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+	const hist = chatTextareaHistory(el);
+	const histAtBottom = !!hist && hist.scrollTop + hist.clientHeight >= hist.scrollHeight - 4;
+	const keepHistory = () => { if (histAtBottom) hist.scrollTop = hist.scrollHeight; };
 	if (!el.value) {
 		// Empty: one line (rows=1); a long placeholder must not make it grow.
 		el.style.height = '';
 		el.style.overflowY = 'hidden';
+		keepHistory();
 		return;
 	}
 	const prevScroll = el.scrollTop;
 	el.style.height = 'auto'; // (resets scrollTop; restored below)
 	const want = el.scrollHeight + border;
+	el.style.height = '';
+	const max = chatTextareaCap(el, cs);
 	const capped = Number.isFinite(max) && want > max;
 	el.style.height = `${Math.ceil(capped ? max : want)}px`;
 	el.style.overflowY = capped ? 'auto' : 'hidden';
+	keepHistory();
 	if (!capped) return;
 	// Typing at the end keeps the caret line in view once it scrolls.
 	el.scrollTop = el.selectionEnd === el.value.length ? el.scrollHeight : prevScroll;
@@ -6103,6 +6145,15 @@ function initChatTextarea(el, onSend) {
 			const w = el.clientWidth;
 			if (w && Math.abs(w - lastW) > 0.5) { lastW = w; autosizeChatTextarea(el); }
 		}).observe(el);
+		// The cap follows the chat window's height (panel resize, keyboard).
+		const panel = el.closest('#desktop-chat');
+		if (panel) {
+			let lastH = 0;
+			new ResizeObserver(() => {
+				const h = panel.clientHeight;
+				if (h && Math.abs(h - lastH) > 0.5) { lastH = h; autosizeChatTextarea(el); }
+			}).observe(panel);
+		}
 	}
 	autosizeChatTextarea(el);
 }

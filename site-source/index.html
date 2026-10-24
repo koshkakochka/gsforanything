@@ -1297,7 +1297,20 @@
 			min-height: calc(var(--gs-chat-lh) + 20px);
 			max-height: calc(var(--gs-chat-lh) * var(--gs-chat-max-lines) + 20px);
 			scrollbar-width: thin;
+			/* Fill the compose row up to the Send button. A textarea's
+			   intrinsic width comes from its cols, so pin both the flex basis
+			   and the width rather than relying on flex-grow alone. */
+			flex: 1 1 0%;
+			width: 100%;
+			min-width: 0;
+			max-width: none;
+			margin: 0;
 		}
+		#desktop-chat-compose-row > .gs-chat-textarea,
+		#dchat-theme-chat-row > .gs-chat-textarea { flex: 1 1 0%; width: 100%; min-width: 0; }
+		/* History bubbles keep their full height when the input grows; the
+		   history scrolls instead. */
+		.dchat-msg, .dchat-theme-msg { flex-shrink: 0; }
 		.gs-chat-textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 		#desktop-chat-compose-row { align-items: flex-end; }
 
@@ -2542,7 +2555,7 @@
 						<button id="desktop-mic-button" title="Toggle always-on voice input">🎤</button>
 					</div>
 					<div id="desktop-chat-compose-row">
-						<textarea id="desktop-chat-input" class="gs-chat-textarea" rows="1" placeholder="Ask about the scene..." autocomplete="off" enterkeyhint="send" aria-label="Message" data-gs-wrap></textarea>
+						<textarea id="desktop-chat-input" class="gs-chat-textarea" rows="1" placeholder="Ask about the scene..." autocomplete="off" enterkeyhint="send" aria-label="Message" data-gs-wrap data-gs-history="#desktop-chat-messages"></textarea>
 						<button id="desktop-send-button">Send</button>
 					</div>
 				</div>
@@ -2590,7 +2603,7 @@
 					<div id="dchat-theme-attachments" hidden></div>
 					<div id="dchat-theme-chat-row">
 						<button type="button" id="theme-files-picker-button" title="Choose from Files library">📄</button>
-						<textarea id="dchat-theme-chat-input" class="gs-chat-textarea" rows="1" placeholder="e.g. dark emerald glass, soft rounded tabs..." autocomplete="off" enterkeyhint="send" aria-label="Theme request" data-gs-wrap></textarea>
+						<textarea id="dchat-theme-chat-input" class="gs-chat-textarea" rows="1" placeholder="e.g. dark emerald glass, soft rounded tabs..." autocomplete="off" enterkeyhint="send" aria-label="Theme request" data-gs-wrap data-gs-history="#dchat-theme-chat-messages"></textarea>
 						<button type="button" id="dchat-theme-chat-send">Send</button>
 					</div>
 				</div>
