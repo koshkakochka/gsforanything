@@ -6603,33 +6603,14 @@ updateKeyboardState('init');
 // (index.html) so a finger drag moves the window instead of panning the page.
 // Only the header is a handle: messages, tabs and fields keep scrolling and
 // tapping, and the canvas keeps the camera.
-// A double-tap / double-click on the header (not its buttons) puts the window
-// back at its default place and size, for when it was dragged somewhere awkward.
 // The VR mirror (html-in-canvas-source) and the phone keyboard layout
 // (html.gs-kb-chat, header hidden) never start a drag.
+// A drag is not saved: after a reload the window is back at its default (or
+// last resized) place, as before. Only resize persists (saveDesktopChatSize).
 const DRAG_TOUCH_SLOP = 6;      // px a finger may wobble before a press becomes a drag
-const DOUBLE_TAP_MS = 350;
-const DOUBLE_TAP_PX = 24;
-
-function resetDesktopChatWindow() {
-	if (desktopChat.classList.contains('expanded')) toggleDesktopChatExpanded();
-	for (const prop of ['left', 'top', 'right', 'width', 'height']) desktopChat.style.removeProperty(prop);
-	try { localStorage.removeItem(CHAT_SIZE_KEY); } catch { /* ignore */ }
-	fitDesktopChatToViewport();
-}
 
 (function initDesktopChatDrag() {
 	let drag = null; // { pointerId, type, startX, startY, startLeft, startTop, shiftLeft, shiftTop, phone, moved }
-	let lastTap = null; // { time, x, y, type }
-	let suppressClickUntil = 0;
-	document.addEventListener('click', (e) => {
-		if (!suppressClickUntil) return;
-		const late = performance.now() > suppressClickUntil;
-		suppressClickUntil = 0;
-		if (late) return;
-		e.preventDefault();
-		e.stopPropagation();
-	}, true);
 
 	function dragBox(phone) {
 		if (phone) return desktopChatVisibleBox();
@@ -6641,31 +6622,13 @@ function resetDesktopChatWindow() {
 		return { left: 0, top: 0, right: w, bottom: h };
 	}
 
-	function endDrag(e, cancelled) {
+	function endDrag(e) {
 		if (!drag || (e && e.pointerId !== drag.pointerId)) return;
 		const d = drag;
 		drag = null;
 		desktopChat.classList.remove('dragging');
 		try { if (desktopChatHeader.hasPointerCapture(d.pointerId)) desktopChatHeader.releasePointerCapture(d.pointerId); } catch { /* ignore */ }
-		if (d.moved) {
-			lastTap = null;
-			fitDesktopChatToViewport();
-			if (!cancelled) saveDesktopChatSize();
-			return;
-		}
-		if (cancelled || !e) return;
-		// A press that didn't move: count it toward a double-tap reset.
-		const now = performance.now();
-		if (lastTap && lastTap.type === d.type && now - lastTap.time < DOUBLE_TAP_MS &&
-			Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < DOUBLE_TAP_PX) {
-			lastTap = null;
-			resetDesktopChatWindow();
-			// The window jumps under the finger before this tap's click fires;
-			// don't let that click land on whatever is there now (Minimize!).
-			suppressClickUntil = now + 500;
-		} else {
-			lastTap = { time: now, x: e.clientX, y: e.clientY, type: d.type };
-		}
+		if (d.moved) fitDesktopChatToViewport();
 	}
 
 	desktopChatHeader.addEventListener('pointerdown', (e) => {
@@ -6726,11 +6689,11 @@ function resetDesktopChatWindow() {
 		if (e.cancelable) e.preventDefault();
 	});
 
-	desktopChatHeader.addEventListener('pointerup', (e) => endDrag(e, false));
-	desktopChatHeader.addEventListener('pointercancel', (e) => endDrag(e, true));
-	desktopChatHeader.addEventListener('lostpointercapture', (e) => { if (drag && e.pointerId === drag.pointerId) endDrag(null, false); });
+	desktopChatHeader.addEventListener('pointerup', (e) => endDrag(e));
+	desktopChatHeader.addEventListener('pointercancel', (e) => endDrag(e));
+	desktopChatHeader.addEventListener('lostpointercapture', (e) => { if (drag && e.pointerId === drag.pointerId) endDrag(null); });
 	// The phone keyboard taking over the panel, or entering VR, ends a drag.
-	window.addEventListener('blur', () => { if (drag) endDrag(null, true); });
+	window.addEventListener('blur', () => { if (drag) endDrag(null); });
 })();
 
 // Resizing via any edge or corner (hold and drag). Each handle carries a
