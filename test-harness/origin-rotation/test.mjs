@@ -182,13 +182,17 @@ for (const [name, vp] of [['desktop', DESKTOP], ['phone', PHONE]]) {
   s = await state(p);
   ok(`${H} Reset origin → unrotated, world = scene coordinates`, s.readout === 'Not rotated' && s.inputs.join() === '0,0,0' && near3(s.world, [0, 0.25, -2]), JSON.stringify(s));
 
-  // persistence across reload
+  // a reload resets the view: the rotation is not kept (0.986), and nothing is stored
   await p.evaluate(() => gsOrigin.set({ yaw: -60, pitch: 15, roll: 30 }));
   await p.reload({ waitUntil: 'networkidle2' }); await p.waitForFunction(() => window.gsSessionCode && window.gsOrigin, { timeout: 30000 }); await sleep(1500);
-  await p.evaluate((c) => gsSessionCode.add(c), BOX_CODE); await sleep(500);
   g = await showGizmo(p);
   s = await state(p);
-  ok(`${H} rotation persists across reload (fields + readout)`, s.rot.yaw === -60 && s.rot.pitch === 15 && s.rot.roll === 30 && s.inputs.join() === '-60,15,30' && s.readout.startsWith('Yaw -60'), JSON.stringify(s));
+  const storedRot = await p.evaluate(() => localStorage.getItem('gs.originRotation'));
+  ok(`${H} reload resets the rotation to unrotated (fields + readout)`, s.rot.yaw === 0 && s.rot.pitch === 0 && s.rot.roll === 0 && s.inputs.join() === '0,0,0' && s.readout === 'Not rotated' && storedRot === null, JSON.stringify({ s, storedRot }));
+  await p.evaluate(() => gsOrigin.set({ yaw: -60, pitch: 15, roll: 30 }));
+  await p.evaluate((c) => gsSessionCode.add(c), BOX_CODE); await sleep(500);
+  s = await state(p);
+  ok(`${H} rotation set again after reload (fields + readout)`, s.rot.yaw === -60 && s.rot.pitch === 15 && s.rot.roll === 30 && s.inputs.join() === '-60,15,30' && s.readout.startsWith('Yaw -60'), JSON.stringify(s));
   ok(`${H} content added after reload is adopted under the rotation`, s.parent === 'gsOriginRoot' && near3(s.local, [0, 0.25, -2]), JSON.stringify(s));
   await p.screenshot({ path: `${SHOT_DIR}/${name}-env-rotated.png` });
 

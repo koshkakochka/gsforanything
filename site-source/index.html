@@ -2440,9 +2440,9 @@
 		<!-- Scene file input (hidden). Note: "*" is not a valid accept value and
 		     made Chrome's file picker filter out everything, appearing to show
 		     only folders - only list real extensions/MIME types here. -->
-		<input type="file" id="scene-file-input" multiple accept=".vrscene,.json,application/json" />
+		<input autocomplete="off" type="file" id="scene-file-input" multiple accept=".vrscene,.json,application/json" />
 		<!-- Whole-folder import (hidden) -->
-		<input type="file" id="scene-folder-input" webkitdirectory directory multiple />
+		<input autocomplete="off" type="file" id="scene-folder-input" webkitdirectory directory multiple />
 
 		<!-- Export modal -->
 		<div id="export-modal">
@@ -2472,11 +2472,11 @@
 			<div id="share-modal-inner">
 				<h3 id="share-modal-title">Share Scene</h3>
 				<label class="share-modal-check">
-					<input type="checkbox" id="share-display-only" />
+					<input autocomplete="off" type="checkbox" id="share-display-only" />
 					<span>Display only — hide the chatbot, community panel, and editor UI so visitors just see the finished scene.</span>
 				</label>
 				<label for="share-url">Shareable URL</label>
-				<input type="text" id="share-url" readonly />
+				<input autocomplete="off" type="text" id="share-url" readonly />
 				<div class="share-rename-buttons">
 					<button id="share-close-btn" class="btn-secondary">Done</button>
 					<button id="share-copy-btn" class="btn-primary">Copy link</button>
@@ -2550,17 +2550,17 @@
 			<div id="dchat-chat-section-scene" class="dchat-chat-section active">
 				<div id="desktop-model-row">
 					<label for="desktop-model-select">Model:</label>
-					<select id="desktop-model-select"></select>
+					<select autocomplete="off" id="desktop-model-select"></select>
 					<button type="button" id="dchat-custom-prompt-pill" hidden title="A custom Scene chat prompt is active. Click to view or reset it.">✎ Custom prompt</button>
 				</div>
 				<div id="desktop-ollama-model-row" style="display:none;">
 					<label for="desktop-ollama-model-select">Local model:</label>
-					<select id="desktop-ollama-model-select"></select>
+					<select autocomplete="off" id="desktop-ollama-model-select"></select>
 				</div>
 				<div id="desktop-chat-messages"></div>
 				<div id="desktop-attachments" hidden></div>
 				<div id="desktop-chat-input-row">
-					<input type="file" id="desktop-attach-input" multiple accept="image/*,.txt,.md,.markdown,.json,.js,.jsx,.ts,.tsx,.py,.csv,.html,.htm,.css,.xml,.yaml,.yml,.log,.c,.cpp,.h,.hpp,.java,.go,.rs,.sh,.sql,.ini,.toml" hidden />
+					<input autocomplete="off" type="file" id="desktop-attach-input" multiple accept="image/*,.txt,.md,.markdown,.json,.js,.jsx,.ts,.tsx,.py,.csv,.html,.htm,.css,.xml,.yaml,.yml,.log,.c,.cpp,.h,.hpp,.java,.go,.rs,.sh,.sql,.ini,.toml" hidden />
 					<div id="desktop-chat-tools-row">
 						<button id="desktop-attach-button" title="Attach images or text files">📎</button>
 						<button type="button" id="desktop-files-picker-button" title="Choose from Files library">📄</button>
@@ -2606,7 +2606,7 @@
 				<div id="dchat-theme-chat">
 					<div class="dchat-section-label">Theme restyle chat</div>
 					<label class="dchat-theme-remember" title="Off by default. When checked, the last applied theme is saved and restored next visit.">
-						<input type="checkbox" id="dchat-theme-remember" />
+						<input autocomplete="off" type="checkbox" id="dchat-theme-remember" />
 						Remember theme
 					</label>
 					<div id="dchat-theme-chat-messages">
@@ -2645,20 +2645,20 @@
 				<div id="dchat-env-controls">
 					<div class="dchat-section-label" style="margin-bottom:8px">Background Color</div>
 					<div class="dchat-color-row">
-						<input type="color" id="dchat-color-picker" value="#6366f1" />
+						<input autocomplete="off" type="color" id="dchat-color-picker" value="#6366f1" />
 						<div id="dchat-color-preview"></div>
 					</div>
 					<div style="margin-top:12px">
 						<div class="dchat-section-label" style="margin-bottom:8px">Hue</div>
-						<input type="range" id="dchat-hue" class="dchat-env-range" min="0" max="360" value="220" />
+						<input autocomplete="off" type="range" id="dchat-hue" class="dchat-env-range" min="0" max="360" value="220" />
 					</div>
 					<div style="margin-top:12px">
 						<div class="dchat-section-label" style="margin-bottom:8px">Saturation</div>
-						<input type="range" id="dchat-saturation" class="dchat-env-range" min="0" max="100" value="15" />
+						<input autocomplete="off" type="range" id="dchat-saturation" class="dchat-env-range" min="0" max="100" value="15" />
 					</div>
 					<div style="margin-top:12px">
 						<div class="dchat-section-label" style="margin-bottom:8px">Brightness</div>
-						<input type="range" id="dchat-brightness" class="dchat-env-range" min="2" max="95" value="50" />
+						<input autocomplete="off" type="range" id="dchat-brightness" class="dchat-env-range" min="2" max="95" value="50" />
 					</div>
 					<div class="dchat-disabled-note" style="margin-top:8px;display:none">Background color is unavailable while AR/VR mode is active.</div>
 				</div>
@@ -2667,7 +2667,7 @@
 					<div style="font-size:12px;color:rgba(255,255,255,0.72);margin-bottom:8px">
 						Equirectangular image for lighting and optional background (.hdr, .exr, .jpg, .png).
 					</div>
-					<input type="file" id="dchat-hdri-file" accept=".hdr,.exr,.jpg,.jpeg,.png,.webp,image/*,application/octet-stream" hidden />
+					<input autocomplete="off" type="file" id="dchat-hdri-file" accept=".hdr,.exr,.jpg,.jpeg,.png,.webp,image/*,application/octet-stream" hidden />
 					<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
 						<button type="button" id="dchat-hdri-pick" class="dchat-btn accent">Load file</button>
 						<button type="button" id="dchat-hdri-clear" class="dchat-btn secondary">Clear</button>
@@ -2677,14 +2677,14 @@
 						<button type="button" id="dchat-hdri-url-load" class="dchat-btn secondary">Load URL</button>
 					</div>
 					<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:rgba(255,255,255,0.7);cursor:pointer;user-select:none;margin-bottom:6px">
-						<input type="checkbox" id="dchat-hdri-bg" checked />
+						<input autocomplete="off" type="checkbox" id="dchat-hdri-bg" checked />
 						Use as background (off = lighting only)
 					</label>
 					<div id="dchat-hdri-status" style="font-size:11px;color:rgba(255,255,255,0.72)"></div>
 				</div>
 				<div>
 					<div class="dchat-section-label" style="margin-bottom:8px">Navigation</div>
-					<select id="dchat-nav-type" style="width:100%; margin-bottom:6px;">
+					<select autocomplete="off" id="dchat-nav-type" style="width:100%; margin-bottom:6px;">
 						<option value="free">WASD (fly toward where you're looking)</option>
 						<option value="planar">First Person (ground-locked, Q/E sets height)</option>
 					</select>
@@ -2711,10 +2711,10 @@
 					<div class="dchat-origin-row">
 						<canvas id="dchat-origin-gizmo" data-gs-ray-drag width="180" height="180" role="img" aria-label="Origin rotation gizmo: drag to rotate the scene"></canvas>
 						<div class="dchat-origin-fields">
-							<label>Yaw&deg; <input type="number" id="dchat-origin-yaw" step="1" min="-180" max="180" value="0" inputmode="decimal" /></label>
-							<label>Pitch&deg; <input type="number" id="dchat-origin-pitch" step="1" min="-90" max="90" value="0" inputmode="decimal" /></label>
-							<label>Roll&deg; <input type="number" id="dchat-origin-roll" step="1" min="-180" max="180" value="0" inputmode="decimal" /></label>
-							<label class="dchat-origin-snap"><input type="checkbox" id="dchat-origin-snap" /> Snap 15&deg;</label>
+							<label>Yaw&deg; <input autocomplete="off" type="number" id="dchat-origin-yaw" step="1" min="-180" max="180" value="0" inputmode="decimal" /></label>
+							<label>Pitch&deg; <input autocomplete="off" type="number" id="dchat-origin-pitch" step="1" min="-90" max="90" value="0" inputmode="decimal" /></label>
+							<label>Roll&deg; <input autocomplete="off" type="number" id="dchat-origin-roll" step="1" min="-180" max="180" value="0" inputmode="decimal" /></label>
+							<label class="dchat-origin-snap"><input autocomplete="off" type="checkbox" id="dchat-origin-snap" /> Snap 15&deg;</label>
 						</div>
 					</div>
 					<div id="dchat-origin-readout" aria-live="polite">Not rotated</div>
@@ -2737,7 +2737,7 @@
 				<div class="dchat-section-label">Context files</div>
 				<p id="dchat-files-hint">Upload images or text files here to reuse as prompt context. In Chat, tap 📄 to pick from this library.</p>
 				<div id="dchat-files-toolbar">
-					<input type="file" id="dchat-files-input" multiple accept="image/*,.txt,.md,.markdown,.json,.js,.jsx,.ts,.tsx,.py,.csv,.html,.htm,.css,.xml,.yaml,.yml,.log,.c,.cpp,.h,.hpp,.java,.go,.rs,.sh,.sql,.ini,.toml" hidden />
+					<input autocomplete="off" type="file" id="dchat-files-input" multiple accept="image/*,.txt,.md,.markdown,.json,.js,.jsx,.ts,.tsx,.py,.csv,.html,.htm,.css,.xml,.yaml,.yml,.log,.c,.cpp,.h,.hpp,.java,.go,.rs,.sh,.sql,.ini,.toml" hidden />
 					<button type="button" id="dchat-files-upload" class="dchat-btn accent">Upload files</button>
 					<button type="button" id="dchat-files-clear" class="dchat-btn secondary">Clear all</button>
 				</div>
@@ -2749,7 +2749,7 @@
 			<div id="dchat-code">
 				<div id="dchat-code-toolbar">
 					<label title="Re-apply edits to the 3D scene as you type (debounced)">
-						<input type="checkbox" id="dchat-code-live" />
+						<input autocomplete="off" type="checkbox" id="dchat-code-live" />
 						Live updates
 					</label>
 					<button type="button" id="dchat-code-apply" class="dchat-btn accent">Apply</button>
@@ -2782,7 +2782,7 @@
 				<div id="dchat-community-section-themes" class="dchat-community-section">
 					<div id="dchat-themes-buttons"></div>
 					<label class="dchat-theme-remember" style="margin-top:8px" title="Off by default. When checked, the last applied theme is saved and restored next visit.">
-						<input type="checkbox" id="dchat-theme-remember-community" />
+						<input autocomplete="off" type="checkbox" id="dchat-theme-remember-community" />
 						Remember theme
 					</label>
 					<div id="dchat-themes-list"></div>
@@ -2838,7 +2838,7 @@
 				<div class="dchat-controls-help" data-camera-help="fly firstperson" hidden>
 					On-screen joysticks: left stick moves (up/down forward and back, sideways strafes), right stick looks around.
 					<label id="dchat-twin-sticks-opt">
-						<input type="checkbox" id="dchat-twin-sticks" checked />
+						<input autocomplete="off" type="checkbox" id="dchat-twin-sticks" checked />
 						Show on-screen joysticks
 					</label>
 				</div>

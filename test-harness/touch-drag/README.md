@@ -32,10 +32,10 @@ input still gives the keyboard layout with the input and Send above the
 keyboard; when it closes the window is back where it was dragged.
 
 Reload (every device above, touch or mouse): drag then corner-resize, reload ->
-default spot with the resized size; drag then expand / restore (back at the
-dragged spot in the same session), reload -> default spot, size kept; a
-left/top stored by an older version is ignored, its size used, and left/top
-dropped from storage. Storage only ever holds width/height.
+default spot and default size; drag then expand / restore (back at the
+dragged spot in the same session), reload -> default spot and size; a window
+rect stored by an older version is ignored and cleared. Nothing is stored
+(0.986: a refresh resets the whole view).
 
 Desktop mouse: drag by the cursor delta, clamp at the window edges (no margin,
 as before), right button and header buttons don't drag, a dragged position is
