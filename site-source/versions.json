@@ -1,9 +1,20 @@
 {
   "versions": [
     {
-      "id": "0.984",
-      "label": "GS 0.984 (this build)",
+      "id": "0.985",
+      "label": "GS 0.985 (this build)",
       "url": null,
+      "date": "2026-10-24",
+      "changes": [
+        "Community uploads and share links now keep the Environment HDRI (a link or a file from your computer) and its Use as background setting, and restore them when the scene loads. Scenes uploaded before this load as before and keep your own HDRI.",
+        "Use as background works right away: when a scene loads with an HDRI, the HDRI shows as the background immediately, even if the scene sets its own background colour, so you no longer need to click the checkbox twice.",
+        "A scene's HDRI doesn't replace your own saved HDRI: the next scene without one goes back to yours. If storing an HDRI file fails (very large files on vrclaudeinterface.vercel.app), the scene still uploads and opens with the default environment."
+      ]
+    },
+    {
+      "id": "0.984",
+      "label": "GS 0.984",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-10-24",
       "changes": [
         "Phones and tablets: drag the GS window around by its header with a finger, the same as with a mouse on desktop. Only the header moves the window, so the chat, tabs and fields still scroll normally, and on touch screens the header is at least 44px tall.",
