@@ -22,7 +22,7 @@ What it checks:
   Shift-drag (desktop) and the Snap 15° toggle snap to 15° (typed values too);
   typed yaw/pitch/roll (pitch clamped to ±90, roll wrapped to ±180, junk
   ignored); clicking/tapping an axis end (filled +, hollow −) turns that axis
-  toward the viewer, squared to 90°; Reset origin; persistence across reload;
+  toward the viewer, squared to 90°; Reset origin; a reload resets the rotation (0.986);
   content added after a reload is adopted; `scene.remove` on adopted objects;
   Orbit target stays at the origin and orbit drag still orbits (desktop); GLB
   export bakes the rotation in (and is back in scene coordinates after Reset);

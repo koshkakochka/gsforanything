@@ -1,0 +1,9 @@
+{
+  "name": "gs-view-reset-test",
+  "private": true,
+  "type": "module",
+  "description": "Headless check that a page refresh resets the whole view (camera, window rect, tabs, scroll, origin rotation, ...) while user content and preferences survive.",
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}

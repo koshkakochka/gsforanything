@@ -26,6 +26,33 @@ import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation
 import './p5Import.js';
 
 // ============================================================================
+// Every page load starts from the default view
+// ============================================================================
+// A refresh puts the whole view back to its defaults: camera position and zoom,
+// window position and size, expanded / hidden state, tabs, scroll positions,
+// origin rotation, VR window layout. Almost all of that only ever lived in
+// memory; the keys below are view state older versions stored, which are no
+// longer read or written and are cleared here so nothing comes back from them.
+// What the user made or chose on purpose stays (saved prompt, theme when
+// Remember theme is on, HDRI, camera mode, dependencies, 2D/3D, files...).
+// A share link (/s/:id, /e/:id, ?scene=) still opens its scene, with the
+// scene's own origin rotation, because that comes from the scene, not storage.
+const VIEW_STATE_STORAGE_KEYS = [
+	'carljr-chat-window',  // chat window size (and left/top before 0.984)
+	'gs.originRotation'    // Environment → Origin rotation (0.982–0.985)
+];
+function resetStoredViewState() {
+	try {
+		for (const key of VIEW_STATE_STORAGE_KEYS) localStorage.removeItem(key);
+	} catch { /* storage blocked */ }
+	// Don't let the browser scroll the page back to where it was.
+	try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch { /* ignore */ }
+	window.scrollTo(0, 0);
+}
+resetStoredViewState();
+window.gsViewStateKeys = VIEW_STATE_STORAGE_KEYS.slice();
+
+// ============================================================================
 // Configuration
 // ============================================================================
 const THUMBSTICK_DEADZONE = 0.15;
@@ -5113,13 +5140,13 @@ document.addEventListener('change', (e) => {
 // ============================================================================
 // Origin rotation (Environment tab → Origin rotation; originGizmo.js)
 // ============================================================================
-// Rotates gsOriginRoot (the scene's content frame) about the origin. Saved in
-// localStorage for this browser, and with the scene (`originRotation`
-// { yaw, pitch, roll } in degrees) in scene files and Community uploads, so
-// share links keep it. Scenes without the field load unrotated. Physics runs
+// Rotates gsOriginRoot (the scene's content frame) about the origin. Saved
+// with the scene (`originRotation` { yaw, pitch, roll } in degrees) in scene
+// files and Community uploads, so share links keep it. It is view state for
+// the browser: a page load always starts unrotated (see resetStoredViewState);
+// only a scene that carries its own rotation sets it. Scenes without the field load unrotated. Physics runs
 // in the scene's own frame, so gravity turns with the scene; exports bake the
 // rotation in (they use world transforms).
-const ORIGIN_ROTATION_STORAGE_KEY = 'gs.originRotation';
 const _originViewQ = new THREE.Quaternion();
 originRotation = createOriginRotation({
 	THREE,
@@ -5140,9 +5167,6 @@ originRotation = createOriginRotation({
 	},
 	onChange: (rot, why) => {
 		if (!isIdentityOriginRotation(rot)) adoptSceneContentIntoOrigin();
-		if (why !== 'load') {
-			try { localStorage.setItem(ORIGIN_ROTATION_STORAGE_KEY, JSON.stringify(rot)); } catch { /* storage blocked */ }
-		}
 		// The VR menu mirror only repaints while presenting (and runs before
 		// its state is initialised when a saved rotation loads at startup).
 		if (renderer.xr.isPresenting) vrWindows?.byName("menu")?.markDirty();
@@ -5152,9 +5176,6 @@ originRotation = createOriginRotation({
 {
 	const mount = document.getElementById('dchat-origin');
 	if (mount) originRotation.mount(mount);
-	let saved = null;
-	try { saved = JSON.parse(localStorage.getItem(ORIGIN_ROTATION_STORAGE_KEY) || 'null'); } catch { saved = null; }
-	if (saved) originRotation.set(normalizeOriginRotation(saved), 'load');
 }
 
 /** A loaded scene brings its own origin rotation when it is the only thing in
@@ -6245,7 +6266,6 @@ if (desktopChatExpandBtn) {
 	desktopChatExpandBtn.addEventListener('click', () => toggleDesktopChatExpanded());
 }
 
-const CHAT_SIZE_KEY = 'carljr-chat-window';
 let _chatSizeBeforeExpand = null;
 
 function setDesktopChatMinimized(minimized) {
@@ -6253,19 +6273,6 @@ function setDesktopChatMinimized(minimized) {
 	if (!minimized) fitDesktopChatToViewport();
 }
 
-function saveDesktopChatSize() {
-	if (desktopChat.classList.contains('expanded')) return;
-	// Off-screen while painted into VR; don't persist the parked rect.
-	if (desktopChat.classList.contains('html-in-canvas-source')) return;
-	// Size only: the window always opens at its default spot after a reload.
-	try {
-		const rect = desktopChat.getBoundingClientRect();
-		localStorage.setItem(CHAT_SIZE_KEY, JSON.stringify({
-			width: rect.width,
-			height: rect.height
-		}));
-	} catch { /* ignore */ }
-}
 
 function isNarrowDesktopChat() {
 	// Phones in landscape are wider than 720px but get the same "stay inside
@@ -6375,59 +6382,6 @@ function syncDesktopChatViewportVars(box, shift) {
 	}
 }
 
-// Restores the saved size only. The window always opens at its default spot
-// (the CSS top/left); left/top saved by older versions are ignored and
-// dropped from storage. If the saved size would run past the viewport from
-// the default spot, the window is nudged in (phones: fitDesktopChatToViewport).
-function restoreDesktopChatSize() {
-	try {
-		const raw = localStorage.getItem(CHAT_SIZE_KEY);
-		if (!raw) return;
-		const s = JSON.parse(raw);
-		if (!s || !s.width || !s.height) {
-			localStorage.removeItem(CHAT_SIZE_KEY);
-			return;
-		}
-		if ('left' in s || 'top' in s) {
-			localStorage.setItem(CHAT_SIZE_KEY, JSON.stringify({ width: s.width, height: s.height }));
-		}
-		const narrow = isNarrowDesktopChat();
-		let w = s.width;
-		let h = s.height;
-		if (narrow) {
-			const box = desktopChatVisibleBox();
-			if (box.right - box.left >= 32 && box.bottom - box.top >= 32) {
-				const clamped = clampRectToBox({ left: box.left, top: box.top, width: w, height: h }, box, 280, 220);
-				w = clamped.width;
-				h = clamped.height;
-			}
-		} else {
-			const vw = window.innerWidth;
-			const vh = window.innerHeight;
-			const maxW = Math.max(280, vw - 16);
-			const maxH = Math.max(220, vh - 16);
-			const minW = Math.min(280, maxW);
-			const minH = Math.min(220, maxH);
-			w = Math.max(minW, Math.min(maxW, s.width));
-			h = Math.max(minH, Math.min(maxH, s.height));
-		}
-		desktopChat.style.removeProperty('left');
-		desktopChat.style.removeProperty('top');
-		desktopChat.style.width = `${w}px`;
-		desktopChat.style.height = `${h}px`;
-		if (narrow) {
-			desktopChat.style.right = 'auto';
-			return; // fitDesktopChatToViewport() runs next and clamps it in.
-		}
-		// Desktop / tablets: default spot, nudged in only if the size overflows.
-		const rect = desktopChat.getBoundingClientRect();
-		const left = Math.max(0, Math.min(rect.left, window.innerWidth - rect.width));
-		const top = Math.max(0, Math.min(rect.top, window.innerHeight - rect.height));
-		if (Math.abs(left - rect.left) > 0.5) desktopChat.style.left = `${left}px`;
-		if (Math.abs(top - rect.top) > 0.5) desktopChat.style.top = `${top}px`;
-	} catch { /* ignore */ }
-}
-
 // Phones only. Always pulls the header (minimize / expand) fully inside the
 // visual viewport — a saved top, or a top that was correct for the layout
 // viewport, is not enough when Safari's URL bar or status bar covers it.
@@ -6510,10 +6464,8 @@ function toggleDesktopChatExpanded() {
 	// Sync while both states are in the DOM so expanded fills the visual
 	// viewport and a restored window cannot sit under the status bar.
 	fitDesktopChatToViewport();
-	if (!expanding) saveDesktopChatSize();
 }
 
-restoreDesktopChatSize();
 fitDesktopChatToViewport();
 window.addEventListener('resize', scheduleFitDesktopChat);
 window.addEventListener('orientationchange', () => {
@@ -6755,7 +6707,7 @@ updateKeyboardState('init');
 // The VR mirror (html-in-canvas-source) and the phone keyboard layout
 // (html.gs-kb-chat, header hidden) never start a drag.
 // A drag is not saved: after any reload the window is back at its default
-// spot. Only the size from resize persists (saveDesktopChatSize).
+// spot and default size (resizes are not saved either; resetStoredViewState).
 const DRAG_TOUCH_SLOP = 6;      // px a finger may wobble before a press becomes a drag
 
 (function initDesktopChatDrag() {
@@ -6918,7 +6870,6 @@ const DRAG_TOUCH_SLOP = 6;      // px a finger may wobble before a press becomes
 		activePointerId = null;
 		desktopChat.classList.remove('resizing');
 		fitDesktopChatToViewport();
-		saveDesktopChatSize();
 	}
 
 	document.querySelectorAll('.dchat-resize').forEach(handle => {
