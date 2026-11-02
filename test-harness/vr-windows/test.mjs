@@ -85,7 +85,7 @@ const inv = await p.evaluate(() => {
 	const anyLegacy = []; scene.traverse((o) => { if (o.isMesh && /panel|keyboard|hud|toggle|chat|side|scene/i.test(o.name) && !o.userData.vrWindow) anyLegacy.push(o.name); });
 	return { wins, menuLayer, anyLegacy };
 });
-check('Three VR windows: menu, keyboard, HUD', inv.wins.map((w) => w.name).join() === 'menu,keyboard,hud', inv.wins.map((w) => w.name));
+check('VR windows: menu, keyboard, HUD (+ the in-app dialog window, gsDialog.js)', inv.wins.map((w) => w.name).join() === 'menu,keyboard,hud,dialog', inv.wins.map((w) => w.name));
 for (const w of inv.wins) check(`Window "${w.name}" is html-in-canvas (CanvasTexture of a painted DOM source #${w.src})`, w.isCanvasTex && !!w.src);
 const shown = inv.wins.filter((w) => w.visible).map((w) => w.name);
 check('Menu + HUD visible on entering VR, keyboard hidden', shown.join() === 'menu,hud', shown);
@@ -230,9 +230,10 @@ await frame(400); await click();
 await rayClick('#dchat-prompt-save');
 check('Ray click on Save stores the custom prompt', await p.evaluate(() => window.GSChatPrompt.isCustom() && localStorage.getItem('gs.customChatPrompt.v1') !== null));
 await rayClick('#dchat-prompt-reset');
-check('VR Reset: first press arms (no dialog)', await p.evaluate(() => window.GSChatPrompt.isCustom() && document.getElementById('dchat-prompt-reset').textContent === 'Press again to reset') && dialogs === 0);
-await rayClick('#dchat-prompt-reset');
-check('VR Reset: second press restores the default (no dialog)', await p.evaluate(() => !window.GSChatPrompt.isCustom() && document.getElementById('dchat-prompt-editor').value === window.GSChatPrompt.defaultPrompt()) && dialogs === 0);
+await frame(300);
+check('VR Reset asks with the in-app VR dialog window (no native dialog)', await p.evaluate(() => window.GSChatPrompt.isCustom() && window.gsDialogs.current()?.mode === 'xr' && __t.win('dialog').mesh.visible) && dialogs === 0);
+await rayClick('#gs-dialog [data-gs-dialog=ok]', 'dialog');
+check('VR Reset: ray click on "Reset to default" restores the default (no native dialog)', await p.evaluate(() => !window.GSChatPrompt.isCustom() && document.getElementById('dchat-prompt-editor').value === window.GSChatPrompt.defaultPrompt() && !__t.win('dialog').mesh.visible) && dialogs === 0);
 await rayClick('[data-chat-section="scene"]');
 
 // ---- ray: HUD Hide/Show UI ----

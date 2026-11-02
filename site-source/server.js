@@ -260,7 +260,8 @@ document.getElementById('overlay-root').appendChild(panel);
 7. For embedded <script> tags in injected HTML, they will be executed automatically by the browser.
 8. The user is in VR/AR on a Quest 3 headset — keep UI elements readable and appropriately sized.
 9. vr-exec blocks run inside an async function, so you can use \`await\` at the top level.
-10. By default, anchor new objects to the world with \`scene.add(...)\` and a fixed \`position\`. Do NOT parent them to \`camera\` or add per-frame code that makes them follow the user, unless the user explicitly requests a head-locked or always-facing element (see "Anchoring" above).`;
+10. By default, anchor new objects to the world with \`scene.add(...)\` and a fixed \`position\`. Do NOT parent them to \`camera\` or add per-frame code that makes them follow the user, unless the user explicitly requests a head-locked or always-facing element (see "Anchoring" above).
+11. Never use the browser's \`alert()\`, \`confirm()\` or \`prompt()\` — native pop-ups can't be clicked in VR. Use GS's in-app pop-ups, which work on desktop and in the headset: \`await gsAlert('Saved!')\`, \`if (await gsConfirm('Reset the game?', { okLabel: 'Reset', danger: true })) { ... }\` (true / false) and \`const name = await gsPrompt('Your name?', 'Player')\` (the text, or null on Cancel). They are async: always \`await\` them before acting on the answer.`;
 
 // The Scene chat prompt is viewable and editable in the app (Chat → Prompt).
 // A custom prompt replaces SYSTEM_PROMPT for /api/chat; GS always appends
@@ -273,6 +274,7 @@ const CHAT_PROMPT_REQUIRED = `## GS technical requirements (always added by GS; 
 - vr-exec blocks run inside an async function (top-level \`await\` works) with these globals: \`THREE\`, \`scene\`, \`camera\`, \`renderer\`, \`document\`, \`hud\` (head-locked group, only on request) and \`gs\` (\`gs.state\`, \`gs.onUpdate(fn)\`, \`gs.on(target, event, fn)\`, \`gs.onDispose(fn)\`). The page also has \`gsRequire\`, \`gsCreateCanvasSurface\`, \`gsCreateP5Surface\`, \`gsGamepad\` and \`gsControls\`.
 - y = 0 is the floor, eye level is about 1.6 m, and the user faces -z. Don't create your own camera controls.
 - The whole scene must be visible at once. A sky / HDRI dome (inside-out sphere or GroundedSkybox) gets \`userData.gsHdriDome = true\` and must enclose every object: size it from the full scene bounds (radius × 1.5) and refit when the scene changes. \`camera.far\` must reach past everything, dome included (never a fixed small value), and fog must not hide objects. Call \`gsFitScene()\` after building or changing a scene: it fits domes, camera.far and fog to the scene bounds.
+- Never use native \`alert\` / \`confirm\` / \`prompt\` (not clickable in VR): use \`await gsAlert(msg)\`, \`await gsConfirm(msg, { okLabel, cancelLabel, danger })\` (true/false) and \`await gsPrompt(msg, defaultText)\` (text or null).
 - A user message may start with a "[GS editor settings: ...]" note. Follow it and don't mention it.`;
 
 // Returns the system prompt for a /api/chat request: the default, or the
@@ -304,6 +306,7 @@ The code runs inside an \`AsyncFunction('THREE', 'scene', 'camera', 'renderer', 
 - \`window.gsRequire(name)\` (async; \`'ammo'\` → initialised ammo.js, \`'p5'\` → p5 constructor), \`window.gsCreateCanvasSurface(opts)\`, \`window.gsCreateP5Surface(sketch, opts)\` \`window.gsGamepad\`, \`window.gsControls\` / \`window.controls\` (the app's stock three.js camera controls) and \`window.gsOrbit\` — page helpers; these are valid, keep using them. Never call \`Ammo()\` directly: use \`const Ammo = await gsRequire('ammo');\`
 - \`window.gsFitScene()\` — valid page helper: fits sky / HDRI domes (\`userData.gsHdriDome = true\`), camera.far and fog to the whole scene's bounds. Keep calls to it.
 - \`window.gsOrigin\` (origin rotation: \`root\`, \`rotation\`, \`toLocal(v)\`, \`toWorld(v)\`, \`set()\`, \`reset()\`) — valid page helper; objects added with \`scene.add\` may end up under \`gsOrigin.root\`, so find them with \`scene.getObjectByName\`.
+- \`window.gsAlert(msg)\`, \`window.gsConfirm(msg, opts)\` (Promise<boolean>) and \`window.gsPrompt(msg, defaultText)\` (Promise<string|null>) — the app's in-app pop-ups (they work in VR); valid, keep using them.
 
 Top-level \`await\` IS allowed because the function is async.
 
@@ -315,6 +318,7 @@ Top-level \`await\` IS allowed because the function is async.
 4. Using ES module import syntax (not available inside new Function)
 5. Using \`let\`/\`const\` for variables that need to persist across blocks — should use \`window.varName\` instead
 6. Accessing Three.js addon classes (like OrbitControls, FontLoader, TextGeometry) that aren't available in the base Three.js build (for camera controls use the app's \`window.gsControls\` / \`window.controls\` instead of constructing OrbitControls)
+7. Using native \`alert()\` / \`confirm()\` / \`prompt()\`: replace with \`await gsAlert(...)\`, \`await gsConfirm(...)\`, \`await gsPrompt(...)\` (a non-awaited confirm/prompt is a Promise, not the answer)
 
 ## Rules
 

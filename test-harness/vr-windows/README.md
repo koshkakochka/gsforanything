@@ -12,7 +12,7 @@ button) is a DOM element painted by `htmlInCanvas.js` and shown by
   ≥ 3:1, amber ray-hover ring present — **and** pixel samples of the painted
   textures (so a painter bug cannot hide behind correct CSS).
 - Real controller rays (IWER pose + trigger/thumbstick/grip): hover ring on the
-  menu, keyboard and HUD; click switches tabs; Fixed/Follow by ray (Follow swings
+  menu, keyboard and HUD (plus the hidden in-app dialog window); click switches tabs; Fixed/Follow by ray (Follow swings
   the menu after a head turn, Fixed keeps it); trigger-drag and thumbstick
   (locomotion off via right grip) scroll the chat log; clicking the chat input
   opens the keyboard with a focus ring, key clicks type, Done closes it; the HUD

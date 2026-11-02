@@ -427,6 +427,18 @@
 			font: 700 17px/1 var(--dchat-font, -apple-system, BlinkMacSystemFont, sans-serif);
 		}
 		#gs-vr-hud-toggle[aria-pressed="true"] { background: #4f46e5; }
+		#gs-vr-hud { align-items: center; gap: 8px; }
+		#gs-vr-hud-mic {
+			max-width: 260px;
+			padding: 0 14px 0 4px;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			font: 600 15px/44px var(--dchat-font, -apple-system, BlinkMacSystemFont, sans-serif);
+			color: #fff;
+		}
+		#gs-vr-hud-mic[hidden] { display: none; }
+		#gs-vr-hud-mic[data-state="blocked"], #gs-vr-hud-mic[data-state="nomic"], #gs-vr-hud-mic[data-state="error"] { color: #fca5a5; }
 		/* Controller-ray hover (set by vrWindows.js) and the typing target: the
 		   same 3px amber ring on every window, >= 3:1 on any panel surface. */
 		.gs-ray-hover { outline: 3px solid #facc15 !important; outline-offset: 1px !important; }
@@ -1402,6 +1414,29 @@
 		}
 
 		#desktop-mic-button:disabled { opacity: 0.4; cursor: not-allowed; }
+		/* Mic on but not live yet (permission / model download): amber, no pulse. */
+		#desktop-mic-button.mic-pending, #mic-button.mic-pending { background: #b45309; }
+
+		/* Mic status line under the chat tools (also painted in the VR menu). */
+		#gs-mic-status {
+			font-size: 12.5px;
+			line-height: 1.35;
+			color: #e5e7eb;
+			background: rgba(255, 255, 255, 0.07);
+			border-left: 3px solid #a5b4fc;
+			border-radius: 6px;
+			padding: 5px 8px;
+			overflow-wrap: anywhere;
+		}
+		#gs-mic-status[hidden] { display: none; }
+		#gs-mic-status[data-state="listening"] { border-left-color: #f87171; }
+		#gs-mic-status[data-state="loading"], #gs-mic-status[data-state="starting"] { border-left-color: #fbbf24; }
+		#gs-mic-status[data-state="sent"] { border-left-color: #4ade80; }
+		#gs-mic-status[data-state="blocked"], #gs-mic-status[data-state="nomic"], #gs-mic-status[data-state="error"] {
+			border-left-color: #f87171;
+			background: rgba(239, 68, 68, 0.16);
+			color: #fff;
+		}
 
 		#desktop-send-button {
 			background: linear-gradient(135deg, #4f46e5, #6d28d9);
@@ -2444,7 +2479,7 @@
 		<div id="status" hidden></div>
 		<button id="ui-toggle">Hide UI</button>
 		<!-- VR-only windows (vrWindows.js): parked off-screen and painted into the headset. -->
-		<div id="gs-vr-hud" aria-hidden="true"><button id="gs-vr-hud-toggle" type="button" aria-pressed="false">Hide UI</button></div>
+		<div id="gs-vr-hud" aria-hidden="true"><button id="gs-vr-hud-toggle" type="button" aria-pressed="false">Hide UI</button><span id="gs-vr-hud-mic" hidden></span></div>
 		<div id="gs-vr-keyboard" aria-hidden="true"></div>
 
 		<!-- Scene file input (hidden). Note: "*" is not a valid accept value and
@@ -2584,6 +2619,7 @@
 						<button type="button" id="desktop-files-picker-button" title="Choose from Files library">📄</button>
 						<button id="desktop-mic-button" title="Toggle always-on voice input">🎤</button>
 					</div>
+					<div id="gs-mic-status" role="status" aria-live="polite" hidden></div>
 					<div id="desktop-chat-compose-row">
 						<textarea id="desktop-chat-input" class="gs-chat-textarea" rows="1" placeholder="Ask about the scene..." autocomplete="off" enterkeyhint="send" aria-label="Message" data-gs-wrap data-gs-history="#desktop-chat-messages"></textarea>
 						<button id="desktop-send-button">Send</button>
