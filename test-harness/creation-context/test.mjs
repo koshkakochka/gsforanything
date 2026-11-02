@@ -208,7 +208,9 @@ for (const [hostName, base] of HOSTS) {
   await action(e, '#dchat-scenes-buttons', 'scenes:loadSaved');
   await sleep(2500);
   msgs = await chatText(e);
-  ok(`${H} same history isn't added twice in one chat`, msgs.some(m => /creation history of "Saved Cubes" is already in this chat/.test(m.t)) && msgs.filter(m => /make a red cube on the floor/.test(m.t)).length === 1);
+  // One active scene: Load Saved replaces the /e/ scene and its chat, so the
+  // history shows once (the saved scene's), never stacked on the previous one.
+  ok(`${H} loading another scene replaces the chat history (shown once)`, msgs.filter(m => /Creation history for/.test(m.t)).length === 1 && msgs.some(m => /Creation history for "Saved Cubes"/.test(m.t)) && msgs.filter(m => /make a red cube on the floor/.test(m.t)).length === 1, msgs.map(m => m.t.slice(0, 40)).join(' | '));
   const ls = await newPage(base);
   await tab(ls, 'scenes');
   await action(ls, '#dchat-scenes-buttons', 'scenes:loadSaved');

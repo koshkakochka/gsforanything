@@ -1,9 +1,21 @@
 {
   "versions": [
     {
-      "id": "0.986",
-      "label": "GS 0.986 (this build)",
+      "id": "0.987",
+      "label": "GS 0.987 (this build)",
       "url": null,
+      "date": "2026-11-02",
+      "changes": [
+        "One active scene at a time: loading a scene from Community, a share link, a scene file, Load Saved or a merge now replaces the scene in the world instead of layering it on top, and the old objects and textures are cleaned up.",
+        "Chat history belongs to the active scene: opening another scene shows only that scene's chat history, never the previous scene's stacked alongside it, and new chat replies only continue the active scene.",
+        "The Scenes tab shows the current scene; the scene layering controls (Clear first / Layer, per-scene checkboxes and remove buttons, Import Folder, Export Combined) are gone. All export options still work on the active scene: Export / Save to Device, GLB, glTF, FBX, OBJ, Blender, Share link and Upload to Community.",
+        "Clear scene starts a fresh blank scene and also clears its chat history."
+      ]
+    },
+    {
+      "id": "0.986",
+      "label": "GS 0.986",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-02",
       "changes": [
         "HDRI and sky domes always fit the whole scene: a dome grows to enclose every object (with room to spare) and refits by itself when objects are added, moved or removed, so big scenes no longer poke through or get cut off by a fixed-size dome. Grounded skyboxes keep their floor in place.",
