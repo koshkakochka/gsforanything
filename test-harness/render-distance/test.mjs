@@ -17,7 +17,10 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   if (vp.isMobile) await p.setUserAgent('Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36');
   await p.evaluateOnNewDocument(IWER + '\n;window.__xrDevice = new IWER.XRDevice(IWER.metaQuest3); window.__xrDevice.installRuntime({ forceInstall: true });');
   await p.goto(BASE + '/', { waitUntil: 'networkidle2' }); await sleep(3000);
-  await p.evaluate((M) => { for (const [name, x, z] of M) { const m = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4), new THREE.MeshBasicMaterial({ color: 0xff00ff })); m.name = name; m.position.set(x, 1.6, z); scene.add(m); } }, MARKERS);
+  await p.evaluate((M) => { for (const [name, x, z] of M) { const m = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4), new THREE.MeshBasicMaterial({ color: 0xff00ff })); m.name = name; m.position.set(x, 1.6, z); m.userData.gsIgnoreBounds = true; scene.add(m); } }, MARKERS);
+  // Since sceneFit.js the far plane also reaches all scene content. The markers
+  // opt out (userData.gsIgnoreBounds) so the base 0.975 render distance is
+  // checked first; section 7 lets them count.
   // what the current view really draws: frustum test of each marker centre + a rendered pixel at its screen spot
   const view = () => p.evaluate((names) => {
     const xr = renderer.xr.isPresenting; const cam = xr ? renderer.xr.getCamera().cameras[0] : camera;
@@ -80,6 +83,24 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   await p.evaluate(() => { camera.far = 100; camera.updateProjectionMatrix(); }); await sleep(300); await look();
   const d4 = await view();
   ok(`${T} back to the default 100: desktop far returns to 100 + offset`, d4.far > 100 && d4.far < 160 && !d4.m140, JSON.stringify(d4));
+  // 7. Scene content counts (sceneFit.js): the far plane reaches every object, desktop and VR
+  await p.evaluate((M) => { for (const [n] of M) delete scene.getObjectByName(n).userData.gsIgnoreBounds; gsFitScene(); }, MARKERS);
+  await look(); await sleep(300); await look();
+  const d5 = await view();
+  const need5 = await p.evaluate((M) => { const c = camera.getWorldPosition(new THREE.Vector3()); return Math.max(...M.map(([n]) => { const s = new THREE.Box3().setFromObject(scene.getObjectByName(n)).getBoundingSphere(new THREE.Sphere()); return c.distanceTo(s.center) + s.radius; })); }, MARKERS);
+  ok(`${T} scene fit: desktop far reaches the farthest object (140 m marker drawn)`, d5.far >= need5 && d5.m50 && d5.m98 && d5.m140 && d5.near === 0.1, JSON.stringify(d5) + ' need=' + need5.toFixed(1));
+  await p.click('#XRButton').catch(() => {});
+  for (let i = 0; i < 40 && !(await p.evaluate(() => renderer.xr.isPresenting)); i++) await sleep(250);
+  await sleep(1500);
+  const v5 = await view();
+  ok(`${T} scene fit in VR: depthFar > 140 m and every marker in the eye frustum`, v5.xr && Math.abs(v5.depthFar - v5.far) < 0.01 && v5.depthFar > 140 && v5.depthNear === 0.1 && v5.m50 && v5.m98 && v5.m140, JSON.stringify(v5));
+  await p.evaluate(() => renderer.xr.getSession().end());
+  for (let i = 0; i < 40 && (await p.evaluate(() => renderer.xr.isPresenting)); i++) await sleep(250);
+  await sleep(500);
+  await p.evaluate((M) => { for (const [n] of M) { const o = scene.getObjectByName(n); o.parent.remove(o); } }, MARKERS); await sleep(800); await look();
+  const d6 = await view().catch(() => null);
+  const far6 = await p.evaluate(() => camera.far);
+  ok(`${T} scene fit: objects removed → far back to 100 + offset`, far6 > 100 && far6 < 160, String(far6));
   ok(`${T} no console/page errors`, errs.length === 0, JSON.stringify(errs.slice(0, 3)));
   await p.close();
 }

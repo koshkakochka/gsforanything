@@ -1,0 +1,10 @@
+{
+  "name": "gs-dome-fit-test",
+  "private": true,
+  "type": "module",
+  "description": "Headless check that sky / HDRI domes, camera.far and fog fit the whole scene (sceneFit.js) and the prompts say so.",
+  "dependencies": {
+    "iwer": "^2.6.0",
+    "puppeteer-core": "^24.0.0"
+  }
+}
