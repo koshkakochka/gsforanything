@@ -2275,6 +2275,32 @@
 			display: none !important;
 		}
 		body.display-only #editor-link { display: none !important; }
+		/* Embed view (/embed/:id, embedExport.js): display-only plus, unless
+		   ?vr=0, the Enter VR button alone in the dock. */
+		body.display-only.gs-embed-vr #gs-dock { display: flex !important; }
+		body.gs-embed #gs-dock {
+			position: fixed;
+			left: 50%;
+			transform: translateX(-50%);
+			bottom: max(10px, calc(env(safe-area-inset-bottom, 0px) + 6px));
+			z-index: 998;
+			margin: 0;
+			padding: 5px;
+			border-radius: 14px;
+			background: rgba(22, 22, 32, 0.72);
+			border: 1px solid rgba(255, 255, 255, 0.10);
+			box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+		}
+		body.gs-embed #gs-dock > :not(#XRButton),
+		body.gs-embed #gs-dock a#XRButton,
+		body.gs-embed #gs-version-modal { display: none !important; }
+		body.display-only.gs-embed-vr #gs-dock button#XRButton { display: inline-flex !important; }
+		body.gs-embed.gs-xr-presenting #gs-dock,
+		body.gs-embed.gs-xr-presenting #gs-embed-badge { display: none !important; }
+		/* Community: upload export choice + "No exports" badge */
+		.dchat-upload-allow-export { flex: 1 1 100%; display: flex; align-items: center; gap: 8px; min-height: 32px; font-size: 12px; color: rgba(255, 255, 255, 0.8); cursor: pointer; user-select: none; }
+		.dchat-upload-allow-export input { width: 18px; height: 18px; margin: 0; flex-shrink: 0; }
+		.dchat-noexport-badge { display: inline-block; align-self: flex-start; margin-top: 2px; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.45); background: rgba(251, 191, 36, 0.1); }
 		body.display-only #app > button {
 			/* XRButton is appended under #app */
 			display: none !important;

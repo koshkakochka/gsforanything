@@ -362,8 +362,12 @@ function updateBar() {
 }
 
 /** Adds a "Merge" toggle to a Community row (called from renderCommunitySceneList). */
+// A scene whose creator turned exports off can't be merged (merging copies
+// its code into a new scene); host.canMergeScene decides (main.js).
+const mergeable = (cs) => !host?.canMergeScene || host.canMergeScene(cs);
+
 export function decorateCommunityRow(actions, cs) {
-	if (!actions || !cs?.id) return;
+	if (!actions || !cs?.id || !mergeable(cs)) return;
 	const btn = el('button', { type: 'button', class: 'dchat-btn gs-merge-row-btn', 'data-scene-id': cs.id, title: 'Pick this scene for a merge' }, 'Merge');
 	btn.addEventListener('click', () => {
 		if (state.a?.id === cs.id) state.a = null;
@@ -381,10 +385,10 @@ export function decorateCommunityRow(actions, cs) {
 async function loadSceneList() {
 	try {
 		const cached = host?.getCommunityScenes?.() || [];
-		if (cached.length) return cached;
+		if (cached.length) return cached.filter(mergeable);
 		const res = await fetch('/api/community-scenes');
 		const data = await res.json();
-		return data.scenes || [];
+		return (data.scenes || []).filter(mergeable);
 	} catch { return []; }
 }
 
