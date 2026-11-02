@@ -9,6 +9,7 @@ import fs from 'fs';
 import selfsigned from 'selfsigned';
 import { randomBytes } from 'crypto';
 import { environmentHdriForRecord, HDRI_FILE_MAX_BYTES, hdriContentType } from './sceneHdri.js';
+import { allowExportFromBody, embedUnavailableHtml, exportAllowed, isSceneOwner, newOwnerKey, OWNER_KEY_HEADER, ownerKeyHash, publicSceneRecord } from './sceneExportPolicy.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -708,9 +709,11 @@ app.get('/api/load-scene', (req, res) => {
 // SDK never made it into the deployed function and every call 500'd with
 // "Cannot find package '@vercel/blob'".
 //
-// Pathname shape: community-scenes/{id}--{encodeURIComponent(name)}.json
-// The id is stable across renames; the encoded name is only for list
-// display without fetching every blob body. Rename rewrites the pathname
+// Pathname shape: community-scenes/{id}--{encodeURIComponent(name)}.json,
+// or community-scenes/{id}.nx--{name}.json for a scene whose creator turned
+// exports off (see sceneExportPolicy.js), so the list and /embed/:id know the
+// setting without fetching every blob body. The id is stable across renames;
+// the encoded name is only for list display without fetching every blob body. Rename rewrites the pathname
 // (put + best-effort delete of the old blob) and list dedupes by id.
 const COMMUNITY_PREFIX = 'community-scenes/';
 const BLOB_API_BASE = 'https://blob.vercel-storage.com';
@@ -756,12 +759,21 @@ function sceneUrls(req, id) {
 	return {
 		id,
 		editorUrl: `${origin}/e/${id}`,
-		viewUrl: `${origin}/s/${id}`
+		viewUrl: `${origin}/s/${id}`,
+		embedUrl: `${origin}/embed/${id}`
 	};
 }
 
-function communityPathname(id, name) {
-	return `${COMMUNITY_PREFIX}${id}--${encodeURIComponent(sanitizeSceneName(name))}.json`;
+const NO_EXPORT_MARK = '.nx';
+
+function communityPathname(id, name, allowExport = true) {
+	return `${COMMUNITY_PREFIX}${id}${allowExport === false ? NO_EXPORT_MARK : ''}--${encodeURIComponent(sanitizeSceneName(name))}.json`;
+}
+
+function splitIdMark(raw) {
+	return raw.endsWith(NO_EXPORT_MARK)
+		? { id: raw.slice(0, -NO_EXPORT_MARK.length), allowExport: false }
+		: { id: raw, allowExport: true };
 }
 
 function parseCommunityPathname(pathname) {
@@ -770,13 +782,13 @@ function parseCommunityPathname(pathname) {
 	const sep = base.indexOf('--');
 	if (sep < 0) {
 		// Legacy / id-only pathname
-		return { id: base, name: 'Untitled' };
+		return { ...splitIdMark(base), name: 'Untitled' };
 	}
-	const id = base.slice(0, sep);
+	const { id, allowExport } = splitIdMark(base.slice(0, sep));
 	const encoded = base.slice(sep + 2);
 	let name = 'Untitled';
 	try { name = decodeURIComponent(encoded) || name; } catch { /* keep default */ }
-	return { id, name };
+	return { id, name, allowExport };
 }
 
 function requireBlob(res) {
@@ -857,6 +869,7 @@ async function listCommunityBlobs() {
 				pathname: b.pathname,
 				uploadedAt: b.uploadedAt,
 				size: b.size,
+				allowExport: parsed.allowExport !== false,
 				_uploadedAtMs: uploadedAt
 			});
 		}
@@ -921,13 +934,17 @@ app.post('/api/community-scenes', async (req, res) => {
 		const id = newSceneId();
 		const name = sanitizeSceneName(sceneData.name);
 		const now = new Date().toISOString();
-		const { creationContext, ...sceneFields } = sceneData;
+		const { creationContext, allowExport: allowExportRaw, ownerKey: _k, ownerKeyHash: _h, isOwner: _o, ...sceneFields } = sceneData;
+		const allowExport = allowExportFromBody(allowExportRaw);
+		const ownerKey = newOwnerKey();
 		const record = {
 			...sceneFields,
 			id,
 			name,
 			createdAt: sceneData.createdAt || now,
-			updatedAt: now
+			updatedAt: now,
+			allowExport,
+			ownerKeyHash: await ownerKeyHash(ownerKey)
 		};
 		// Environment HDRI (see sceneHdri.js): keep a clean copy or drop it.
 		delete record.environmentHdri;
@@ -944,13 +961,16 @@ app.post('/api/community-scenes', async (req, res) => {
 			const ctxBlob = await blobPut(`${CONTEXT_PREFIX}${id}.json`, encoded, 'application/json');
 			record.creationContext = contextStub(creationContext, id, { blobUrl: ctxBlob.url, size: encoded.length });
 		}
-		const pathname = communityPathname(id, name);
+		const pathname = communityPathname(id, name, allowExport);
 		const blob = await blobPut(pathname, JSON.stringify(record), 'application/json');
 		res.json({
 			ok: true,
 			url: blob.url,
 			pathname: blob.pathname || pathname,
-			scene: { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: record.updatedAt, size: blob.size },
+			scene: { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: record.updatedAt, size: blob.size, allowExport },
+			allowExport,
+			// Returned once; the uploader's browser keeps it to prove ownership.
+			ownerKey,
 			...sceneUrls(req, id)
 		});
 	} catch (error) {
@@ -971,6 +991,7 @@ app.get('/api/community-scenes', async (req, res) => {
 			pathname: s.pathname,
 			uploadedAt: s.uploadedAt,
 			size: s.size,
+			allowExport: s.allowExport !== false,
 			...listItemTimestamps(s),
 			...urls(s.id)
 		}));
@@ -987,7 +1008,13 @@ app.get('/api/community-scenes/:id', async (req, res) => {
 		const meta = await findCommunityBlob(req.params.id);
 		if (!meta) return res.status(404).json({ error: 'Scene not found' });
 		const record = await readCommunitySceneRecord(meta);
-		res.json({ ...record, ...sceneUrls(req, meta.id) });
+		if (meta.allowExport === false) record.allowExport = false;
+		const isOwner = await isSceneOwner(record, req.get(OWNER_KEY_HEADER));
+		// The embed page asks with ?embed=1: refuse when the creator turned exports off.
+		if (req.query.embed === '1' && !exportAllowed(record) && !isOwner) {
+			return res.status(403).json({ error: 'The creator of this scene turned off exports, so it can\'t be embedded.', exportsDisabled: true });
+		}
+		res.json({ ...publicSceneRecord(record, { isOwner }), ...sceneUrls(req, meta.id) });
 	} catch (error) {
 		console.error('Community get error:', error);
 		res.status(500).json({ error: error.message });
@@ -1080,15 +1107,22 @@ app.patch('/api/community-scenes/:id', async (req, res) => {
 		const id = req.params.id;
 		const meta = await findCommunityBlob(id);
 		if (!meta) return res.status(404).json({ error: 'Scene not found' });
-		if (req.body == null || req.body.name == null) {
+		if (req.body == null || (req.body.name == null && req.body.allowExport == null)) {
 			return res.status(400).json({ error: 'Missing name' });
 		}
-		const name = sanitizeSceneName(req.body.name);
 		const record = await readCommunitySceneRecord(meta);
+		if (meta.allowExport === false) record.allowExport = false;
+		// Only the uploader (owner key) can change the export setting.
+		if (req.body.allowExport != null && !(await isSceneOwner(record, req.get(OWNER_KEY_HEADER)))) {
+			return res.status(403).json({ error: 'Only the scene\'s creator can change its export setting' });
+		}
+		const name = req.body.name != null ? sanitizeSceneName(req.body.name) : sanitizeSceneName(record.name);
 		record.name = name;
 		record.id = id;
+		if (req.body.allowExport != null) record.allowExport = allowExportFromBody(req.body.allowExport);
 		record.updatedAt = new Date().toISOString();
-		const newPathname = communityPathname(id, name);
+		const allowExport = exportAllowed(record);
+		const newPathname = communityPathname(id, name, allowExport);
 		const blob = await blobPut(newPathname, JSON.stringify(record), 'application/json');
 		if (meta.pathname !== newPathname && meta.url) {
 			await blobDelete(meta.url);
@@ -1097,7 +1131,8 @@ app.patch('/api/community-scenes/:id', async (req, res) => {
 			ok: true,
 			url: blob.url,
 			pathname: blob.pathname || newPathname,
-			scene: { id, name, uploadedAt: record.updatedAt, createdAt: record.createdAt || null, updatedAt: record.updatedAt, size: blob.size },
+			scene: { id, name, uploadedAt: record.updatedAt, createdAt: record.createdAt || null, updatedAt: record.updatedAt, size: blob.size, allowExport },
+			allowExport,
 			...sceneUrls(req, id)
 		});
 	} catch (error) {
@@ -1292,8 +1327,27 @@ app.patch('/api/community-themes/:id', async (req, res) => {
 function sendAppIndex(_req, res) {
 	res.sendFile(join(__dirname, 'index.html'));
 }
-app.get('/s/:id', sendAppIndex);
-app.get('/e/:id', sendAppIndex);
+// A scene with exports off gets frame-ancestors 'self' on /s and /e so its
+// share links can't be iframed on other sites; /embed/:id (the app in embed
+// mode, see main.js) is only served for scenes that allow exports.
+async function shareRouteRecordMeta(id) {
+	if (!process.env.BLOB_READ_WRITE_TOKEN || !SCENE_ID_RE.test(id)) return null;
+	try { return await findCommunityBlob(id); } catch { return null; }
+}
+async function sendShareIndex(req, res) {
+	const meta = await shareRouteRecordMeta(req.params.id);
+	if (meta && meta.allowExport === false) res.set('Content-Security-Policy', 'frame-ancestors \'self\'');
+	sendAppIndex(req, res);
+}
+app.get('/s/:id', sendShareIndex);
+app.get('/e/:id', sendShareIndex);
+app.get('/embed/:id', async (req, res) => {
+	const meta = await shareRouteRecordMeta(req.params.id);
+	res.set('Cache-Control', 'no-store');
+	if (!meta) return res.status(404).type('html').send(embedUnavailableHtml({ status: 404, origin: requestOrigin(req) }));
+	if (meta.allowExport === false) return res.status(403).type('html').send(embedUnavailableHtml({ status: 403, name: meta.name, origin: requestOrigin(req) }));
+	sendAppIndex(req, res);
+});
 
 // Get local network IP for Quest 3 connection
 function getLocalIP() {

@@ -1,11 +1,12 @@
 import { environmentHdriForRecord, HDRI_FILE_MAX_BYTES, hdriContentType } from "../site-source/sceneHdri.js";
+import { allowExportFromBody, embedUnavailableHtml, exportAllowed, isSceneOwner, newOwnerKey, OWNER_KEY_HEADER, ownerKeyHash, publicSceneRecord } from "../site-source/sceneExportPolicy.js";
 import { CHAT_PROMPT_REQUIRED, FIX_CODE_PROMPT, MAX_CUSTOM_PROMPT_CHARS, SYSTEM_PROMPT, THEME_SYSTEM_PROMPT } from "./prompts.js";
 
 // Hosted Worker for Carl Junior. Local-only HTTPS / self-signed certs / port
 // binding from site-source/server.js are intentionally not included: Workers
 // terminates TLS and does not listen on a port.
 // Static client files are Workers static assets (ASSETS). This module only
-// handles /api/* plus the /s/:id and /e/:id share routes.
+// handles /api/* plus the /s/:id, /e/:id and /embed/:id share routes.
 
 const LLM_BACKEND_DEFAULT = "openai-sol";
 const OPENAI_MODEL_DEFAULT = "gpt-6-astra";
@@ -31,7 +32,7 @@ function json(data, status = 200, extraHeaders = {}) {
       "content-type": "application/json; charset=utf-8",
       "access-control-allow-origin": "*",
       "access-control-allow-methods": "GET,POST,PUT,PATCH,OPTIONS",
-      "access-control-allow-headers": "content-type",
+      "access-control-allow-headers": "content-type, x-gs-owner-key",
       ...extraHeaders,
     },
   });
@@ -179,7 +180,7 @@ function requestOrigin(request) {
 
 function sceneUrls(request, id) {
   const origin = requestOrigin(request);
-  return { id, editorUrl: `${origin}/e/${id}`, viewUrl: `${origin}/s/${id}` };
+  return { id, editorUrl: `${origin}/e/${id}`, viewUrl: `${origin}/s/${id}`, embedUrl: `${origin}/embed/${id}` };
 }
 
 function requireStore(env) {
@@ -446,7 +447,10 @@ async function handleApi(request, env) {
     const name = sanitizeSceneName(sceneData.name);
     const now = new Date().toISOString();
     const { creationContext, ...sceneFields } = sceneData;
-    const record = { ...sceneFields, id, name, createdAt: sceneData.createdAt || now, updatedAt: now };
+    const { allowExport: allowExportRaw, ownerKey: _ignoredOwnerKey, ownerKeyHash: _ignoredHash, isOwner: _ignoredIsOwner, ...cleanFields } = sceneFields;
+    const allowExport = allowExportFromBody(allowExportRaw);
+    const ownerKey = newOwnerKey();
+    const record = { ...cleanFields, id, name, createdAt: sceneData.createdAt || now, updatedAt: now, allowExport, ownerKeyHash: await ownerKeyHash(ownerKey) };
     // Environment HDRI (see site-source/sceneHdri.js): keep a clean copy or drop it.
     delete record.environmentHdri;
     const hdri = environmentHdriForRecord(sceneData.environmentHdri, id);
@@ -460,7 +464,7 @@ async function handleApi(request, env) {
     }
     const encoded = JSON.stringify(record);
     await env.SCENES.put(`cs:${id}`, encoded);
-    const meta = { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: now, size: new TextEncoder().encode(encoded).length, pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json` };
+    const meta = { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: now, size: new TextEncoder().encode(encoded).length, pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json`, allowExport };
     const index = await readIndex(env, "cs-index");
     index.unshift(meta);
     await env.SCENES.put("cs-index", JSON.stringify(index));
@@ -469,6 +473,9 @@ async function handleApi(request, env) {
       url: `${requestOrigin(request)}/api/community-scenes/${id}`,
       pathname: meta.pathname,
       scene: meta,
+      allowExport,
+      // Returned once; the uploader's browser keeps it to prove ownership.
+      ownerKey,
       ...sceneUrls(request, id),
     });
   }
@@ -484,6 +491,7 @@ async function handleApi(request, env) {
       pathname: s.pathname,
       uploadedAt: s.uploadedAt,
       size: s.size,
+      allowExport: exportAllowed(s),
       ...listItemTimestamps(s),
       ...sceneUrls(request, s.id),
     }));
@@ -497,7 +505,12 @@ async function handleApi(request, env) {
     if (!SCENE_ID_RE.test(id)) return json({ error: "Scene not found" }, 404);
     const record = await kvGetJson(env, `cs:${id}`);
     if (!record) return json({ error: "Scene not found" }, 404);
-    return json({ ...record, ...sceneUrls(request, id) });
+    const isOwner = await isSceneOwner(record, request.headers.get(OWNER_KEY_HEADER));
+    // The embed page asks with ?embed=1: refuse when the creator turned exports off.
+    if (url.searchParams.get("embed") === "1" && !exportAllowed(record) && !isOwner) {
+      return json({ error: "The creator of this scene turned off exports, so it can't be embedded.", exportsDisabled: true }, 403);
+    }
+    return json({ ...publicSceneRecord(record, { isOwner }), ...sceneUrls(request, id) });
   }
 
   if (sceneIdMatch && method === "PATCH") {
@@ -508,22 +521,29 @@ async function handleApi(request, env) {
     if (!SCENE_ID_RE.test(id)) return json({ error: "Scene not found" }, 404);
     const record = await kvGetJson(env, `cs:${id}`);
     if (!record) return json({ error: "Scene not found" }, 404);
-    if (body == null || body.name == null) return json({ error: "Missing name" }, 400);
-    const name = sanitizeSceneName(body.name);
+    if (body == null || (body.name == null && body.allowExport == null)) return json({ error: "Missing name" }, 400);
+    // Only the uploader (owner key) can change the export setting.
+    if (body.allowExport != null && !(await isSceneOwner(record, request.headers.get(OWNER_KEY_HEADER)))) {
+      return json({ error: "Only the scene's creator can change its export setting" }, 403);
+    }
+    const name = body.name != null ? sanitizeSceneName(body.name) : sanitizeSceneName(record.name);
     record.name = name;
     record.id = id;
+    if (body.allowExport != null) record.allowExport = allowExportFromBody(body.allowExport);
     record.updatedAt = new Date().toISOString();
     const encoded = JSON.stringify(record);
     await env.SCENES.put(`cs:${id}`, encoded);
+    const allowExport = exportAllowed(record);
     const index = await readIndex(env, "cs-index");
-    const next = index.map((s) => s.id === id ? { ...s, name, updatedAt: record.updatedAt, uploadedAt: record.updatedAt, size: new TextEncoder().encode(encoded).length, pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json` } : s);
+    const next = index.map((s) => s.id === id ? { ...s, name, allowExport, updatedAt: record.updatedAt, uploadedAt: record.updatedAt, size: new TextEncoder().encode(encoded).length, pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json` } : s);
     await env.SCENES.put("cs-index", JSON.stringify(next));
-    const meta = next.find((s) => s.id === id);
+    const meta = next.find((s) => s.id === id) || { pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json`, size: encoded.length };
     return json({
       ok: true,
       url: `${requestOrigin(request)}/api/community-scenes/${id}`,
       pathname: meta.pathname,
-      scene: { id, name, uploadedAt: record.updatedAt, createdAt: record.createdAt || null, updatedAt: record.updatedAt, size: meta.size },
+      scene: { id, name, uploadedAt: record.updatedAt, createdAt: record.createdAt || null, updatedAt: record.updatedAt, size: meta.size, allowExport },
+      allowExport,
       ...sceneUrls(request, id),
     });
   }
@@ -614,6 +634,44 @@ async function handleApi(request, env) {
   return json({ error: "Not found" }, 404);
 }
 
+function appIndex(request, env) {
+  const indexUrl = new URL(request.url);
+  indexUrl.pathname = "/index.html";
+  indexUrl.search = "";
+  return env.ASSETS.fetch(new Request(indexUrl.toString(), { method: "GET" }));
+}
+
+function withHeaders(res, headers) {
+  const out = new Response(res.body, res);
+  for (const [k, v] of Object.entries(headers)) out.headers.set(k, v);
+  return out;
+}
+
+function htmlResponse(html, status) {
+  return new Response(html, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+}
+
+// /s/:id and /e/:id: the app. /embed/:id: the app in embed mode (main.js),
+// only for scenes whose creator allows exports. A scene with exports off
+// also gets frame-ancestors 'self' on /s and /e so its share links can't be
+// iframed on other sites (the embed route is what other sites should use).
+async function serveShareRoute(request, env, kind, rawId) {
+  let id = "";
+  try { id = decodeURIComponent(rawId); } catch { id = ""; }
+  let record = null;
+  if (env.SCENES && SCENE_ID_RE.test(id)) {
+    try { record = await kvGetJson(env, `cs:${id}`); } catch { record = null; }
+  }
+  if (kind === "embed") {
+    if (!record) return htmlResponse(embedUnavailableHtml({ status: 404, origin: requestOrigin(request) }), 404);
+    if (!exportAllowed(record)) return htmlResponse(embedUnavailableHtml({ status: 403, name: record.name, origin: requestOrigin(request) }), 403);
+    return withHeaders(await appIndex(request, env), { "cache-control": "no-store" });
+  }
+  const res = await appIndex(request, env);
+  if (record && !exportAllowed(record)) return withHeaders(res, { "content-security-policy": "frame-ancestors 'self'" });
+  return res;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -621,11 +679,9 @@ export default {
     if (path === "/api" || path.startsWith("/api/")) {
       return handleApi(request, env);
     }
-    if (/^\/[se]\/[^/]+\/?$/.test(path)) {
-      const indexUrl = new URL(request.url);
-      indexUrl.pathname = "/index.html";
-      indexUrl.search = "";
-      return env.ASSETS.fetch(new Request(indexUrl.toString(), { method: "GET" }));
+    const shareMatch = path.match(/^\/(s|e|embed)\/([^/]+)\/?$/);
+    if (shareMatch) {
+      return serveShareRoute(request, env, shareMatch[1], shareMatch[2]);
     }
     return env.ASSETS.fetch(request);
   },

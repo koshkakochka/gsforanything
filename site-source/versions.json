@@ -1,9 +1,22 @@
 {
   "versions": [
     {
-      "id": "0.990",
-      "label": "GS 0.990 (this build)",
+      "id": "0.991",
+      "label": "GS 0.991 (this build)",
       "url": null,
+      "date": "2026-11-02",
+      "changes": [
+        "Embed export: the Share tab has an Embed button that gives you an <iframe> code to put your scene on any website. Pick a size (responsive, 800×450, 1280×720 or square) and whether to include Enter VR, see a preview, and copy it. A scene that isn't uploaded yet is uploaded once for you.",
+        "Community scenes have an Embed button too, for scenes whose creator allows exports.",
+        "The embedded scene is view-only: drag to orbit, Enter VR on headsets that support it, and a small \"Made with GS For Anything\" link back to the scene.",
+        "When you upload to Community you can choose to allow or not allow others to export your scene (on by default; scenes uploaded before this count as allowed). You can change it later on your own scenes with Allow exports / Block exports.",
+        "On a scene whose creator turned exports off, other people can't export models or .vrscene files, save it to their device, re-upload it, merge it or embed it. They see a short message instead, and other sites can't embed or frame it. The scene can still be viewed, and its code can still be read in the editor."
+      ]
+    },
+    {
+      "id": "0.990",
+      "label": "GS 0.990",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-02",
       "changes": [
         "Exit VR: in VR, a big red Exit VR button sits at the top of the menu on every tab. Point and click (or pinch) once to leave VR and get the normal 2D page back.",
