@@ -1,9 +1,24 @@
 {
   "versions": [
     {
-      "id": "0.988",
-      "label": "GS 0.988 (this build)",
+      "id": "0.989",
+      "label": "GS 0.989 (this build)",
       "url": null,
+      "date": "2026-11-02",
+      "changes": [
+        "The 🎤 mic button now says what it is doing, right under the button (and in the VR menu and the VR HUD): downloading the speech model with a percentage (first time only), Listening, Transcribing, Sent, or why it can't listen.",
+        "Listening only starts once the speech model is ready, and the model starts loading as soon as you first turn the mic on. Speech recognition runs in the background so the scene stays smooth.",
+        "If the microphone is blocked or missing you see it, with how to fix it: on Quest, Settings › Apps › Browser › Microphone / site permissions.",
+        "Enter VR asks for the microphone first if you've used the mic before, so the permission question doesn't appear inside the headset. People who never use the mic aren't asked.",
+        "Background noise no longer keeps the mic recording forever: it adjusts to the room and a single recording is cut at 15 seconds.",
+        "Noise-only results like [Music], [BEEP] or empty text are no longer sent to the chat.",
+        "Push-to-talk (A / X on the controller) shows a message when the microphone isn't allowed instead of silently doing nothing."
+      ]
+    },
+    {
+      "id": "0.988",
+      "label": "GS 0.988",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-02",
       "changes": [
         "GS's own pop-ups replace the browser's alert / confirm / prompt boxes: Clear scene, Files → Clear all, the Community theme name and Chat → Prompt → Reset now ask with an in-app pop-up.",
