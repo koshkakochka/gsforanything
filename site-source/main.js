@@ -15,7 +15,9 @@ import * as GSContext from './creationContext.js';
 import * as GSMerge from './communityMerge.js';
 import { normalizeEnvironmentHdri, environmentHdriLoadUrl, environmentHdriSignature, hdriFormatFromName, HDRI_FILE_MAX_BYTES } from './sceneHdri.js';
 import * as ChatPrompt from './chatPrompt.js';
-import { gsConfirm, gsPrompt, configureDialogs, dialogCard, refreshDialogMode, installDialogGlobals } from './gsDialog.js';
+import { gsAlert, gsConfirm, gsPrompt, configureDialogs, dialogCard, refreshDialogMode, installDialogGlobals } from './gsDialog.js';
+import { initEmbedUi, mountEmbedChrome, parseEmbedRoute } from './embedExport.js';
+import { EXPORTS_OFF_MESSAGE, OWNER_KEY_HEADER } from './sceneExportPolicy.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { initSceneExport } from './exporter.js';
@@ -336,6 +338,7 @@ function handleMenuAction(action) {
 			renderDomEnv();
 			break;
 		case 'scenes:export':
+			if (!sceneExportsAllowed()) { showExportsBlocked(); break; }
 			showExportModal();
 			break;
 		case 'scenes:exportModel:glb':
@@ -347,6 +350,9 @@ function handleMenuAction(action) {
 			break;
 		case 'scenes:shareLink':
 			shareCurrentScene();
+			break;
+		case 'scenes:embed':
+			embedCurrentScene();
 			break;
 		case 'scenes:openShareTab':
 			document.querySelector('.dchat-tab[data-tab="share"]')?.click();
@@ -636,6 +642,10 @@ let communityApplyChain = Promise.resolve();
 let chatSection = 'scene'; // Chat tab: 'scene' | 'theme' | 'prompt'
 let displayOnlyMode = false; // share URL opened with editor chrome stripped
 let pendingShare = null; // share modal payload { id, name, editorUrl, viewUrl }
+// Community upload: "Allow others to export this scene" (Community tab and
+// Share tab checkboxes). Starts at Allow on every page load.
+let uploadAllowExport = true;
+let embedRoute = null; // { sceneId, vr } on /embed/:id (see bootSharedScene)
 let codeEditorDirty = false; // user has unsaved edits in Code tab
 let codeHighlightApi = null; // set when Code tab highlight layer mounts
 // HDRI state (textures filled later by initHdriControls; checked in applyEnvironmentMode)
@@ -2064,10 +2074,60 @@ const sceneModelExport = initSceneExport({
 	getRoots: () => userContentRoots(),
 	getSceneName: () => activeScene?.name || 'GS scene',
 	notify: (text, kind) => updateStatus(text, kind),
-	isImmersive: () => renderer.xr.isPresenting
+	isImmersive: () => renderer.xr.isPresenting,
+	canExport: () => sceneExportsAllowed(),
+	onBlocked: () => showExportsBlocked()
 });
 window.gsSceneExport = sceneModelExport;
-sceneModelExport.mountShareTab(document.getElementById('dchat-share'), { onShareLink: () => shareCurrentScene() });
+sceneModelExport.mountShareTab(document.getElementById('dchat-share'), {
+	onShareLink: () => shareCurrentScene(),
+	onEmbed: () => embedCurrentScene(),
+	allowExport: { get: () => uploadAllowExport, set: (v) => setUploadAllowExport(v) }
+});
+const embedUi = initEmbedUi({
+	copyText: (text) => copyText(text),
+	notify: (text, kind) => updateStatus(text, kind),
+	isImmersive: () => renderer.xr.isPresenting,
+	alert: (message, opts) => gsAlert(message, opts)
+});
+window.gsEmbed = embedUi;
+
+// --- Export permission (see sceneExportPolicy.js) ---
+// A Community scene whose creator chose "Don't allow exports" is loaded with
+// exportLocked (communitySceneFields) for everyone but its creator. The flag
+// stays on the active scene through chat edits, so editing it doesn't unlock
+// it. The creator is whoever holds the owner key the server returned at
+// upload (kept in this browser's localStorage; GS has no accounts).
+const OWNED_SCENES_KEY = 'gs.ownedScenes';
+function ownedSceneKeys() {
+	try { return JSON.parse(localStorage.getItem(OWNED_SCENES_KEY) || '{}') || {}; } catch { return {}; }
+}
+function ownerKeyFor(id) { return id ? ownedSceneKeys()[id] || null : null; }
+function rememberOwnerKey(id, key) {
+	if (!id || !key) return;
+	const all = ownedSceneKeys();
+	all[id] = key;
+	try { localStorage.setItem(OWNED_SCENES_KEY, JSON.stringify(all)); } catch { /* storage blocked */ }
+}
+function ownerHeaders(id, extra = {}) {
+	const key = ownerKeyFor(id);
+	return key ? { ...extra, [OWNER_KEY_HEADER]: key } : extra;
+}
+function sceneExportsAllowed() { return !activeScene?.exportLocked; }
+function showExportsBlocked() {
+	updateStatus('Exports are off for this scene', 'error');
+	gsAlert(EXPORTS_OFF_MESSAGE, { title: 'Exports turned off' });
+}
+function setUploadAllowExport(v) {
+	uploadAllowExport = v !== false;
+	const box = document.getElementById('dchat-upload-allow-export');
+	if (box) box.checked = uploadAllowExport;
+	sceneModelExport.refreshShareTab();
+}
+function refreshExportPermissionUi() {
+	sceneModelExport.refreshShareTab();
+	document.body.classList.toggle('gs-exports-locked', !sceneExportsAllowed());
+}
 
 function snapshotSystemObjects() {
 	systemObjectIds.clear();
@@ -2496,6 +2556,7 @@ function setActiveScene(sc) {
 	resetSceneChat();
 	syncCodeEditorFromState({ force: true });
 	renderDomSceneList();
+	refreshExportPermissionUi();
 }
 
 /** Chat back to a fresh start: API history, bubbles (desktop + VR) and the
@@ -2539,6 +2600,7 @@ function buildSceneData(name) {
 }
 
 async function doExport() {
+	if (!sceneExportsAllowed()) { hideExportModal(); showExportsBlocked(); return; }
 	const name = exportNameInput.value.trim() || 'Untitled';
 	const ext = exportExtInput.value.trim().replace(/^\./, '') || 'vrscene';
 	sceneFileExtension = ext;
@@ -2566,6 +2628,7 @@ async function doExport() {
 // Downloads the current scene as a local file (a real save-to-disk, unlike
 // "Export" above which only saves to this server's single scene slot).
 async function doDownloadExport() {
+	if (!sceneExportsAllowed()) { hideExportModal(); showExportsBlocked(); return; }
 	const name = exportNameInput.value.trim() || 'Untitled';
 	const ext = exportExtInput.value.trim().replace(/^\./, '') || 'vrscene';
 	sceneFileExtension = ext;
@@ -2685,6 +2748,8 @@ const editorLink = document.getElementById('editor-link');
 function parseShareRoute() {
 	const path = window.location.pathname.replace(/\/+$/, '') || '/';
 	const params = new URLSearchParams(window.location.search);
+	const embed = parseEmbedRoute(window.location);
+	if (embed) return { sceneId: embed.sceneId, displayOnly: true, embed };
 	const pathMatch = path.match(/^\/(s|e)\/([A-Za-z0-9_-]+)$/);
 	if (pathMatch) {
 		return { sceneId: pathMatch[2], displayOnly: pathMatch[1] === 's' };
@@ -2722,11 +2787,13 @@ function currentShareUrl() {
 function sharePayloadFromMeta(meta, urls = {}) {
 	const origin = window.location.origin;
 	const id = meta.id || urls.id;
+	const allowExport = (urls.allowExport ?? meta.allowExport) !== false;
 	return {
 		id,
 		name: meta.name || 'Untitled',
 		editorUrl: urls.editorUrl || meta.editorUrl || (id ? `${origin}/e/${id}` : ''),
-		viewUrl: urls.viewUrl || meta.viewUrl || (id ? `${origin}/s/${id}` : '')
+		viewUrl: urls.viewUrl || meta.viewUrl || (id ? `${origin}/s/${id}` : ''),
+		allowExport
 	};
 }
 
@@ -2790,12 +2857,18 @@ async function copyText(text) {
 	return ok;
 }
 
-async function uploadCurrentSceneToCommunity() {
+async function uploadCurrentSceneToCommunity({ showShare = true, allowExport = uploadAllowExport } = {}) {
 	if (displayOnlyMode) return null;
 	const name = activeScene?.name || 'My Scene';
 	let sceneData = buildSceneData(name);
 	if (sceneData.codeBlocks.length === 0) {
 		updateStatus('Nothing to upload - add or load something first', 'error');
+		return null;
+	}
+	// Re-uploading someone else's no-export scene (edited or not) would hand
+	// out a copy with exports on.
+	if (!sceneExportsAllowed()) {
+		showExportsBlocked();
 		return null;
 	}
 	// Ask whether to publish the creation context (chat + files); null = cancelled.
@@ -2812,16 +2885,18 @@ async function uploadCurrentSceneToCommunity() {
 	return fetch('/api/community-scenes', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(sceneData)
+		body: JSON.stringify({ ...sceneData, allowExport: allowExport !== false })
 	}).then(res => res.json().then(data => ({ ok: res.ok, data }))).then(async ({ ok, data }) => {
 		if (!ok || data.error) throw new Error(data.error || 'Upload failed');
 		const sceneId = data.id || data.scene?.id;
+		rememberOwnerKey(sceneId, data.ownerKey);
 		const hdriNote = hdriFile && sceneId ? await uploadSceneHdriFile(sceneId, hdriFile.file) : '';
-		updateStatus(`Uploaded "${data.scene?.name || name}" to community${hdriNote}`, hdriNote ? 'error' : 'connected');
+		const exportsNote = data.allowExport === false ? ' (exports off)' : '';
+		updateStatus(`Uploaded "${data.scene?.name || name}" to community${exportsNote}${hdriNote}`, hdriNote ? 'error' : 'connected');
 		refreshCommunityScenes();
-		const share = sharePayloadFromMeta(data.scene || { name, id: data.id }, data);
+		const share = sharePayloadFromMeta(data.scene || { name, id: data.id }, { ...data, ownerKey: undefined });
 		lastUploadedShare = { sig: shareSignature(sceneData.codeBlocks), share };
-		showShareModal(share);
+		if (showShare) showShareModal(share);
 		lastUploadedShare.hdriSig = uploadHdriSig;
 		return share;
 	}).catch(err => {
@@ -2836,15 +2911,16 @@ async function uploadCurrentSceneToCommunity() {
 // as Community → Upload Current Scene. Desktop gets the same share modal; in
 // VR (modal not visible) the editor link is copied instead.
 let lastUploadedShare = null;
-function shareCurrentScene() {
-	if (displayOnlyMode) return Promise.resolve(null);
+/** The Community share payload for the scene as it is now, or null when it
+ *  would need an upload first (shareCurrentScene / embedCurrentScene). */
+function existingShareForCurrentScene() {
 	const sc = activeScene;
 	const sig = shareSignature(buildSceneData('').codeBlocks);
 	let share = null;
 	if (sc && sc.communityId && executedCodeBlocks.length === 0
 		&& JSON.stringify(sc.codeBlocks) === sc.communitySig
 		&& JSON.stringify(originRotationActive() ? originRotation.rotation : null) === (sc.communityOrigin ?? 'null')) {
-		share = sharePayloadFromMeta({ id: sc.communityId, name: sc.name }, sc);
+		share = sharePayloadFromMeta({ id: sc.communityId, name: sc.name, allowExport: sc.communityAllowExport }, sc);
 	} else if (lastUploadedShare && lastUploadedShare.sig === sig) {
 		share = lastUploadedShare.share;
 	}
@@ -2854,6 +2930,12 @@ function shareCurrentScene() {
 	if (share && !hdriMatches(share)) {
 		share = lastUploadedShare && lastUploadedShare.sig === sig && lastUploadedShare.hdriSig === hdriSig ? lastUploadedShare.share : null;
 	}
+	return share;
+}
+
+function shareCurrentScene() {
+	if (displayOnlyMode) return Promise.resolve(null);
+	const share = existingShareForCurrentScene();
 	const copyInXr = (s) => {
 		if (s && renderer.xr.isPresenting) {
 			copyText(s.editorUrl).then(ok => updateStatus(ok ? `Share link copied: ${s.editorUrl}` : `Share link: ${s.editorUrl}`, 'connected'));
@@ -2863,6 +2945,59 @@ function shareCurrentScene() {
 	if (!share) return uploadCurrentSceneToCommunity().then(copyInXr); // shows the share modal itself
 	if (!renderer.xr.isPresenting) showShareModal(share);
 	return Promise.resolve(copyInXr(share));
+}
+
+// Share tab / menu "Embed": the <iframe> code for the scene's Community copy
+// (embedExport.js). Embedding counts as an export: not offered for a scene
+// whose creator turned exports off, and /embed/:id refuses such scenes, so an
+// upload made for embedding always has exports allowed.
+async function embedCurrentScene() {
+	if (displayOnlyMode) return null;
+	if (!sceneExportsAllowed()) { showExportsBlocked(); return null; }
+	let share = existingShareForCurrentScene();
+	if (share && share.allowExport === false) {
+		await gsAlert('You turned exports off for this scene, and embedding counts as an export. Turn exports on for it in Community (the "Exports off" button on its row) to embed it.', { title: 'Exports are off' });
+		return null;
+	}
+	if (!share) {
+		if (!uploadAllowExport) {
+			const ok = await gsConfirm('Embedding counts as an export, so this scene will be uploaded to Community with exports allowed (you chose "Don\'t allow exports"). Continue?', { title: 'Embed scene', okLabel: 'Upload & embed' });
+			if (!ok) return null;
+		}
+		share = await uploadCurrentSceneToCommunity({ showShare: false, allowExport: true });
+		if (!share) return null;
+	}
+	return embedUi.open(share);
+}
+
+/** Community row "Embed" (any scene whose creator allows exports). */
+function embedCommunityScene(cs) {
+	if (!cs?.id) return null;
+	if (cs.allowExport === false) { showExportsBlocked(); return null; }
+	return embedUi.open(sharePayloadFromMeta(cs));
+}
+
+/** Creator-only: turn exports on/off for an uploaded scene (PATCH with the owner key). */
+async function setCommunitySceneAllowExport(cs, allowExport) {
+	if (!cs?.id || !ownerKeyFor(cs.id)) return false;
+	try {
+		const res = await fetch(`/api/community-scenes/${encodeURIComponent(cs.id)}`, {
+			method: 'PATCH',
+			headers: ownerHeaders(cs.id, { 'Content-Type': 'application/json' }),
+			body: JSON.stringify({ allowExport })
+		});
+		const data = await res.json();
+		if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
+		const on = data.allowExport !== false;
+		updateStatus(`Exports ${on ? 'allowed' : 'turned off'} for "${cs.name}"`, 'connected');
+		if (lastUploadedShare?.share?.id === cs.id) lastUploadedShare.share.allowExport = on;
+		if (activeScene?.communityId === cs.id) activeScene.communityAllowExport = on;
+		refreshCommunityScenes();
+		return true;
+	} catch (err) {
+		updateStatus(`Export setting error: ${err.message}`, 'error');
+		return false;
+	}
 }
 
 function refreshCommunityScenes() {
@@ -2997,6 +3132,34 @@ function renderCommunitySceneList(scenes) {
 		rename.addEventListener('click', () => showRenameModal(cs));
 
 		actions.append(load, share, rename);
+		// Embed (exports allowed only). The creator also gets an exports toggle.
+		const owned = !!ownerKeyFor(cs.id);
+		const exportsOff = cs.allowExport === false;
+		if (!exportsOff) {
+			const embed = document.createElement('button');
+			embed.className = 'dchat-btn';
+			embed.textContent = 'Embed';
+			embed.dataset.communityEmbed = cs.id;
+			embed.title = 'HTML code to show this scene on another website';
+			embed.addEventListener('click', () => embedCommunityScene(cs));
+			actions.appendChild(embed);
+		}
+		if (exportsOff) {
+			const badge = document.createElement('span');
+			badge.className = 'dchat-noexport-badge';
+			badge.textContent = 'No exports';
+			badge.title = 'The creator turned off exports: no 3D model download, embed or code copy';
+			nameRow.appendChild(badge);
+		}
+		if (owned) {
+			const toggle = document.createElement('button');
+			toggle.className = 'dchat-btn secondary';
+			toggle.dataset.communityExportToggle = cs.id;
+			toggle.textContent = exportsOff ? 'Allow exports' : 'Block exports';
+			toggle.title = exportsOff ? 'You uploaded this scene: let others export and embed it' : 'You uploaded this scene: stop others exporting or embedding it';
+			toggle.addEventListener('click', () => setCommunitySceneAllowExport(cs, exportsOff));
+			actions.appendChild(toggle);
+		}
 		GSMerge.decorateCommunityRow(actions, cs); // "Merge" pick button
 		item.append(nameRow, actions);
 		dchatCommunityList.appendChild(item);
@@ -3037,6 +3200,18 @@ function mountHtmlActionButtons(container, specs, { accentVariants = ['accent', 
 
 function renderCommunityDesktopButtons() {
 	mountHtmlActionButtons(dchatCommunityButtonsMount, COMMUNITY_BUTTONS);
+	// Upload choice: allow or don't allow others to export the uploaded scene.
+	if (!dchatCommunityButtonsMount) return;
+	const label = document.createElement('label');
+	label.className = 'dchat-upload-allow-export';
+	label.title = 'Unchecked: people can view the scene but not download it as a 3D model, embed it or save its code';
+	const box = document.createElement('input');
+	box.type = 'checkbox';
+	box.id = 'dchat-upload-allow-export';
+	box.checked = uploadAllowExport;
+	box.addEventListener('change', () => setUploadAllowExport(box.checked));
+	label.append(box, document.createTextNode(' Allow others to export uploads'));
+	dchatCommunityButtonsMount.appendChild(label);
 }
 
 function enqueueCommunityApply(fn) {
@@ -3047,7 +3222,11 @@ function enqueueCommunityApply(fn) {
 
 // What shareCurrentScene needs to tell "unchanged since it was loaded".
 function communitySceneFields(data, key) {
+	const communityAllowExport = data.allowExport !== false;
 	return {
+		communityAllowExport,
+		// Locked for everyone but the creator (isOwner: the server checked our owner key).
+		exportLocked: !communityAllowExport && !data.isOwner,
 		communityKey: key,
 		communityId: data.id || (key.startsWith('id:') ? key.slice(3) : null),
 		communityHdri: environmentHdriSignature(data.environmentHdri),
@@ -3086,11 +3265,17 @@ function loadCommunityScene(cs) {
 
 	const ticket = ++communityLoadTicket;
 	updateStatus(`Loading "${name}"...`, 'connecting');
-	const fetchUrl = cs.id ? `/api/community-scenes/${encodeURIComponent(cs.id)}` : cs.url;
+	const fetchUrl = cs.id ? `/api/community-scenes/${encodeURIComponent(cs.id)}${embedRoute ? '?embed=1' : ''}` : cs.url;
 
-	const promise = fetch(fetchUrl)
-		.then(res => {
-			if (!res.ok) throw new Error('Failed to fetch community scene');
+	const promise = fetch(fetchUrl, cs.id ? { headers: ownerHeaders(cs.id) } : undefined)
+		.then(async res => {
+			if (!res.ok) {
+				const body = await res.json().catch(() => ({}));
+				const err = new Error(body.error || 'Failed to fetch community scene');
+				err.status = res.status;
+				err.exportsDisabled = !!body.exportsDisabled;
+				throw err;
+			}
 			return res.json();
 		})
 		.then(data => enqueueCommunityApply(async () => {
@@ -3547,6 +3732,7 @@ async function sendThemeChat() {
 
 async function bootSharedScene() {
 	const route = parseShareRoute();
+	if (route.embed) return bootEmbedScene(route);
 	if (route.displayOnly) applyDisplayOnlyMode();
 
 	try {
@@ -3575,6 +3761,37 @@ async function bootSharedScene() {
 		updateStatus(route.displayOnly ? '' : `Loaded "${sc.name}"`, route.displayOnly ? '' : 'connected');
 	} catch (err) {
 		updateStatus(`Load error: ${err.message}`, 'error');
+	}
+}
+
+// /embed/:id (embedExport.js): the app in display-only mode for an <iframe>
+// on another site: orbit camera, optional Enter VR (?vr=0 hides it), a
+// "Made with GS For Anything" link, no editor UI and no Community list fetch.
+async function bootEmbedScene(route) {
+	embedRoute = route.embed;
+	applyDisplayOnlyMode();
+	document.body.classList.add('gs-embed');
+	document.body.classList.toggle('gs-embed-vr', !!embedRoute.vr);
+	if (embedRoute.vr && xrEntryButton) {
+		xrEntryButton.style.display = '';
+		// Only an Enter VR button: no "VR not supported" notice on a page that isn't ours.
+		const xr = navigator.xr;
+		Promise.resolve(xr ? xr.isSessionSupported('immersive-vr') : false).catch(() => false)
+			.then((supported) => { if (!supported) document.body.classList.remove('gs-embed-vr'); });
+	}
+	const chrome = mountEmbedChrome({ sceneId: route.sceneId });
+	setCameraControlMode('orbit', { persist: false });
+	try {
+		const sc = await loadCommunitySceneById(route.sceneId, { activate: true });
+		document.title = sc.name ? `${sc.name} — GS For Anything` : 'GS For Anything';
+		chrome.setSceneName(sc.name);
+		updateStatus('', '');
+		document.body.dataset.gsEmbedReady = '1';
+	} catch (err) {
+		chrome.showMessage(err.exportsDisabled
+			? 'The creator of this scene turned off exports, so it can\'t be embedded.'
+			: err.status === 404 ? 'This scene doesn\'t exist or was removed.' : `This scene couldn't be loaded: ${err.message}`);
+		document.body.dataset.gsEmbedReady = 'error';
 	}
 }
 
@@ -4917,6 +5134,8 @@ GSMerge.initCommunityMerge({
 	getModelLabel: () => getActiveModelDisplayName(),
 	loadContext: (data) => GSContext.loadContextForScene(data),
 	isDisplayOnly: () => displayOnlyMode,
+	// Merging copies a scene's code: only for scenes with exports allowed (or our own).
+	canMergeScene: (cs) => cs?.allowExport !== false || !!ownerKeyFor(cs?.id),
 	parseVrExecBlocks: (text) => parseVrExecBlocks(text),
 	callChat: async (apiMessages) => {
 		isLoading = true;

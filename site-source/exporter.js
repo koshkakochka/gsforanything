@@ -939,6 +939,12 @@ const DIALOG_CSS = `
 .gs-share-format b { font-size:14px; }
 .gs-share-format span { font-size:11px; color:rgba(255,255,255,0.6); line-height:1.3; }
 .gs-share-obj-note { font-size:11px; line-height:1.4; color:#fbbf24; margin:8px 0 0; }
+.gs-share-format:disabled, .gs-share-link-btn:disabled { opacity:0.45; cursor:not-allowed; }
+.gs-share-locked { display:none; font-size:12px; line-height:1.45; color:#fbbf24; background:rgba(251,191,36,0.1); border:1px solid rgba(251,191,36,0.35); border-radius:10px; padding:8px 10px; margin:0 0 12px; }
+.gs-share.gs-exports-locked .gs-share-locked { display:block; }
+.gs-share.gs-exports-locked .gs-share-allow-wrap { display:none; }
+.gs-share-allow { display:flex; align-items:center; gap:10px; min-height:36px; margin-top:8px; font-size:13px; color:rgba(255,255,255,0.85); cursor:pointer; }
+.gs-share-allow input { width:20px; height:20px; flex-shrink:0; margin:0; }
 `;
 
 /**
@@ -946,11 +952,17 @@ const DIALOG_CSS = `
  *   getRoots: () => THREE.Object3D[],
  *   getSceneName: () => string,
  *   notify?: (text: string, kind?: string) => void,
- *   isImmersive?: () => boolean
+ *   isImmersive?: () => boolean,
+ *   canExport?: () => boolean,
+ *   onBlocked?: () => void
  * }} opts
+ * canExport: false when the active scene came from Community with exports
+ * turned off by its creator (main.js); every export path then calls
+ * onBlocked instead (an in-app message) and the Share tab disables them.
  */
 export function initSceneExport(opts) {
-	const { getRoots, getSceneName, notify = () => {}, isImmersive = () => false } = opts;
+	const { getRoots, getSceneName, notify = () => {}, isImmersive = () => false, canExport = () => true, onBlocked = () => {} } = opts;
+	let shareTabRefresh = () => {};
 	let format = 'glb';
 	let busy = false;
 	let modal = null, nameInput, extEl, noteEl, statusEl, exportBtn;
@@ -965,6 +977,7 @@ export function initSceneExport(opts) {
 
 	async function run(fmt, baseName) {
 		if (busy) return null;
+		if (!canExport()) { onBlocked(); return null; }
 		const f = FORMAT_BY_ID[fmt] || FORMAT_BY_ID.glb;
 		busy = true;
 		const base = safeFileName(baseName || getSceneName());
@@ -1059,6 +1072,7 @@ export function initSceneExport(opts) {
 	function open(fmt = format) {
 		// In a headset the DOM dialog is not visible: export straight away
 		// with the scene name (Quest saves it to the browser's downloads).
+		if (!canExport()) { onBlocked(); return Promise.resolve(null); }
 		if (isImmersive()) return run(fmt).catch(() => null);
 		ensureModal();
 		setFormat(fmt);
@@ -1081,18 +1095,29 @@ export function initSceneExport(opts) {
 	/**
 	 * Fills the desktop Share tab: the scene link (main.js passes
 	 * shareCurrentScene, which reuses the Community share flow) and the five
-	 * export formats, each opening the export dialog preselected.
+	 * export formats, each opening the export dialog preselected, plus the
+	 * Embed section (main.js passes embedCurrentScene) and the
+	 * "Allow others to export" choice used when the scene is uploaded.
+	 * refreshShareTab() re-reads canExport() / the allow choice.
 	 */
-	function mountShareTab(container, { onShareLink } = {}) {
+	function mountShareTab(container, { onShareLink, onEmbed, allowExport = null } = {}) {
 		if (!container || container.dataset.gsShareMounted) return;
 		container.dataset.gsShareMounted = '1';
 		addCss();
 		container.innerHTML = `
 			<div class="gs-share">
+				<p class="gs-share-locked" data-share="locked">The creator of this scene turned off exports: 3D model export, embedding and saving its code aren't available. You can still view it and share its link.</p>
 				<div class="gs-share-section">
 					<h4>Link</h4>
 					<button type="button" class="gs-share-link-btn" data-share="link">🔗 Share link to this scene</button>
 					<p class="gs-share-hint">Same link as Community → Share. A scene that isn't in Community yet is uploaded there first (public, like Upload Current Scene).</p>
+					${allowExport ? `<div class="gs-share-allow-wrap"><label class="gs-share-allow"><input type="checkbox" data-share="allow-export" checked> Allow others to export this scene</label>
+					<p class="gs-share-hint">Applies when this scene is uploaded: unchecked, people can view it but not download it as a 3D model, embed it or save its code.</p></div>` : ''}
+				</div>
+				<div class="gs-share-section">
+					<h4>Embed</h4>
+					<button type="button" class="gs-share-link-btn" data-share="embed">&lt;/&gt; Embed this scene on a website</button>
+					<p class="gs-share-hint">HTML code for an &lt;iframe&gt; showing the scene, view only, with an optional Enter VR button. Uses the Community copy of the scene (uploaded first if needed).</p>
 				</div>
 				<div class="gs-share-section">
 					<h4>Export 3D model</h4>
@@ -1104,11 +1129,27 @@ export function initSceneExport(opts) {
 				</div>
 			</div>`;
 		container.querySelector('[data-share="link"]').addEventListener('click', () => { if (onShareLink) onShareLink(); });
+		container.querySelector('[data-share="embed"]').addEventListener('click', () => {
+			if (!canExport()) { onBlocked(); return; }
+			if (onEmbed) onEmbed();
+		});
 		container.querySelectorAll('[data-share-format]').forEach((b) => b.addEventListener('click', () => open(b.dataset.shareFormat)));
+		const allowBox = container.querySelector('[data-share="allow-export"]');
+		if (allowBox && allowExport) allowBox.addEventListener('change', () => allowExport.set(allowBox.checked));
+		shareTabRefresh = () => {
+			const locked = !canExport();
+			container.querySelector('.gs-share').classList.toggle('gs-exports-locked', locked);
+			container.querySelectorAll('[data-share-format], [data-share="embed"]').forEach((b) => {
+				b.disabled = locked;
+				b.title = locked ? 'The creator of this scene turned off exports' : '';
+			});
+			if (allowBox && allowExport) allowBox.checked = allowExport.get();
+		};
+		shareTabRefresh();
 	}
 
 	return {
-		open, close, mountShareTab, exportNow: run, formats: EXPORT_FORMATS,
+		open, close, mountShareTab, refreshShareTab: () => shareTabRefresh(), exportNow: run, formats: EXPORT_FORMATS,
 		exportGLB: () => exportGLTF(getRoots(), { binary: true }),
 		exportGLTF: () => exportGLTF(getRoots(), { binary: false }),
 		exportFBX: () => exportFBX(getRoots()),
