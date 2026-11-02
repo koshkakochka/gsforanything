@@ -20,7 +20,9 @@ export const VARIANT_COLORS = {
 	success: { fill1: '#047857', fill2: '#065f46', text: '#ffffff', stroke: '#70738c' },
 	warning: { fill1: '#b45309', fill2: '#92400e', text: '#ffffff', stroke: '#70738c' },
 	active: { fill: '#047857', text: '#ffffff', stroke: '#c7d2fe' },
-	inactiveToggle: { fill: 'rgba(255,255,255,0.12)', text: 'rgba(255,255,255,0.8)', stroke: '#70738c' }
+	inactiveToggle: { fill: 'rgba(255,255,255,0.12)', text: 'rgba(255,255,255,0.8)', stroke: '#70738c' },
+	// Not available here (e.g. AR on a headset/browser without immersive-ar): clicks are ignored.
+	disabled: { fill: 'rgba(255,255,255,0.04)', text: 'rgba(255,255,255,0.45)', stroke: '#4a4c5e' }
 };
 const STROKE_W = 1.5;
 
@@ -70,7 +72,8 @@ export function buttonsToSVG(boxes, { fontSize = 13, radius = 10 } = {}) {
 			defs.push(`<linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${v.fill1}"/><stop offset="1" stop-color="${v.fill2}"/></linearGradient>`);
 			fill = `url(#${gradId})`;
 		}
-		return `<g class="menu-btn" data-action="${escapeXml(b.action)}" data-id="${escapeXml(b.id)}" tabindex="0" role="button" style="cursor:pointer">` +
+		const off = b.variant === 'disabled';
+		return `<g class="menu-btn" data-action="${escapeXml(b.action)}" data-id="${escapeXml(b.id)}" tabindex="0" role="button"${off ? ' aria-disabled="true"' : ''} style="cursor:${off ? 'not-allowed' : 'pointer'}">` +
 			`<rect x="${b.x + STROKE_W / 2}" y="${b.y + STROKE_W / 2}" width="${Math.max(0, b.w - STROKE_W)}" height="${Math.max(0, b.h - STROKE_W)}" rx="${radius}" fill="${fill}" stroke="${v.stroke}" stroke-width="${STROKE_W}" />` +
 			`<text x="${b.x + b.w / 2}" y="${b.y + b.h / 2}" fill="${v.text}" font-size="${fontSize}" font-weight="700" ` +
 			`font-family="-apple-system,BlinkMacSystemFont,sans-serif" text-anchor="middle" dominant-baseline="central">${escapeXml(b.label)}</text>` +
@@ -91,7 +94,7 @@ export function mountButtonsToDOM(container, buttons, layoutOpts, onAction) {
 	container.innerHTML = `<svg viewBox="0 0 ${layoutOpts.width} ${totalHeight}" width="100%" style="display:block" preserveAspectRatio="xMidYMid meet">${svgBody}</svg>`;
 	container.onclick = (e) => {
 		const g = e.target.closest('[data-action]');
-		if (!g) return;
+		if (!g || g.getAttribute('aria-disabled') === 'true') return;
 		onAction(g.getAttribute('data-action'), g.getAttribute('data-id'));
 	};
 	return { boxes, totalHeight };

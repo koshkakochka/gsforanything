@@ -22,7 +22,8 @@ import { initSceneExport } from './exporter.js';
 import { createTwinSticks } from './twinSticks.js';
 import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, ORBIT_TARGET, isTextEntry } from './cameraControls.js';
 import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
-import { createSceneFit, DOME_MARGIN, FAR_MARGIN } from './sceneFit.js';
+import { createSceneFit, DOME_MARGIN, FAR_MARGIN, isDomeObject } from './sceneFit.js';
+import { createPhotoCapture, askCameraBeforeXr } from './photoCapture.js';
 // p5.js sketch import (paste / file / zip / URL -> panel in the scene). Self-contained;
 // it only uses the window.gs* hooks set up next to gsCreateP5Surface below.
 import './p5Import.js';
@@ -283,7 +284,11 @@ const dchatHdriStatus = document.getElementById('dchat-hdri-status');
 // so there is one definition and one rendering path. All clicks (mouse,
 // touch, controller ray) funnel into handleMenuAction() below.
 // ============================================================================
+// AR / VR: which immersive session Enter starts (see "AR / VR mode" below).
+// Inside an AR session they switch live between passthrough and the colour
+// skybox; inside a VR session AR applies from the next Enter.
 const ENV_MODE_BUTTONS = [
+	{ id: 'ar', label: 'AR (passthrough)', action: 'env:ar' },
 	{ id: 'vr', label: 'VR (color)', action: 'env:vr' }
 ];
 const EXIT_XR_BUTTON = [
@@ -313,10 +318,23 @@ const THEME_BUTTONS = [
 function handleMenuAction(action) {
 	switch (action) {
 		case 'env:vr':
+			setXrModePref('vr');
 			isVRMode = true;
 			applyEnvironmentMode();
 			renderDomEnv();
 			break;
+		case 'env:ar': {
+			const presenting = renderer.xr.isPresenting;
+			setXrModePref('ar');
+			if (presenting && xrSessionMode === 'immersive-ar') {
+				isVRMode = false; // back to the room
+			} else if (presenting) {
+				updateStatus('AR starts next time: Exit VR, then Enter AR', '');
+			}
+			applyEnvironmentMode();
+			renderDomEnv();
+			break;
+		}
 		case 'env:exit':
 			exitXrToDesktop();
 			break;
@@ -580,6 +598,7 @@ let keyboardSymbols = false;  // symbol layer toggled on
 // Created in initVrWindows(); null until then.
 let vrWindows = null;
 let vrMainWindow = null;
+let photoCapture = null; // 📷 camera preview (photoCapture.js), set up with the chat input
 let vrKeyboardWindow = null;
 let vrHudWindow = null;
 let vrDialogWindow = null;   // in-app dialog (gsDialog.js) as a VR window
@@ -742,13 +761,27 @@ const _arFwd = new THREE.Vector3();
 const _arCamPos = new THREE.Vector3();
 
 // ============================================================================
-// XR Button Setup — immersive-vr only (Cardboard is separate, below).
-// immersive-ar is not requested.
+// XR Button Setup — immersive-vr or immersive-ar, picked by the AR / VR
+// toggle next to it (Cardboard is separate, below).
 // ============================================================================
+// AR / VR mode. 'ar' = immersive-ar: the real room (Quest 3 passthrough, an
+// ARCore phone's camera) behind the scene, so the colour skybox, the HDRI
+// background and scene sky domes are hidden while it is on. 'vr' =
+// immersive-vr with the colour skybox. Unsupported modes are disabled; the
+// choice is remembered (gs.xrMode).
+const XR_MODE_KEY = 'gs.xrMode';
+let xrModePref = 'vr';
+try { if (localStorage.getItem(XR_MODE_KEY) === 'ar') xrModePref = 'ar'; } catch { /* storage blocked */ }
+const xrModeSupport = { vr: null, ar: null }; // null = still asking
+let xrSessionMode = null; // 'immersive-vr' | 'immersive-ar' while presenting
 const xrEntryButton = XRButton.createButton(renderer, {
 	optionalFeatures: ['hit-test', 'dom-overlay'],
-	domOverlay: { root: overlayRoot }
+	domOverlay: { root: overlayRoot },
+	getMode: () => (effectiveXrMode() === 'ar' ? 'immersive-ar' : 'immersive-vr'),
+	onSupport: (sup) => { xrModeSupport.vr = !!sup.vr; xrModeSupport.ar = !!sup.ar; renderXrModeToggle(); renderDomEnv(); },
+	onSessionMode: (mode) => { xrSessionMode = mode; }
 });
+if (!('xr' in navigator)) { xrModeSupport.vr = false; xrModeSupport.ar = false; }
 // No-WebXR fallback is an <a> without an id; give it the same id for styling.
 if (!xrEntryButton.id) xrEntryButton.id = 'XRButton';
 // Lives in the bottom #gs-dock next to the version button (see index.html).
@@ -758,6 +791,65 @@ if (gsDock) {
 } else {
 	document.body.appendChild(xrEntryButton);
 }
+// AR | VR segmented toggle, right before Enter VR / Enter AR.
+const xrModeToggle = document.createElement('div');
+xrModeToggle.id = 'gs-xr-mode';
+xrModeToggle.setAttribute('role', 'radiogroup');
+xrModeToggle.setAttribute('aria-label', 'Immersive mode');
+xrModeToggle.hidden = true;
+for (const [id, text, title] of [['ar', 'AR', 'Augmented reality: your room (passthrough) behind the scene'], ['vr', 'VR', 'Virtual reality: the scene with a colour sky']]) {
+	const b = document.createElement('button');
+	b.type = 'button';
+	b.dataset.xrMode = id;
+	b.setAttribute('role', 'radio');
+	b.textContent = text;
+	b.title = title;
+	b.addEventListener('click', (e) => { e.preventDefault(); setXrModePref(id); });
+	xrModeToggle.appendChild(b);
+}
+xrEntryButton.parentNode.insertBefore(xrModeToggle, xrEntryButton);
+// The mode Enter will start: the saved choice when this device supports it,
+// else the one it does support.
+function effectiveXrMode() {
+	const { vr, ar } = xrModeSupport;
+	if (xrModePref === 'ar') return ar === false && vr ? 'vr' : 'ar';
+	return vr === false && ar ? 'ar' : 'vr';
+}
+function renderXrModeToggle() {
+	const known = xrModeSupport.vr !== null;
+	xrModeToggle.hidden = !known || (!xrModeSupport.vr && !xrModeSupport.ar);
+	const eff = effectiveXrMode();
+	for (const b of xrModeToggle.querySelectorAll('button')) {
+		const id = b.dataset.xrMode;
+		const ok = !!xrModeSupport[id];
+		b.disabled = !ok;
+		b.setAttribute('aria-checked', String(ok && id === eff));
+		b.title = ok ? b.title.replace(/ \(not supported.*\)$/, '') : b.title.replace(/ \(not supported.*\)$/, '') + ` (not supported on this device/browser)`;
+	}
+	if (xrEntryButton.gsRefreshMode) xrEntryButton.gsRefreshMode();
+}
+function setXrModePref(mode) {
+	if (mode !== 'ar' && mode !== 'vr') return;
+	if (xrModeSupport[mode] === false) {
+		updateStatus(mode === 'ar' ? 'AR (passthrough) isn’t supported on this device' : 'VR isn’t supported on this device', 'error');
+		renderXrModeToggle();
+		return;
+	}
+	xrModePref = mode;
+	try { localStorage.setItem(XR_MODE_KEY, mode); } catch { /* storage blocked */ }
+	renderXrModeToggle();
+	renderDomEnv();
+}
+renderXrModeToggle();
+window.gsXrMode = {
+	get preferred() { return xrModePref; },
+	get effective() { return effectiveXrMode(); },
+	get support() { return { ...xrModeSupport }; },
+	get session() { return xrSessionMode; },
+	get passthrough() { return arPassthroughActive(); },
+	set: setXrModePref
+};
+
 // XRButton rewrites textContent (ENTER VR / EXIT VR / VR NOT SUPPORTED);
 // mirror that into data-xr-state so the dock can style usable vs. not.
 function syncXrEntryButtonState() {
@@ -1960,11 +2052,14 @@ function renderDomEnv() {
 	if (!dchatEnvModeMount) return;
 	const inXr = !!(renderer && renderer.xr && renderer.xr.isPresenting) ||
 		(typeof mobileXRMode !== 'undefined' && !!mobileXRMode);
+	// In an AR session the buttons show what you see now (passthrough or
+	// skybox); otherwise which mode Enter will start.
+	const inArSession = !!(renderer && renderer.xr && renderer.xr.isPresenting) && xrSessionMode === 'immersive-ar';
+	const activeMode = inArSession ? (isVRMode ? 'vr' : 'ar') : effectiveXrMode();
 	const buttons = [
-		...ENV_MODE_BUTTONS.map(b => ({
-			...b,
-			variant: (b.id === 'ar' && !isVRMode) || (b.id === 'vr' && isVRMode) ? 'active' : 'inactiveToggle'
-		})),
+		...ENV_MODE_BUTTONS.map(b => (xrModeSupport[b.id] === false && 'xr' in navigator && !(b.id === 'vr' && !xrModeSupport.ar)
+			? { ...b, label: b.id === 'ar' ? 'AR (not supported)' : 'VR (not supported)', variant: 'disabled' }
+			: { ...b, variant: b.id === activeMode ? 'active' : 'inactiveToggle' })),
 		...(inXr ? EXIT_XR_BUTTON : [])
 	];
 	mountButtonsToDOM(dchatEnvModeMount, buttons, { width: 256, height: 40, gap: 6, fontSize: 13, perRow: 2 }, handleMenuAction);
@@ -2002,6 +2097,16 @@ function applyEnvironmentMode() {
 	const inMobileXR = typeof mobileXRMode !== 'undefined' && !!mobileXRMode;
 	const inWebXR = !!(renderer && renderer.xr && renderer.xr.isPresenting);
 
+	// AR passthrough: nothing may cover the room (see enforceArPassthrough).
+	if (arPassthroughActive()) {
+		if (vrSkybox) vrSkybox.visible = false;
+		scene.background = null;
+		renderer.setClearColor(0x000000, 0.0);
+		enforceArPassthrough(true);
+		return;
+	}
+	restoreArHidden();
+
 	// Active equirect HDRI as background wins over solid color / skybox.
 	if (hdriEquirect && hdriUseAsBackground) {
 		scene.background = hdriEquirect;
@@ -2038,7 +2143,40 @@ function applyEnvironmentMode() {
  * it. With the box off, scene code / the background colour keep control.
  */
 function keepHdriBackground() {
+	if (arPassthroughActive()) { enforceArPassthrough(false); return; }
 	if (hdriEquirect && hdriUseAsBackground && scene.background !== hdriEquirect) applyEnvironmentMode();
+}
+
+// AR passthrough is on: an immersive-ar session showing the room (not the
+// VR colour skybox, which the Environment tab's "VR (color)" switches back to).
+function arPassthroughActive() {
+	return !!(renderer && renderer.xr && renderer.xr.isPresenting) && xrSessionMode === 'immersive-ar' && !isVRMode;
+}
+// Scene code can set scene.background or build a sky / HDRI dome at any time;
+// in AR passthrough both would hide the room. Every frame the background is
+// stashed and cleared; about twice a second (and right away when AR starts)
+// dome meshes (sceneFit.js isDomeObject) are hidden. Both come back when AR
+// ends or VR (color) is picked.
+const _arHidden = new Set();
+let _arStashedBackground;
+let _arDomeScanAt = 0;
+function enforceArPassthrough(scanNow) {
+	if (scene.background) { _arStashedBackground = scene.background; scene.background = null; }
+	const now = performance.now();
+	if (!scanNow && now - _arDomeScanAt < 500) return;
+	_arDomeScanAt = now;
+	scene.traverse((o) => {
+		if (o === vrSkybox || !o.visible || !o.isMesh) return;
+		if (isDomeObject(o)) { _arHidden.add(o); o.visible = false; }
+	});
+}
+function restoreArHidden() {
+	for (const o of _arHidden) o.visible = true;
+	_arHidden.clear();
+	if (_arStashedBackground !== undefined) {
+		if (scene.background == null) scene.background = _arStashedBackground;
+		_arStashedBackground = undefined;
+	}
 }
 
 // ============================================================================
@@ -6483,6 +6621,38 @@ desktopSendButton.addEventListener('click', sendDesktopChatInput);
 initChatTextarea(desktopChatInput, sendDesktopChatInput);
 
 desktopAttachButton?.addEventListener('click', () => desktopAttachInput.click());
+// 📷 Take a photo (photoCapture.js): a captured photo is attached exactly like
+// one picked with 📎 (addAttachments). In VR the preview video is drawn live
+// on the menu window.
+photoCapture = createPhotoCapture({
+	panel: document.getElementById('gs-camera-panel'),
+	button: document.getElementById('desktop-camera-button'),
+	onPhoto: (file) => addAttachments([file]),
+	isImmersive: () => !!renderer.xr.isPresenting,
+	onLiveChange: (video) => { if (vrMainWindow) vrMainWindow.setLiveMedia(video); },
+	onLayout: () => { if (vrMainWindow) vrMainWindow.markDirty(); }
+});
+window.gsPhotoCapture = photoCapture;
+// A short chat window grows (within the viewport) while the camera is open, so
+// the preview fits between the messages and the buttons; it goes back on close.
+(() => {
+	const panel = document.getElementById('gs-camera-panel');
+	if (!panel || !desktopChat) return;
+	const fit = () => {
+		const open = !panel.hidden && !renderer.xr.isPresenting && !desktopChat.classList.contains('expanded') &&
+			!document.documentElement.classList.contains('gs-kb-chat');
+		desktopChat.style.minHeight = '';
+		if (!open) return;
+		const top = desktopChat.getBoundingClientRect().top;
+		const target = Math.floor(Math.min(700, window.innerHeight - Math.max(0, top) - 12));
+		if (desktopChat.offsetHeight < target) desktopChat.style.minHeight = `${target}px`;
+	};
+	new MutationObserver(fit).observe(panel, { attributes: true, attributeFilter: ['hidden'] });
+	window.addEventListener('resize', () => { if (!panel.hidden) fit(); });
+})();
+// Enter VR / AR: someone who has taken photos before is asked for the camera
+// now, before the headset session (the Quest Headset cameras prompt can end it).
+if (xrEntryButton) xrEntryButton.addEventListener('click', () => { if (!renderer.xr.isPresenting) askCameraBeforeXr(); }, true);
 desktopAttachInput?.addEventListener('change', (e) => {
 	addAttachments(e.target.files);
 	desktopAttachInput.value = '';
@@ -7809,19 +7979,26 @@ renderer.xr.addEventListener('sessionstart', () => {
 	if (windowAnchorMode === 'follow') _anchorSnapNext = true; // start right in front of you
 	setImmersiveUiMode(true);
 
-	// Always VR color/skybox. immersive-ar is not started.
-	isVRMode = true;
+	// immersive-ar starts on the room (passthrough); immersive-vr on the
+	// colour skybox. "VR (color)" in the Environment tab covers the room in AR.
+	isVRMode = xrSessionMode !== 'immersive-ar';
+	document.body.classList.toggle('gs-xr-ar', xrSessionMode === 'immersive-ar');
 	applyEnvironmentMode();
 	renderDomEnv();
+	// An open camera preview switches to the headset (passthrough) camera.
+	photoCapture?.restartForMode();
 });
 
 renderer.xr.addEventListener('sessionend', () => {
 	resetPanelAnchor();
+	xrSessionMode = null;
+	document.body.classList.remove('gs-xr-ar');
 	isVRMode = true;
 	applyEnvironmentMode();
 	renderDomEnv();
 	setImmersiveUiMode(false);
 	resetCameraView(); // back to the default desktop view (not the headset pose)
+	photoCapture?.restartForMode();
 });
 
 // ============================================================================

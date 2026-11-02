@@ -2407,6 +2407,90 @@
 		html.gs-kb-chat #dchat-code-toolbar { flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding: 6px 8px; }
 		html.gs-kb-chat #dchat-code-toolbar > * { flex-shrink: 0; white-space: nowrap; }
 	</style>
+	<style id="gs-camera-style">
+		/* 📷 Take a photo (photoCapture.js) and the AR / VR toggle. */
+		#desktop-camera-button {
+			border: none; border-radius: 11px; color: #fff; cursor: pointer;
+			font-size: 14px; padding: 10px 12px; background: #3a3c4e; flex-shrink: 0;
+			transition: transform 0.1s, opacity 0.2s, background 0.2s;
+		}
+		#desktop-camera-button:hover { background: #4e5168; }
+		#desktop-camera-button.active, #desktop-camera-button[aria-pressed="true"] { background: #4f46e5; }
+		#gs-camera-panel {
+			display: flex; flex-direction: column; gap: 8px;
+			margin: 0 12px 8px; padding: 8px; flex: 0 1 auto; min-height: 136px; overflow: hidden;
+			background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.12);
+			border-radius: 12px;
+		}
+		#gs-camera-panel[hidden] { display: none; }
+		#gs-camera-panel .gs-cam-view {
+			position: relative; overflow: hidden; border-radius: 9px; background: #000;
+			flex: 1 1 auto; height: 240px; max-height: 34vh; min-height: 72px; width: 100%;
+			display: flex; align-items: center; justify-content: center;
+		}
+		/* A small window shrinks the preview, not the chat history to nothing. */
+		#dchat-chat-section-scene:has(#gs-camera-panel:not([hidden])) #desktop-chat-messages { min-height: 64px; }
+		#gs-camera-panel .gs-cam-controls { flex-shrink: 0; }
+		#gs-camera-panel .gs-cam-video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+		#gs-camera-panel .gs-cam-video.gs-cam-mirror { transform: scaleX(-1); }
+		#gs-camera-panel .gs-cam-msg {
+			position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 6px 9px;
+			border-radius: 8px; background: rgba(15, 15, 25, 0.82); color: #fff;
+			font-size: 12px; line-height: 1.35; text-align: center;
+		}
+		#gs-camera-panel .gs-cam-msg[hidden] { display: none; }
+		#gs-camera-panel .gs-cam-msg[data-kind="error"] { background: rgba(153, 27, 27, 0.92); top: 50%; bottom: auto; transform: translateY(-50%); }
+		#gs-camera-panel .gs-cam-msg[data-kind="ok"] { background: rgba(21, 94, 60, 0.9); }
+		#gs-camera-panel .gs-cam-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+		#gs-camera-panel .gs-cam-flash.on { animation: gs-cam-flash 0.35s ease-out; }
+		@keyframes gs-cam-flash { from { opacity: 0.85; } to { opacity: 0; } }
+		#gs-camera-panel .gs-cam-controls { display: flex; gap: 8px; align-items: center; min-width: 0; }
+		#gs-camera-panel .gs-cam-select {
+			flex: 1 1 auto; min-width: 0; height: 36px; padding: 0 8px; border-radius: 10px;
+			border: 1px solid rgba(255, 255, 255, 0.3); background: #2a2c3a; color: #fff; font-size: 13px;
+		}
+		#gs-camera-panel .gs-cam-select[hidden] { display: none; }
+		#gs-camera-panel .gs-cam-shutter {
+			flex: 0 0 auto; height: 36px; padding: 0 14px; border: none; border-radius: 10px;
+			background: #4f46e5; color: #fff; font-weight: 600; font-size: 13px; cursor: pointer; white-space: nowrap;
+		}
+		#gs-camera-panel .gs-cam-shutter:disabled { opacity: 0.45; cursor: default; }
+		#gs-camera-panel .gs-cam-close {
+			flex: 0 0 auto; width: 36px; height: 36px; border: none; border-radius: 10px;
+			background: #3a3c4e; color: #fff; font-size: 15px; cursor: pointer;
+		}
+		#gs-camera-panel .gs-cam-shutter:hover:not(:disabled) { background: #6366f1; }
+		#gs-camera-panel .gs-cam-close:hover { background: #4e5168; }
+		html.gs-phone #desktop-camera-button { min-width: 44px; min-height: 44px; }
+		html.gs-phone #gs-camera-panel { margin: 0 10px 6px; }
+		html.gs-phone #gs-camera-panel .gs-cam-view { height: 30vh; max-height: 30vh; }
+		html.gs-phone #gs-camera-panel .gs-cam-select,
+		html.gs-phone #gs-camera-panel .gs-cam-shutter,
+		html.gs-phone #gs-camera-panel .gs-cam-close { height: 44px; min-width: 44px; font-size: 16px; }
+		/* Keyboard-up phone layout keeps just the compose row. */
+		html.gs-kb-chat #gs-camera-panel { display: none !important; }
+		/* In the headset the menu window is painted (vrWindows.js); the video is
+		   drawn live over its box, so give it a fixed size there. */
+		body.gs-xr-presenting #gs-camera-panel .gs-cam-view { height: 260px; max-height: 260px; }
+
+		/* AR / VR toggle: sits right before Enter VR / Enter AR. */
+		#gs-xr-mode {
+			display: inline-flex; align-items: center; gap: 2px; padding: 2px;
+			border-radius: 10px; background: rgba(255, 255, 255, 0.06);
+			border: 1px solid rgba(255, 255, 255, 0.14); flex-shrink: 0;
+		}
+		#gs-xr-mode[hidden] { display: none !important; }
+		#gs-xr-mode button {
+			height: 30px; min-width: 38px; padding: 0 9px; border: none; border-radius: 8px;
+			background: transparent; color: rgba(255, 255, 255, 0.82); cursor: pointer;
+			font: 700 11px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; letter-spacing: 0.03em;
+		}
+		#gs-xr-mode button[aria-checked="true"] { background: #4f46e5; color: #fff; }
+		#gs-xr-mode button:disabled { opacity: 0.38; cursor: not-allowed; }
+		#gs-xr-mode button:hover:not(:disabled):not([aria-checked="true"]) { background: rgba(255, 255, 255, 0.12); }
+		#gs-xr-mode button:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 1px; }
+		html.gs-phone #gs-xr-mode button { height: 40px; min-width: 44px; font-size: 12px; }
+	</style>
 </head>
 <body>
 	<div id="app"></div>
@@ -2552,11 +2636,14 @@
 					<select id="desktop-ollama-model-select"></select>
 				</div>
 				<div id="desktop-chat-messages"></div>
+				<!-- Live camera preview (📷, photoCapture.js): between the bubbles and the button row. -->
+				<div id="gs-camera-panel" hidden></div>
 				<div id="desktop-attachments" hidden></div>
 				<div id="desktop-chat-input-row">
 					<input type="file" id="desktop-attach-input" multiple accept="image/*,.txt,.md,.markdown,.json,.js,.jsx,.ts,.tsx,.py,.csv,.html,.htm,.css,.xml,.yaml,.yml,.log,.c,.cpp,.h,.hpp,.java,.go,.rs,.sh,.sql,.ini,.toml" hidden />
 					<div id="desktop-chat-tools-row">
 						<button id="desktop-attach-button" title="Attach images or text files">📎</button>
+						<button type="button" id="desktop-camera-button" title="Take a photo with the camera" aria-label="Take a photo" aria-pressed="false" aria-controls="gs-camera-panel">📷</button>
 						<button type="button" id="desktop-files-picker-button" title="Choose from Files library">📄</button>
 						<button id="desktop-mic-button" title="Toggle always-on voice input">🎤</button>
 					</div>
