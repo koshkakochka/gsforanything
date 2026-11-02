@@ -60,44 +60,38 @@
 			overscroll-behavior: contain;
 		}
 
-		/* Bottom dock: Cardboard (phones), WebXR Enter VR, and the GS version
-		   button share one fixed bottom-center row so they can never overlap.
-		   main.js moves three's XRButton (#XRButton) in here; its inline
-		   position/left/zIndex/background are overridden below. Icons are
-		   ::before masks because XRButton rewrites textContent on session
-		   start/end, which would wipe any child icon element.
-		   z-index 998: below #desktop-chat (1000) so a chat window dragged
-		   over the bottom always wins clicks; modals (3000+) open above. */
+		/* Window top bar (#gs-dock, inside #desktop-chat-header, between the
+		   title and the expand / minimize buttons): Cardboard (phones), WebXR
+		   Enter VR and the GS version button, side by side. main.js moves
+		   three's XRButton (#XRButton) in here; its inline position/left/zIndex/
+		   background are overridden below. Icons are ::before masks because
+		   XRButton rewrites textContent on session start/end, which would wipe
+		   any child icon element. Inside a VR session this window is the VR
+		   menu: Enter VR / version / Cardboard give way to one big red Exit VR
+		   button (#gs-exit-vr-btn), shown on every tab. */
 		#gs-dock {
-			position: fixed;
-			left: 50%;
-			transform: translateX(-50%);
-			bottom: max(10px, calc(env(safe-area-inset-bottom, 0px) + 6px));
-			z-index: 998;
 			display: flex;
-			flex-flow: row wrap;
+			flex-flow: row nowrap;
 			align-items: center;
-			justify-content: center;
+			justify-content: flex-end;
 			gap: 6px;
+			/* Never squeezed: the (decorative) title gives way instead. */
+			flex: 0 0 auto;
+			margin: -4px 8px; /* 32px buttons without making the header taller */
 			box-sizing: border-box;
-			/* max-content: left:50% alone would cap shrink-to-fit at half the
-			   viewport and wrap early on phones; wrap only past max-width. */
-			width: max-content;
-			max-width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
-			padding: 5px;
-			border-radius: 14px;
-			background: rgba(22, 22, 32, 0.72);
-			border: 1px solid rgba(255, 255, 255, 0.10);
-			box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
-			-webkit-backdrop-filter: blur(8px);
-			backdrop-filter: blur(8px);
 			pointer-events: auto;
+			/* Buttons in the drag handle still get taps / clicks. */
+			touch-action: manipulation;
+			cursor: default;
 		}
-		/* Hidden during an immersive XR session and while Cardboard is active
-		   (Hold-to-Walk owns the bottom center then), and in share views. */
-		body.gs-xr-presenting #gs-dock,
+		/* Share views have no editor window; Cardboard owns the screen. */
 		body.gs-cardboard-active #gs-dock,
 		body.display-only #gs-dock { display: none !important; }
+		#gs-exit-vr-btn { display: none !important; }
+		body.gs-xr-presenting #gs-dock #XRButton,
+		body.gs-xr-presenting #gs-dock #gs-version-btn,
+		body.gs-xr-presenting #gs-dock #cardboard-btn { display: none !important; }
+		body.gs-xr-presenting #gs-dock #gs-exit-vr-btn { display: inline-flex !important; }
 
 		#gs-dock .gs-dock-btn,
 		#gs-dock #XRButton,
@@ -113,7 +107,7 @@
 			gap: 7px;
 			box-sizing: border-box;
 			width: auto !important;
-			height: 36px !important;
+			height: 32px !important;
 			min-width: 0;
 			max-width: none;
 			margin: 0;
@@ -135,6 +129,12 @@
 			-webkit-user-select: none;
 		}
 		#gs-dock [hidden] { display: none !important; }
+		/* Touch screens (tablets too): 44px tap targets. */
+		@media (pointer: coarse) {
+			#gs-dock .gs-dock-btn,
+			#gs-dock #XRButton,
+			#gs-dock a#XRButton { height: 44px !important; }
+		}
 		#gs-dock .gs-dock-btn:hover,
 		#gs-dock #XRButton[data-xr-state="enter"]:hover,
 		#gs-dock #XRButton[data-xr-state="exit"]:hover {
@@ -154,7 +154,43 @@
 			background: linear-gradient(135deg, #4f46e5, #6d28d9) !important;
 			border-color: rgba(255, 255, 255, 0.22) !important;
 		}
-		#gs-dock #XRButton[data-xr-state="unavailable"] { color: rgba(255, 255, 255, 0.62) !important; }
+		#gs-dock #XRButton[data-xr-state="unavailable"] {
+			color: rgba(255, 255, 255, 0.72) !important;
+			/* Status only: compact so it fits next to the version button. */
+			padding: 0 9px !important;
+			font-size: 11px !important;
+		}
+		#gs-dock #XRButton[data-xr-state="unavailable"]::before { display: none; }
+		/* A narrow window (desktop min width, small tablets): the top bar gets
+		   its own row at the top of the window instead of overflowing. */
+		#desktop-chat-header { container: gs-chat-header / inline-size; flex-wrap: wrap; row-gap: 6px; }
+		/* Narrow desktop window: compact labels first (no icons, smaller text)... */
+		@container gs-chat-header (max-width: 345px) {
+			html:not(.gs-phone) #gs-dock { gap: 4px; margin: -4px 4px; }
+			html:not(.gs-phone) #gs-dock #XRButton,
+			html:not(.gs-phone) #gs-dock .gs-dock-btn:not(#gs-exit-vr-btn) { padding: 0 7px !important; font-size: 11px !important; gap: 3px !important; }
+			html:not(.gs-phone) #gs-dock #XRButton::before,
+			html:not(.gs-phone) #gs-dock .gs-dock-btn:not(#gs-exit-vr-btn)::before { display: none; }
+		}
+		/* ...and only at the very narrowest the bar takes its own row. */
+		@container gs-chat-header (max-width: 262px) {
+			#gs-dock { order: 3; flex: 1 0 100%; margin: 0 !important; justify-content: flex-start; flex-wrap: wrap; }
+		}
+		/* Exit VR (VR menu only): large, red, white bold label. */
+		#gs-dock #gs-exit-vr-btn {
+			height: 40px !important;
+			min-width: 128px;
+			justify-content: center;
+			padding: 0 18px !important;
+			background: #dc2626 !important;
+			border: 2px solid #fecaca !important;
+			color: #fff !important;
+			font-size: 15px !important;
+			font-weight: 800 !important;
+			letter-spacing: 0.04em;
+		}
+		#gs-dock #gs-exit-vr-btn:hover,
+		#gs-dock #gs-exit-vr-btn.gs-ray-hover { background: #b91c1c !important; }
 
 		#gs-dock #XRButton::before,
 		#gs-dock .gs-dock-btn::before {
@@ -175,13 +211,15 @@
 		#gs-dock #cardboard-btn {
 			--gs-dock-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm0 3v13h10V5H7zm5 14.25a1 1 0 1 0 0 2 1 1 0 0 0 0-2z'/%3E%3C/svg%3E");
 		}
+		/* Exit VR: label only (CSS mask icons don't paint into the headset texture). */
+		#gs-dock #gs-exit-vr-btn::before { display: none; }
 		/* Tag (version) */
 		#gs-dock #gs-version-btn {
 			--gs-dock-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 4.5A1.5 1.5 0 0 1 4.5 3h6.38a1.5 1.5 0 0 1 1.06.44l8.62 8.62a1.5 1.5 0 0 1 0 2.12l-6.38 6.38a1.5 1.5 0 0 1-2.12 0L3.44 11.94A1.5 1.5 0 0 1 3 10.88V4.5zM7.75 6a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5z'/%3E%3C/svg%3E");
 		}
 
 		@media (max-width: 420px) {
-			#gs-dock { gap: 4px; padding: 4px; border-radius: 12px; }
+			#gs-dock { gap: 4px; margin: 0 4px; }
 			#gs-dock .gs-dock-btn,
 			#gs-dock #XRButton,
 			#gs-dock a#XRButton {
@@ -650,6 +688,12 @@
 		#dchat-nav-type option { background: #1f2030; color: #fff; }
 
 		#desktop-chat-title {
+			/* basis 0: the (wrapping) header never breaks a row for the title;
+			   the top bar only moves to its own row via the container query. */
+			flex: 1 1 0;
+			min-width: 0;
+			overflow: hidden;
+			white-space: nowrap;
 			font-size: 14px;
 			font-weight: 700;
 			letter-spacing: 0.2px;
@@ -2297,13 +2341,21 @@
 		html.gs-phone #desktop-chat .dchat-btn { min-height: 44px; }
 		html.gs-phone #desktop-chat .dchat-dep-meta { align-items: center; }
 		html.gs-phone #desktop-chat .dchat-dep-meta a { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; padding: 0 8px; }
-		/* Bottom dock: 44px buttons; the greyed "VR not supported" pill is only
-		   status, so phones without WebXR drop it to make room. */
-		html.gs-phone #gs-dock { gap: 6px; padding: 5px; }
+		/* Window top bar: 44px buttons; the greyed "VR not supported" pill is
+		   only status, so phones without WebXR drop it to make room. */
+		html.gs-phone #gs-dock { gap: 6px; }
+		/* Phones: the floating Hide UI button covers the start of the header
+		   (see the container query below for when the bar wraps). */
+		html.gs-phone #desktop-chat-header { flex-wrap: wrap; row-gap: 6px; }
+		html.gs-phone #gs-dock { margin: -4px 4px; }
+		/* Portrait phones: Hide UI sits over the title, so the top bar takes
+		   its own row under it. Landscape (wider window) keeps one row. */
+		@container gs-chat-header (max-width: 380px) {
+			html.gs-phone #gs-dock { order: 3; flex: 1 0 100%; margin: 0; justify-content: center; flex-wrap: wrap; }
+		}
 		html.gs-phone #gs-dock #XRButton[data-xr-state="unavailable"] { display: none !important; }
 
-		/* Phone landscape: the panel is a full-height column on the left and
-		   the dock moves to the bottom-right, so neither covers the other. */
+		/* Phone landscape: the panel is a full-height column on the left. */
 		@media (orientation: landscape) {
 			html.gs-phone:not(.gs-kb-chat) #desktop-chat:not(.expanded) {
 				top: max(8px, env(safe-area-inset-top, 0px)) !important;
@@ -2313,12 +2365,6 @@
 				width: min(440px, 52vw);
 				min-width: 0;
 				min-height: 0;
-			}
-			html.gs-phone #gs-dock {
-				left: auto;
-				right: max(8px, calc(env(safe-area-inset-right, 0px) + 6px));
-				transform: none;
-				max-width: calc(48vw - 24px);
 			}
 			html.gs-phone #ui-toggle { top: max(14px, calc(env(safe-area-inset-top, 0px) + 6px)); }
 		}
@@ -2375,14 +2421,6 @@
 </head>
 <body>
 	<div id="app"></div>
-
-	<!-- Bottom dock: Cardboard (phones without immersive-vr; shown/hidden by
-	     refreshMobileXRButtons()), three's XRButton (inserted by main.js
-	     before the version button), and the GS version button. -->
-	<div id="gs-dock" role="toolbar" aria-label="VR and version">
-		<button type="button" id="cardboard-btn" class="mobile-xr-btn gs-dock-btn" hidden>Cardboard VR</button>
-		<button type="button" id="gs-version-btn" class="gs-dock-btn" title="Choose GS version" aria-haspopup="dialog" aria-controls="gs-version-modal">GS v…</button>
-	</div>
 
 	<!-- Close X + hold-to-walk, shown only while Cardboard is active.
 	     The X is re-appended to the end of <body> when shown so it stays
@@ -2482,6 +2520,16 @@
 	<div id="desktop-chat">
 		<div id="desktop-chat-header">
 			<div id="desktop-chat-title"><span class="dot"></span>Claude</div>
+			<!-- Top bar of the window: Cardboard (phones without immersive-vr;
+			     shown/hidden by refreshMobileXRButtons()), three's XRButton
+			     (inserted by main.js before the version button), the GS version
+			     button, and, only inside a VR session (this window is the VR
+			     menu), a big red Exit VR button. -->
+			<div id="gs-dock" role="toolbar" aria-label="VR and version">
+				<button type="button" id="cardboard-btn" class="mobile-xr-btn gs-dock-btn" hidden>Cardboard VR</button>
+				<button type="button" id="gs-version-btn" class="gs-dock-btn" title="Choose GS version" aria-haspopup="dialog" aria-controls="gs-version-modal">GS v…</button>
+				<button type="button" id="gs-exit-vr-btn" class="gs-dock-btn" title="Leave the VR session" aria-label="Exit VR">Exit VR</button>
+			</div>
 			<div id="desktop-chat-header-buttons">
 				<button id="desktop-chat-expand" title="Expand window" aria-label="Expand window">&#x26F6;</button>
 				<button id="desktop-chat-minimize" title="Minimize">&#95;</button>
@@ -2649,7 +2697,7 @@
 					</select>
 					<div style="font-size:12px;color:rgba(255,255,255,0.72);margin-bottom:8px">
 						W/A/S/D move &middot; Q/E up/down &middot; on Quest: left stick moves,
-						right stick turns/up-down &middot; right grip cycles modes (incl. off).
+						right stick turns/up-down &middot; right grip cycles modes (incl. off) &middot; a stick over a window scrolls it.
 					</div>
 				</div>
 				<div>
@@ -2664,7 +2712,7 @@
 					<div class="dchat-section-label" style="margin-bottom:6px">Origin rotation</div>
 					<div class="dchat-env-note" style="margin-bottom:8px">
 						Turns the whole scene around its origin so it lines up with the view you want.
-						Drag the ball to tilt and turn, drag the ring to roll, click an axis end to face it.
+						Drag the ball to tilt and turn, drag the ring to roll, click an axis end to face it. In VR: point at it, hold grip and turn the controller.
 						Hold Shift or tick Snap for 15&deg; steps.
 					</div>
 					<div class="dchat-origin-row">
