@@ -1,0 +1,10 @@
+{
+  "name": "gs-camera-capture-test",
+  "private": true,
+  "type": "module",
+  "description": "Headless checks for 📷 camera capture (preview placement, camera selection, capture → attachment, permission errors, phone layout, VR on an IWER Quest 3) and the AR / VR toggle with a mocked navigator.xr.",
+  "dependencies": {
+    "iwer": "^2.7.0",
+    "puppeteer-core": "24.43.1"
+  }
+}

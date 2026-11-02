@@ -1,9 +1,17 @@
 /**
- * A utility class for creating a button that starts an immersive-vr
- * WebXR session. immersive-ar is intentionally not offered.
+ * A utility class for creating a button that starts an immersive WebXR
+ * session: immersive-vr, or immersive-ar (passthrough) when GS's AR / VR
+ * toggle asks for it (sessionInit.getMode).
  *
  * Usage:
  * document.body.appendChild( XRButton.createButton( renderer ) );
+ *
+ * GS extras on sessionInit (not passed to requestSession):
+ *   getMode():  'immersive-vr' | 'immersive-ar', read on every click / label
+ *               refresh (default 'immersive-vr').
+ *   onSupport({ vr, ar }): called once both isSessionSupported() answers are in.
+ *   onSessionMode(mode): called with the mode right before renderer.xr.setSession.
+ * button.gsRefreshMode() re-reads getMode() and updates the label.
  */
 class XRButton {
 
@@ -19,12 +27,24 @@ class XRButton {
 	static createButton( renderer, sessionInit = {} ) {
 
 		const button = document.createElement( 'button' );
+		const { getMode, onSupport, onSessionMode, ...requestInit } = sessionInit;
+		sessionInit = requestInit;
+		const support = { vr: false, ar: false };
+		const wantedMode = () => {
 
-		function showEnterXR( mode ) {
+			const m = typeof getMode === 'function' ? getMode() : 'immersive-vr';
+			if ( m === 'immersive-ar' && support.ar ) return 'immersive-ar';
+			if ( support.vr ) return 'immersive-vr';
+			return support.ar ? 'immersive-ar' : 'immersive-vr';
 
-			// Only immersive-vr is ever requested. Ignore any other mode.
-			if ( mode !== 'immersive-vr' ) mode = 'immersive-vr';
+		};
+		const enterLabel = () => ( wantedMode() === 'immersive-ar' ? 'ENTER AR' : 'ENTER VR' );
+		button.gsRefreshMode = function () {};
+
+		function showEnterXR() {
+
 			let currentSession = null;
+			let currentMode = null;
 
 			async function onSessionStarted( session ) {
 
@@ -33,12 +53,17 @@ class XRButton {
 				// Use 'local-floor' so the world origin sits at the real floor
 				// (y=0 = ground). With plain 'local', the origin is wherever
 				// the headset is at session start, which puts y=0 at eye level.
+				// An AR session may not grant local-floor (it is optional
+				// there); fall back to 'local' then.
+				const features = session.enabledFeatures;
+				const floor = ! features || features.includes( 'local-floor' );
 				if ( renderer.xr && renderer.xr.setReferenceSpaceType ) {
-					renderer.xr.setReferenceSpaceType( 'local-floor' );
+					renderer.xr.setReferenceSpaceType( floor ? 'local-floor' : 'local' );
 				}
 
+				if ( typeof onSessionMode === 'function' ) onSessionMode( currentMode );
 				await renderer.xr.setSession( session );
-				button.textContent = 'EXIT VR';
+				button.textContent = currentMode === 'immersive-ar' ? 'EXIT AR' : 'EXIT VR';
 
 				currentSession = session;
 
@@ -48,9 +73,10 @@ class XRButton {
 
 				currentSession.removeEventListener( 'end', onSessionEnded );
 
-				button.textContent = 'ENTER VR';
+				button.textContent = enterLabel();
 
 				currentSession = null;
+				currentMode = null;
 
 			}
 
@@ -62,19 +88,36 @@ class XRButton {
 			button.style.left = '50%';
 			button.style.width = '';
 
-			button.textContent = 'ENTER VR';
+			button.textContent = enterLabel();
+			button.gsRefreshMode = function () {
+
+				if ( currentSession === null ) button.textContent = enterLabel();
+
+			};
 
 			// Request useful optional features when available.
 			// 'local-floor' must be in requiredFeatures or optionalFeatures
 			// for setReferenceSpaceType('local-floor') to succeed; otherwise
 			// the UA falls back to 'local' silently.
-			const sessionOptions = {
+			const vrOptions = {
 				...sessionInit,
 				requiredFeatures: [
 					'local-floor',
 					...( sessionInit.requiredFeatures || [] )
 				],
 				optionalFeatures: [
+					'layers',
+					'bounded-floor',
+					...( sessionInit.optionalFeatures || [] )
+				]
+			};
+			// immersive-ar (Quest 3 passthrough, ARCore phones): local-floor is
+			// optional, so devices that only do 'local' still start.
+			const arOptions = {
+				...sessionInit,
+				requiredFeatures: [ ...( sessionInit.requiredFeatures || [] ) ],
+				optionalFeatures: [
+					'local-floor',
 					'layers',
 					'bounded-floor',
 					...( sessionInit.optionalFeatures || [] )
@@ -97,7 +140,14 @@ class XRButton {
 
 				if ( currentSession === null ) {
 
-					navigator.xr.requestSession( mode, sessionOptions ).then( onSessionStarted );
+					const mode = wantedMode();
+					currentMode = mode;
+					navigator.xr.requestSession( mode, mode === 'immersive-ar' ? arOptions : vrOptions ).then( onSessionStarted ).catch( function ( err ) {
+
+						currentMode = null;
+						console.warn( 'XR session request failed (' + mode + '):', err );
+
+					} );
 
 				} else {
 
@@ -172,10 +222,19 @@ class XRButton {
 
 			stylizeElement( button );
 
-			// immersive-vr only. immersive-ar is not queried or requested.
-			navigator.xr.isSessionSupported( 'immersive-vr' ).then( function ( vrSupported ) {
+			// Both modes are queried; the AR / VR toggle picks one (getMode).
+			const ask = ( m ) => navigator.xr.isSessionSupported( m ).catch( function ( e ) {
 
-				vrSupported ? showEnterXR( 'immersive-vr' ) : showWebXRNotFound();
+				console.warn( 'isSessionSupported(' + m + ') failed', e );
+				return false;
+
+			} );
+			Promise.all( [ ask( 'immersive-vr' ), ask( 'immersive-ar' ) ] ).then( function ( [ vr, ar ] ) {
+
+				support.vr = !! vr;
+				support.ar = !! ar;
+				if ( typeof onSupport === 'function' ) onSupport( { ...support } );
+				vr || ar ? showEnterXR() : showWebXRNotFound();
 
 			} ).catch( showXRNotAllowed );
 

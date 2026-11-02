@@ -420,6 +420,13 @@ function paintNode(ctx, el, ox, oy, clip) {
 		if (el instanceof HTMLCanvasElement && el.width > 0 && el.height > 0 && box.width > 0 && box.height > 0) {
 			ctx.drawImage(el, box.left - ox, box.top - oy, box.width, box.height);
 		}
+		// A playing <video> (the 📷 camera preview) is copied as one frame,
+		// object-fit: contain. In VR vrWindows.js also draws it live on top.
+		if (el instanceof HTMLVideoElement && el.readyState >= 2 && el.videoWidth > 0 && box.width > 0 && box.height > 0) {
+			const k = Math.min(box.width / el.videoWidth, box.height / el.videoHeight);
+			const w = el.videoWidth * k, h = el.videoHeight * k;
+			ctx.drawImage(el, box.left - ox + (box.width - w) / 2, box.top - oy + (box.height - h) / 2, w, h);
+		}
 	} catch {
 		// Keep painting the rest of the menu if one node can't be sampled.
 	}

@@ -163,8 +163,74 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			}
 		};
 
+		// Live media (the 📷 camera preview): a <video> inside the window is
+		// shown as its own VideoTexture quad on top of the painted window, at
+		// the element's box, so the picture moves at camera frame rate while
+		// the rest of the window keeps its dirty-driven repaints. The quad is
+		// a child of the window mesh (not raycast: hits use the window mesh
+		// only), so clicks still land on the DOM under it.
+		win._live = null;
+		win.setLiveMedia = (el) => {
+			if (win._live && win._live.el === el) return;
+			if (win._live) {
+				mesh.remove(win._live.mesh);
+				win._live.texture.dispose();
+				win._live.mesh.material.dispose();
+				win._live.mesh.geometry.dispose();
+				win._live = null;
+			}
+			if (!el) { markDirty(); return; }
+			const tex = el instanceof HTMLVideoElement ? new THREE.VideoTexture(el) : new THREE.CanvasTexture(el);
+			tex.colorSpace = THREE.SRGBColorSpace;
+			tex.minFilter = THREE.LinearFilter;
+			tex.magFilter = THREE.LinearFilter;
+			const quad = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({
+				map: tex, side: THREE.DoubleSide, depthTest, depthWrite: false, toneMapped: false
+			}));
+			quad.name = 'vrWindowLive:' + name;
+			quad.visible = false;
+			quad.renderOrder = renderOrder + 1;
+			quad.raycast = () => {};
+			mesh.add(quad);
+			win._live = { el, mesh: quad, texture: tex };
+			markDirty();
+		};
+		win.updateLive = () => {
+			const live = win._live;
+			if (!live) return false;
+			const el = live.el;
+			const quad = live.mesh;
+			const src = source.getBoundingClientRect();
+			let r = el.isConnected && source.contains(el) && !el.closest('[hidden]') ? el.getBoundingClientRect() : null;
+			if (r && (r.width < 2 || r.height < 2 || src.width < 2 || src.height < 2)) r = null;
+			if (r && el instanceof HTMLVideoElement) {
+				// object-fit: contain
+				const vw = el.videoWidth, vh = el.videoHeight;
+				if (!vw || !vh || el.readyState < 2) r = null;
+				else {
+					const k = Math.min(r.width / vw, r.height / vh);
+					const w = vw * k, h = vh * k;
+					r = { left: r.left + (r.width - w) / 2, top: r.top + (r.height - h) / 2, width: w, height: h };
+				}
+			}
+			if (r) {
+				// Clip to the window (the panel never scrolls, so that is enough).
+				const left = Math.max(r.left, src.left), top = Math.max(r.top, src.top);
+				const right = Math.min(r.left + r.width, src.right), bottom = Math.min(r.top + r.height, src.bottom);
+				if (right - left < 2 || bottom - top < 2) r = null;
+			}
+			if (!r) { quad.visible = false; return false; }
+			const cx = r.left + r.width / 2 - src.left, cy = r.top + r.height / 2 - src.top;
+			quad.position.set(cx / src.width - 0.5, 0.5 - cy / src.height, 0.002);
+			const mirror = el.classList && el.classList.contains('gs-cam-mirror') ? -1 : 1;
+			quad.scale.set(mirror * r.width / src.width, r.height / src.height, 1);
+			quad.visible = true;
+			return true;
+		};
+
 		win.tick = (force = false, now = performance.now()) => {
 			if (!mesh.visible) return false;
+			if (win._live) win.updateLive();
 			if (!force) {
 				const since = now - win._paintAt;
 				if (win._dirty ? since < HTML_PAINT_MIN_MS : since < HTML_PAINT_IDLE_MS) return false;
