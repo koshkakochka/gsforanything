@@ -1,0 +1,9 @@
+{
+  "name": "gs-mic-test",
+  "private": true,
+  "type": "module",
+  "description": "Headless checks for the mic button: visible status, permission states, Whisper download progress, adaptive VAD, 15 s cap, filler filtering, and VR (IWER Quest 3).",
+  "dependencies": {
+    "puppeteer-core": "24.43.1"
+  }
+}

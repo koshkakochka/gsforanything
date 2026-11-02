@@ -159,6 +159,14 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			win._dirty = false;
 			try {
 				const m = paint(source, canvas, { pixelScale: win.pixelScale, maxSize: win.maxSize, opaque: true });
+				// A canvas that changed size can't be re-uploaded into the old GPU
+				// texture (immutable storage in WebGL2): drop it so three.js
+				// allocates one at the new size (e.g. the HUD growing to show mic status).
+				if (canvas.width !== win._texW || canvas.height !== win._texH) {
+					if (win._texW !== undefined) texture.dispose();
+					win._texW = canvas.width;
+					win._texH = canvas.height;
+				}
 				texture.needsUpdate = true;
 				win.paints++;
 				if (m && m.width > 0) win.layout(m.width, m.height);
