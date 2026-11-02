@@ -2562,9 +2562,15 @@
 			html:not(.gs-phone) #gs-dock:has(> #gs-xr-mode:not([hidden])) .gs-dock-btn:not(#gs-exit-vr-btn) { padding: 0 7px !important; font-size: 11px !important; gap: 3px !important; }
 			html:not(.gs-phone) #gs-dock:has(> #gs-xr-mode:not([hidden])) #XRButton::before,
 			html:not(.gs-phone) #gs-dock:has(> #gs-xr-mode:not([hidden])) .gs-dock-btn:not(#gs-exit-vr-btn)::before { display: none; }
-			html:not(.gs-phone) #gs-xr-mode button { min-width: 28px; padding: 0 6px; }
+			html:not(.gs-phone) #gs-xr-mode button { min-width: 26px; padding: 0 5px; font-size: 10.5px; }
 		}
-		@container gs-chat-header (max-width: 300px) {
+		@container gs-chat-header (max-width: 330px) {
+			html:not(.gs-phone) #gs-dock:has(> #gs-xr-mode:not([hidden])) { gap: 3px; margin: -4px 2px; }
+			html:not(.gs-phone) #gs-dock:has(> #gs-xr-mode:not([hidden])) #XRButton,
+			html:not(.gs-phone) #gs-dock:has(> #gs-xr-mode:not([hidden])) .gs-dock-btn:not(#gs-exit-vr-btn) { padding: 0 5px !important; font-size: 10.5px !important; }
+			html:not(.gs-phone) #gs-xr-mode button { min-width: 22px; padding: 0 4px; }
+		}
+		@container gs-chat-header (max-width: 262px) {
 			#gs-dock:has(> #gs-xr-mode:not([hidden])) { order: 3; flex: 1 0 100%; margin: 0 !important; justify-content: flex-start; flex-wrap: wrap; }
 		}
 	</style>
