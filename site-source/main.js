@@ -594,13 +594,12 @@ let _locoPrevTime = 0;        // previous frame timestamp for dt
 
 // Speech-to-text (in-browser Whisper via transformers.js — cross-platform)
 let speechSupported = false;   // getUserMedia + MediaRecorder available
-let micMode = 'off';           // 'off' | 'always' | 'ptt'
+let micMode = 'off';           // 'off' | 'always' | 'ptt' (see micListening for live capture)
 let pttHand = null;            // handedness that started push-to-talk
 let sttPipelinePromise = null; // lazy-loaded Whisper ASR pipeline (Promise)
 let sttModelReady = false;     // model finished loading at least once
 let micStream = null;          // active getUserMedia MediaStream
 let mediaRecorder = null;      // MediaRecorder for the current utterance
-let recordedChunks = [];       // audio blobs for the current utterance
 let sttBusy = false;           // a transcription is in flight
 let vadContext = null;         // AudioContext used for voice-activity detection
 let vadAnalyser = null;        // AnalyserNode sampled each frame from the XR loop
@@ -1309,41 +1308,296 @@ function toggleRayVisibility() {
 //     and each finished utterance is transcribed and auto-sent.
 //   • Push-to-talk: hold the A/X controller button; the utterance is transcribed
 //     and sent on release.
+// Whisper runs in a Web Worker when it can (falls back to the main thread), so
+// transcribing doesn't stall the VR frame loop.
+// Every state (permission, model download %, listening, transcribing, blocked,
+// errors) is shown in #gs-mic-status under the chat tools (desktop, phones and
+// the VR menu, which mirrors #desktop-chat) and, short, in the VR HUD.
+// #status stays hidden (the old top-right badge is gone for good).
 // Requires a secure context (HTTPS or localhost) for mic access — the same
 // requirement WebXR itself has — plus internet on first run to fetch the model.
 const STT_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/+esm';
 const STT_MODEL = 'Xenova/whisper-tiny.en';
-const VAD_RMS_THRESHOLD = 0.015; // speech vs. silence energy threshold
-const VAD_SILENCE_MS = 800;      // trailing silence that ends an utterance
+// Adaptive voice-activity detection: speech is energy well above a running
+// noise floor, so a fan / headset hiss neither counts as speech nor keeps a
+// segment open forever.
+const VAD_MIN_THRESHOLD = 0.008;   // never treat less than this RMS as speech
+const VAD_FLOOR_FACTOR = 2.0;      // speech threshold = floor * factor + margin
+const VAD_FLOOR_MARGIN = 0.004;
+const VAD_HOLD_RATIO = 0.7;        // once speaking, stay "speaking" down to 70% of the threshold
+const VAD_SILENCE_MS = 800;        // trailing silence that ends an utterance
+const VAD_MIN_SPEECH_MS = 200;     // shorter bursts (clicks, bumps) are dropped
+const VAD_MAX_SEGMENT_MS = 15000;  // a segment is cut and sent after this long
+const VAD_IDLE_ROTATE_MS = 5000;   // silent recording is restarted so segments stay short
+const MIC_USED_KEY = 'gs.micUsed'; // set once the mic has worked; gates the Enter VR permission ask
+const MIC_RELEASE_MS = 30000;      // keep the stream this long after push-to-talk for quick re-press
+const MIC_PROMPT_HINT_MS = 7000;   // no answer to the permission ask by then: explain where to look
+const IS_QUEST_BROWSER = /OculusBrowser|Quest/i.test(navigator.userAgent || '');
+
+let micListening = false;     // recording is live (always-on VAD running, or PTT capturing)
+let micReleaseTimer = null;
+let sttRun = null;            // (Float32Array) => Promise<string>
+let sttWorker = null;
+let sttWorkerBroken = false;
+let sttFiles = {};            // model download progress by file
+let sttPct = 0;
+let sttWaiting = 0;           // transcriptions waiting on the model (status stays visible)
+let sttQueue = Promise.resolve();
+let vadNoise = null;          // running noise-floor RMS
+let vadSpeechMs = 0;
+let vadSegStart = 0;
+let micStatusTimer = null;
+let micTransient = null;      // { state, text, hud } shown over the steady status
+const micStats = { segments: 0, rotations: 0, lastSegmentMs: 0, dropped: 0 }; // read by test-harness/mic
+const micStatusEl = document.getElementById('gs-mic-status');
+const vrHudMicEl = document.getElementById('gs-vr-hud-mic');
 
 function initSpeech() {
 	speechSupported = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+}
+
+// ---- status ---------------------------------------------------------------
+function micInXr() {
+	return !!(renderer && renderer.xr && renderer.xr.isPresenting);
+}
+
+// What to show when nothing transient is up: derived from the mic state.
+function micSteadyStatus() {
+	const loading = !sttModelReady && (micMode !== 'off' || sttWaiting > 0);
+	const loadText = `Loading speech model… ${sttPct}%` + (sttTotalMb() ? ` of ${sttTotalMb()} MB` : '') + ' (first time only)';
+	if (micMode === 'always') {
+		if (micListening) return { state: 'listening', text: 'Listening — speak, then pause to send', hud: 'Listening' };
+		if (loading) return { state: 'loading', text: loadText, hud: `Loading ${sttPct}%` };
+		return { state: 'starting', text: 'Starting microphone…', hud: 'Starting…' };
+	}
+	if (micMode === 'ptt') {
+		if (micListening && sttModelReady) return { state: 'listening', text: 'Listening — release to send', hud: 'Listening' };
+		if (micListening) return { state: 'loading', text: loadText + ' — keep holding, then release', hud: `Loading ${sttPct}%` };
+		return { state: 'starting', text: 'Starting microphone…', hud: 'Starting…' };
+	}
+	if (loading) return { state: 'loading', text: loadText, hud: `Loading ${sttPct}%` };
+	return { state: 'idle', text: '', hud: '' };
+}
+
+function renderMicStatus() {
+	const s = micTransient || micSteadyStatus();
+	if (micStatusEl) {
+		micStatusEl.textContent = s.text || '';
+		micStatusEl.hidden = !s.text;
+		micStatusEl.dataset.state = s.state;
+	}
+	if (vrHudMicEl) {
+		vrHudMicEl.textContent = s.hud ? '🎤 ' + s.hud : '';
+		vrHudMicEl.hidden = !s.hud;
+		vrHudMicEl.dataset.state = s.state;
+	}
+}
+
+// Show a transient message (transcribing, info, errors) over the steady status.
+// autoHideMs: back to the steady status after that long (0 = until replaced).
+function setMicStatus(state, text, { hud = null, autoHideMs = 0 } = {}) {
+	clearTimeout(micStatusTimer);
+	micTransient = text ? { state, text, hud: hud == null ? text : hud } : null;
+	renderMicStatus();
+	if (text) updateStatus(text, state === 'error' || state === 'blocked' ? 'error' : '');
+	if (micTransient && autoHideMs) {
+		const mine = micTransient;
+		micStatusTimer = setTimeout(() => { if (micTransient === mine) { micTransient = null; renderMicStatus(); } }, autoHideMs);
+	}
+}
+
+function clearMicTransient() {
+	clearTimeout(micStatusTimer);
+	micTransient = null;
+	renderMicStatus();
+}
+
+function sttTotalMb() {
+	let t = 0;
+	for (const f of Object.values(sttFiles)) t += f.total || 0;
+	return t ? Math.round(t / 1048576) : 0;
+}
+
+function onSttProgress(p) {
+	if (!p || !p.file) return;
+	if (p.status === 'progress' && p.total) sttFiles[p.file] = { loaded: p.loaded || 0, total: p.total };
+	else if (p.status === 'done' && sttFiles[p.file]) sttFiles[p.file].loaded = sttFiles[p.file].total;
+	let l = 0, t = 0;
+	for (const f of Object.values(sttFiles)) { l += f.loaded; t += f.total; }
+	const pct = t ? Math.min(99, Math.floor((l / t) * 100)) : 0;
+	if (pct !== sttPct) { sttPct = pct; if (!micTransient) renderMicStatus(); }
+}
+
+// ---- Whisper (worker first, main thread fallback) ---------------------------
+const STT_WORKER_SRC = `
+let asr = null;
+self.onmessage = async (e) => {
+	const m = e.data;
+	try {
+		if (m.type === 'load') {
+			const { pipeline, env } = await import(m.cdn);
+			env.allowLocalModels = false;
+			asr = await pipeline('automatic-speech-recognition', m.model, {
+				progress_callback: (p) => { try { self.postMessage({ type: 'progress', p: { status: p.status, file: p.file, loaded: p.loaded, total: p.total } }); } catch (err) {} }
+			});
+			self.postMessage({ type: 'ready' });
+		} else if (m.type === 'run') {
+			const out = await asr(m.audio);
+			self.postMessage({ type: 'result', id: m.id, text: out && out.text ? out.text : '' });
+		}
+	} catch (err) {
+		self.postMessage({ type: 'error', id: m.id, name: err && err.name, message: String((err && err.message) || err) });
+	}
+};`;
+
+const STT_WORKER_STALL_MS = 45000;
+
+function loadSttInWorker() {
+	return new Promise((resolve, reject) => {
+		let w;
+		try {
+			const url = URL.createObjectURL(new Blob([STT_WORKER_SRC], { type: 'text/javascript' }));
+			w = new Worker(url, { type: 'module' });
+			URL.revokeObjectURL(url);
+		} catch (e) { reject(e); return; }
+		const pending = new Map();
+		let nextId = 1;
+		let ready = false;
+		// Watchdog: if the worker goes quiet while loading (no progress or ready
+		// for STT_WORKER_STALL_MS), give up on it and fall back to the main thread
+		// rather than sitting at "Loading… 99%" forever.
+		let stall = 0;
+		const armStall = () => {
+			clearTimeout(stall);
+			if (!ready) stall = setTimeout(() => fail(new Error('speech worker stalled while loading')), STT_WORKER_STALL_MS);
+		};
+		const fail = (err) => {
+			clearTimeout(stall);
+			for (const p of pending.values()) p.reject(err);
+			pending.clear();
+			if (!ready) reject(err);
+		};
+		w.onerror = (ev) => { ev.preventDefault?.(); fail(new Error(ev.message || 'speech worker failed')); };
+		w.onmessage = (ev) => {
+			const m = ev.data || {};
+			if (m.type === 'progress') { onSttProgress(m.p); armStall(); }
+			else if (m.type === 'ready') {
+				ready = true;
+				clearTimeout(stall);
+				resolve((audio) => new Promise((res, rej) => {
+					const id = nextId++;
+					pending.set(id, { resolve: res, reject: rej });
+					w.postMessage({ type: 'run', id, audio }, [audio.buffer]);
+				}));
+			} else if (m.type === 'result') {
+				const p = pending.get(m.id); pending.delete(m.id); if (p) p.resolve(m.text);
+			} else if (m.type === 'error') {
+				const err = Object.assign(new Error(m.message), { sttName: m.name });
+				if (m.id && pending.has(m.id)) { const p = pending.get(m.id); pending.delete(m.id); p.reject(err); }
+				else fail(err);
+			}
+		};
+		sttWorker = w;
+		armStall();
+		w.postMessage({ type: 'load', cdn: STT_CDN, model: STT_MODEL });
+	});
+}
+
+async function loadSttOnMainThread() {
+	const { pipeline, env } = await import(/* @vite-ignore */ STT_CDN);
+	env.allowLocalModels = false; // fetch from the HF hub, not a local path
+	const asr = await pipeline('automatic-speech-recognition', STT_MODEL, { progress_callback: onSttProgress });
+	return async (audio) => {
+		const out = await asr(audio);
+		return out && out.text ? out.text : '';
+	};
 }
 
 // Lazily download + build the Whisper pipeline (cached in the browser after the
 // first run). Returned promise is memoized; on failure it resets so we can retry.
 function loadSttPipeline() {
 	if (!sttPipelinePromise) {
-		updateStatus('Loading speech model… (first time only)', '');
-		sttPipelinePromise = import(/* @vite-ignore */ STT_CDN)
-			.then(async ({ pipeline, env }) => {
-				env.allowLocalModels = false; // fetch from the HF hub, not a local path
-				const asr = await pipeline('automatic-speech-recognition', STT_MODEL);
+		sttFiles = {};
+		sttPct = 0;
+		renderMicStatus();
+		const viaWorker = sttWorkerBroken ? Promise.reject(new Error('worker disabled')) : loadSttInWorker();
+		sttPipelinePromise = viaWorker
+			.catch((e) => {
+				if (!sttWorkerBroken) console.warn('Speech worker unavailable, transcribing on the main thread:', e && e.message);
+				sttWorkerBroken = true;
+				if (sttWorker) { try { sttWorker.terminate(); } catch (err) { /* ignore */ } sttWorker = null; }
+				sttFiles = {};
+				return loadSttOnMainThread();
+			})
+			.then((run) => {
+				sttRun = run;
 				sttModelReady = true;
-				return asr;
+				sttPct = 100;
+				renderMicStatus();
+				return run;
 			})
 			.catch((e) => {
 				sttPipelinePromise = null; // allow a later retry
+				e.sttModelLoad = true;
 				throw e;
 			});
 	}
 	return sttPipelinePromise;
 }
 
+// ---- microphone -----------------------------------------------------------
+async function micPermissionState() {
+	try {
+		if (!navigator.permissions || !navigator.permissions.query) return 'unknown';
+		const r = await navigator.permissions.query({ name: 'microphone' });
+		return r.state; // 'granted' | 'denied' | 'prompt'
+	} catch (e) {
+		return 'unknown';
+	}
+}
+
+function micStreamLive() {
+	return !!(micStream && micStream.getAudioTracks().some((t) => t.readyState === 'live'));
+}
+
 async function ensureMicStream() {
-	if (micStream) return micStream;
-	micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+	clearTimeout(micReleaseTimer);
+	if (micStreamLive()) return micStream;
+	micStream = null;
+	// A permission ask nobody answers (or that a headset never shows) would
+	// otherwise look like a dead button: say where to look after a few seconds.
+	const hint = setTimeout(() => {
+		if (micMode === 'off' || micListening) return;
+		setMicStatus('starting', micInXr() || IS_QUEST_BROWSER
+			? 'Waiting for microphone permission. No prompt? Exit VR, press 🎤 once and allow it, then come back.'
+			: 'Waiting for microphone permission — allow it in the browser prompt.', { hud: 'Allow mic…' });
+	}, MIC_PROMPT_HINT_MS);
+	try {
+		const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+		micStream = stream;
+	} finally {
+		clearTimeout(hint);
+	}
+	try { localStorage.setItem(MIC_USED_KEY, '1'); } catch (e) { /* ignore */ }
+	for (const t of micStream.getAudioTracks()) {
+		t.addEventListener('ended', () => {
+			if (micMode === 'off') return;
+			stopMicCapture();
+			setMicStatus('error', 'Microphone disconnected. Plug it back in and press 🎤 again.', { hud: 'Mic disconnected', autoHideMs: 15000 });
+		});
+	}
 	return micStream;
+}
+
+function releaseMicStream() {
+	clearTimeout(micReleaseTimer);
+	if (micStream) { for (const t of micStream.getTracks()) { try { t.stop(); } catch (e) { /* ignore */ } } }
+	micStream = null;
+}
+
+function scheduleMicRelease(ms) {
+	clearTimeout(micReleaseTimer);
+	micReleaseTimer = setTimeout(() => { if (micMode === 'off') releaseMicStream(); }, ms);
 }
 
 // Decode an encoded audio blob (webm/ogg/mp4) to a mono 16 kHz Float32Array,
@@ -1368,46 +1622,82 @@ async function decodeTo16kMono(blob) {
 	return rendered.getChannelData(0);
 }
 
+// Whisper marks non-speech with bracketed tags ([Music], [BLANK_AUDIO], (beep),
+// *coughs*, ♪). Strip them; if no words are left there is nothing to send.
+function cleanTranscript(text) {
+	const t = String(text || '')
+		.replace(/\[[^\]]*\]|\([^)]*\)|\*[^*]*\*|<[^>]*>|[♪♫♩♬]+/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+	return /[\p{L}\p{N}]/u.test(t) ? t : '';
+}
+
 async function transcribeBlob(blob) {
 	if (!blob || blob.size < 1200) return ''; // effectively empty
-	const asr = await loadSttPipeline();
+	const run = await loadSttPipeline();
 	const audio = await decodeTo16kMono(blob);
 	if (!audio || audio.length < 1600) return ''; // < ~0.1s
-	const out = await asr(audio);
-	return (out && out.text ? out.text : '').trim();
+	// Copy: the worker takes ownership of the buffer it is sent.
+	return (await run(new Float32Array(audio))).trim();
 }
 
-// One MediaRecorder utterance at a time.
+// One MediaRecorder per utterance; each keeps its own chunks so a new one can
+// start before the old one has flushed (no gap between segments).
 function startUtterance() {
-	recordedChunks = [];
-	mediaRecorder = new MediaRecorder(micStream);
-	mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) recordedChunks.push(e.data); };
-	mediaRecorder.start();
+	const rec = new MediaRecorder(micStream);
+	const chunks = [];
+	rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+	rec._gsChunks = chunks;
+	rec.start();
+	mediaRecorder = rec;
+	vadSegStart = performance.now();
+	return rec;
 }
 
-function stopUtterance() {
+function stopRecorder(rec) {
 	return new Promise((resolve) => {
-		if (!mediaRecorder || mediaRecorder.state === 'inactive') { resolve(null); return; }
-		mediaRecorder.onstop = () => {
-			const type = recordedChunks[0] ? recordedChunks[0].type : 'audio/webm';
-			resolve(recordedChunks.length ? new Blob(recordedChunks, { type }) : null);
+		if (!rec || rec.state === 'inactive') { resolve(null); return; }
+		rec.onstop = () => {
+			const c = rec._gsChunks || [];
+			resolve(c.length ? new Blob(c, { type: c[0].type || 'audio/webm' }) : null);
 		};
-		try { mediaRecorder.stop(); } catch (e) { resolve(null); }
+		try { rec.stop(); } catch (e) { resolve(null); }
 	});
 }
 
-async function transcribeAndDeliver(blob, autoSend) {
-	if (!blob) return;
+function stopUtterance() {
+	const rec = mediaRecorder;
+	mediaRecorder = null;
+	return stopRecorder(rec);
+}
+
+// Transcriptions run one at a time, in order.
+function transcribeAndDeliver(blob, autoSend) {
+	if (!blob) return Promise.resolve();
+	sttWaiting++;
+	const job = sttQueue.then(() => deliverOne(blob, autoSend)).finally(() => { sttWaiting--; renderMicStatus(); });
+	sttQueue = job.catch(() => {});
+	return job;
+}
+
+async function deliverOne(blob, autoSend) {
 	sttBusy = true;
-	updateStatus('Transcribing…', '');
+	if (sttModelReady) setMicStatus('transcribing', 'Transcribing…');
+	else renderMicStatus(); // model still loading: show its progress
 	try {
-		const text = await transcribeBlob(blob);
-		if (text) {
-			setInputText(text);
-			if (autoSend && !isLoading) sendActiveChatField();
-			else updateStatus(micMode === 'always' ? 'Mic on — listening' : 'Transcribed', micMode === 'always' ? 'connected' : '');
+		const raw = await transcribeBlob(blob);
+		const text = cleanTranscript(raw);
+		if (!text) {
+			micStats.dropped++;
+			setMicStatus('info', raw ? 'Heard only noise — nothing sent' : 'No speech heard — nothing sent', { hud: 'Nothing heard', autoHideMs: 2500 });
+			return;
+		}
+		setInputText(text);
+		if (autoSend && !isLoading) {
+			sendActiveChatField();
+			setMicStatus('sent', `Sent: “${text.length > 60 ? text.slice(0, 57) + '…' : text}”`, { hud: 'Sent', autoHideMs: 2500 });
 		} else {
-			updateStatus(micMode === 'always' ? 'Mic on — listening' : 'No speech detected', micMode === 'always' ? 'connected' : '');
+			setMicStatus('info', 'Transcribed into the message box — press Send when the reply is done', { hud: 'Transcribed', autoHideMs: 6000 });
 		}
 	} catch (e) {
 		micError(e);
@@ -1418,13 +1708,22 @@ async function transcribeAndDeliver(blob, autoSend) {
 
 function micError(e) {
 	console.error('Speech error:', e);
-	const name = e && e.name ? e.name : '';
-	if (name === 'NotAllowedError' || name === 'SecurityError') {
-		updateStatus('Microphone blocked — allow mic access (needs HTTPS/localhost)', 'error');
-	} else if (name === 'NotFoundError') {
-		updateStatus('No microphone found', 'error');
+	const name = (e && (e.name || e.sttName)) || '';
+	const msg = e && e.message ? e.message : '';
+	const quest = micInXr() || IS_QUEST_BROWSER;
+	if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError') {
+		setMicStatus('blocked', quest
+			? 'Microphone blocked. On Quest: Settings › Apps › Browser › Microphone on, and allow it for this site in Browser › Settings › Site permissions. Then press 🎤 again.'
+			: 'Microphone blocked. Allow it for this site (the icon left of the address bar › Microphone), then press 🎤 again.',
+		{ hud: 'Mic blocked — see menu' });
+	} else if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError') {
+		setMicStatus('nomic', 'No microphone found. Connect one (or check your system sound input), then press 🎤 again.', { hud: 'No mic found' });
+	} else if (name === 'NotReadableError' || name === 'TrackStartError' || name === 'AbortError') {
+		setMicStatus('error', 'The microphone is busy or failed to start (another app may be using it).', { hud: 'Mic busy' });
+	} else if (e && e.sttModelLoad) {
+		setMicStatus('error', 'Couldn’t load the speech model (needs internet the first time): ' + (msg || name || 'unknown error'), { hud: 'Speech model failed' });
 	} else {
-		updateStatus('Speech error: ' + (e && e.message ? e.message : name || 'unknown'), 'error');
+		setMicStatus('error', 'Speech error: ' + (msg || name || 'unknown'), { hud: 'Speech error' });
 	}
 	updateMicButtonDOM();
 }
@@ -1443,123 +1742,210 @@ function startVad() {
 	vadData = new Float32Array(vadAnalyser.fftSize);
 	vadSpeaking = false;
 	vadSilenceMs = 0;
+	vadSpeechMs = 0;
+	vadNoise = null;
 	vadLastTime = performance.now();
+}
+
+function vadThreshold() {
+	return Math.max(VAD_MIN_THRESHOLD, (vadNoise || 0) * VAD_FLOOR_FACTOR + VAD_FLOOR_MARGIN);
 }
 
 // One VAD step. Called every frame from renderer.setAnimationLoop so it runs in
 // both the windowed view and immersive MR.
 function pumpVad() {
-	if (micMode !== 'always' || !vadAnalyser) return;
+	if (micMode !== 'always' || !micListening || !vadAnalyser) return;
 	vadAnalyser.getFloatTimeDomainData(vadData);
 	let sum = 0;
 	for (let i = 0; i < vadData.length; i++) sum += vadData[i] * vadData[i];
 	const rms = Math.sqrt(sum / vadData.length);
 	const now = performance.now();
-	const dt = now - vadLastTime;
+	const dt = Math.min(100, now - vadLastTime);
 	vadLastTime = now;
-	if (rms > VAD_RMS_THRESHOLD) {
+	if (vadNoise == null) vadNoise = rms;
+	const thr = vadThreshold();
+	if (rms > (vadSpeaking ? thr * VAD_HOLD_RATIO : thr)) {
 		vadSpeaking = true;
+		vadSpeechMs += dt;
 		vadSilenceMs = 0;
 	} else if (vadSpeaking) {
 		vadSilenceMs += dt;
-		if (vadSilenceMs >= VAD_SILENCE_MS && !sttBusy) {
-			segmentUtterance();
-		}
+	} else {
+		// Noise floor: falls fast, rises slowly (a steady fan becomes "silence").
+		const k = rms < vadNoise ? Math.min(1, dt / 300) : Math.min(1, dt / 3000);
+		vadNoise += (rms - vadNoise) * k;
 	}
+	if (sttBusy) return;
+	const age = now - vadSegStart;
+	if (vadSpeaking && vadSilenceMs >= VAD_SILENCE_MS) {
+		if (vadSpeechMs >= VAD_MIN_SPEECH_MS) segmentUtterance(); else rotateIdleUtterance();
+	} else if (vadSpeaking && age >= VAD_MAX_SEGMENT_MS) {
+		segmentUtterance();
+	} else if (!vadSpeaking && age >= VAD_IDLE_ROTATE_MS) {
+		rotateIdleUtterance();
+	}
+}
+
+function resetVadSegment() {
+	vadSpeaking = false;
+	vadSilenceMs = 0;
+	vadSpeechMs = 0;
 }
 
 function stopVad() {
 	if (vadContext) { try { vadContext.close(); } catch (e) { /* ignore */ } vadContext = null; }
 	vadAnalyser = null;
 	vadData = null;
-	vadSpeaking = false;
-	vadSilenceMs = 0;
+	resetVadSegment();
 }
 
 // End the current utterance, immediately begin capturing the next, and transcribe
 // the finished one in the background.
 async function segmentUtterance() {
-	sttBusy = true; // close the race with the next VAD tick until transcription starts
-	vadSpeaking = false;
-	vadSilenceMs = 0;
-	const blob = await stopUtterance();
-	if (micMode === 'always') startUtterance();
+	micStats.segments++;
+	micStats.lastSegmentMs = Math.round(performance.now() - vadSegStart);
+	resetVadSegment();
+	const old = mediaRecorder;
+	if (micMode === 'always' && micStreamLive()) startUtterance(); else mediaRecorder = null;
+	const blob = await stopRecorder(old);
 	await transcribeAndDeliver(blob, true);
+}
+
+// Nothing (or only a blip) was said: start a fresh recording and drop the old one.
+function rotateIdleUtterance() {
+	micStats.rotations++;
+	resetVadSegment();
+	const old = mediaRecorder;
+	if (micMode === 'always' && micStreamLive()) startUtterance(); else mediaRecorder = null;
+	stopRecorder(old);
 }
 
 // Always-on listening toggle (MIC button + DOM button).
 async function toggleMicAlwaysOn() {
 	if (!speechSupported) {
-		updateStatus('Microphone not available on this device', 'error');
+		setMicStatus('error', 'Microphone capture isn’t available here (needs HTTPS and a browser with microphone access).', { hud: 'No mic support' });
 		return;
 	}
 	if (micMode === 'always') { stopAlwaysOn(); return; }
 	if (micMode === 'ptt') return; // let a push-to-talk finish first
 	micMode = 'always';
+	micListening = false;
+	clearMicTransient();
 	updateMicButtonDOM();
-	updateStatus(sttModelReady ? 'Mic on — listening' : 'Loading speech model…', 'connected');
 	try {
 		await ensureMicStream();
-		loadSttPipeline(); // warm the model in the background
 		if (micMode !== 'always') return; // toggled off during setup
+		clearMicTransient();
+		await loadSttPipeline();          // listening starts only once Whisper is ready
+		if (micMode !== 'always') return;
 		startVad();
 		startUtterance();
-		updateStatus('Mic on — listening', 'connected');
-	} catch (e) {
-		micMode = 'off';
+		micListening = true;
+		clearMicTransient();
 		updateMicButtonDOM();
+	} catch (e) {
+		stopMicCapture();
 		micError(e);
 	}
 }
 
-function stopAlwaysOn() {
+// Stop recording (any mode) without transcribing; release the microphone.
+function stopMicCapture() {
 	micMode = 'off';
+	micListening = false;
+	pttHand = null;
 	stopVad();
-	if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-		try { mediaRecorder.stop(); } catch (e) { /* ignore */ }
-	}
+	const rec = mediaRecorder;
+	mediaRecorder = null;
+	if (rec && rec.state !== 'inactive') { try { rec.stop(); } catch (e) { /* ignore */ } }
+	releaseMicStream();
 	updateMicButtonDOM();
-	updateStatus('Mic off', '');
+}
+
+function stopAlwaysOn() {
+	stopMicCapture();
+	setMicStatus('off', 'Mic off', { autoHideMs: 2000 });
 }
 
 // Push-to-talk (controller A/X button). Only engages when always-on is off.
+// It starts from gamepad polling (no user activation), so a permission that
+// was never granted can't be asked for reliably here: say so instead.
 async function startPTT(hand) {
 	if (!speechSupported) {
-		updateStatus('Microphone not available on this device', 'error');
+		setMicStatus('error', 'Microphone capture isn’t available here (needs HTTPS and a browser with microphone access).', { hud: 'No mic support' });
 		return;
 	}
 	if (micMode !== 'off') return; // busy: already listening (always-on or PTT)
 	micMode = 'ptt';
 	pttHand = hand;
+	micListening = false;
+	clearMicTransient();
 	updateMicButtonDOM();
-	updateStatus(sttModelReady ? 'Listening… (push-to-talk)' : 'Loading speech model…', '');
+	const perm = await micPermissionState();
+	if (micMode !== 'ptt' || pttHand !== hand) return; // released already
+	if (perm === 'denied') {
+		stopMicCapture();
+		micError({ name: 'NotAllowedError', message: 'Permission denied' });
+		return;
+	}
+	if (perm === 'prompt' && !micStreamLive()) {
+		setMicStatus('starting', 'Push-to-talk needs microphone permission: allow it if asked, or press 🎤 in the menu once.', { hud: 'Allow mic…' });
+	}
 	try {
 		await ensureMicStream();
-		if (micMode !== 'ptt') return; // released during setup
+		if (micMode !== 'ptt' || pttHand !== hand) { if (micMode === 'off') scheduleMicRelease(MIC_RELEASE_MS); return; }
 		startUtterance();          // capture immediately…
-		loadSttPipeline();          // …while the model warms in the background
-		updateStatus('Listening… (push-to-talk)', '');
+		micListening = true;
+		clearMicTransient();
+		updateMicButtonDOM();
+		loadSttPipeline().catch(() => {}); // …while the model warms in the background
 	} catch (e) {
-		micMode = 'off';
-		pttHand = null;
+		stopMicCapture();
 		micError(e);
 	}
 }
 
 async function stopPTT(hand) {
 	if (micMode !== 'ptt' || hand !== pttHand) return;
+	const wasListening = micListening;
 	micMode = 'off';
+	micListening = false;
 	pttHand = null;
 	updateMicButtonDOM();
 	const blob = await stopUtterance();
+	scheduleMicRelease(MIC_RELEASE_MS);
+	if (!wasListening) { renderMicStatus(); return; }
 	await transcribeAndDeliver(blob, true);
 }
 
+// Enter VR (a real click): if this person has used the mic before and the
+// browser would still ask, ask now — a prompt is far more reliable outside the
+// immersive session than in it. Also warm the model. Never-mic users: nothing.
+function onEnterVrClickForMic() {
+	if (!speechSupported || micInXr()) return;
+	let used = false;
+	try { used = localStorage.getItem(MIC_USED_KEY) === '1'; } catch (e) { /* ignore */ }
+	if (!used) return;
+	micPermissionState().then((state) => {
+		if (state === 'prompt' && !micStreamLive()) {
+			navigator.mediaDevices.getUserMedia({ audio: true })
+				.then((s) => { for (const t of s.getTracks()) t.stop(); })
+				.catch(() => { /* answered "no": the mic button will explain */ });
+		}
+		if (state !== 'denied') loadSttPipeline().catch(() => {});
+	});
+}
+
 function updateMicButtonDOM() {
-	const listening = micMode !== 'off';
-	const btn = document.getElementById('mic-button');
-	if (btn) btn.classList.toggle('listening', listening);
-	if (desktopMicButton) desktopMicButton.classList.toggle('listening', listening);
+	const on = micMode !== 'off';
+	const listening = on && micListening;
+	for (const btn of [document.getElementById('mic-button'), desktopMicButton]) {
+		if (!btn) continue;
+		btn.classList.toggle('listening', listening);
+		btn.classList.toggle('mic-pending', on && !listening);
+		btn.setAttribute('aria-pressed', String(on));
+	}
+	renderMicStatus();
 }
 
 function hslToHex(h, s, l) {
@@ -5864,6 +6250,13 @@ if (micButton) {
 		micButton.title = 'Toggle always-on voice input (in-browser Whisper)';
 	}
 }
+// Enter VR: ask for the mic up front for people who use it (see onEnterVrClickForMic).
+if (xrEntryButton) xrEntryButton.addEventListener('click', onEnterVrClickForMic, true);
+updateMicButtonDOM();
+window.__gsMic = {
+	cleanTranscript,
+	state: () => ({ micMode, micListening, sttModelReady, sttPct, worker: !!sttWorker && !sttWorkerBroken, noise: vadNoise, threshold: vadThreshold(), ...micStats, status: micStatusEl ? micStatusEl.textContent : '' })
+};
 
 // ============================================================================
 // Model selector: populated from whichever backends the server has API keys

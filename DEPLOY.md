@@ -47,6 +47,7 @@ Wrangler is typically authenticated on the **box**, not always on the PC.
    - `threejsAddons/`
    - **full `vendor_modules/`** — especially `vendor_modules/three/build/three.module.js` (the script fails if it is missing)
    - Add any new browser file to `sync-public.sh` **and** `vercel.json` `includeFiles`.
+   - The speech-to-text (mic) Web Worker has **no file of its own**: since 0.989 it is built in `main.js` (`STT_WORKER_SRC`, started from a blob URL), so nothing extra to sync or include. At runtime it loads transformers.js from `cdn.jsdelivr.net` and the Whisper model from `huggingface.co`; don't add a CSP / Permissions-Policy that blocks those or `microphone`.
 3. **Prior bug:** if `public/vendor_modules/three/build/` is missing, `/` and `/main.js` still return 200 but the import map 404s `three.module.js`, so the app never boots (blank canvas, empty Model dropdown, no welcome). Always restore `three/build` from git if the working tree deleted it, then sync again.
 4. `node gen-prompts.mjs` — regenerates `prompts.js` whenever the prompts in `server.js` change.
 5. Server API changes in `server.js` must be ported to `worker/index.js` by hand (same validation). `worker-patches/0001` is already applied there (kept for history).
