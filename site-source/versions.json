@@ -1,9 +1,20 @@
 {
   "versions": [
     {
-      "id": "0.985",
-      "label": "GS 0.985 (this build)",
+      "id": "0.986",
+      "label": "GS 0.986 (this build)",
       "url": null,
+      "date": "2026-11-02",
+      "changes": [
+        "HDRI and sky domes always fit the whole scene: a dome grows to enclose every object (with room to spare) and refits by itself when objects are added, moved or removed, so big scenes no longer poke through or get cut off by a fixed-size dome. Grounded skyboxes keep their floor in place.",
+        "Render distance always reaches everything in the scene, on desktop, phone and in VR, so far-away objects are never clipped. Fog is also pushed out so it no longer hides objects completely.",
+        "The scene AI is told to do the same: tag domes, size them from the full scene bounds, set the far plane past everything and call gsFitScene() after building a scene. This also applies with a custom Chat Prompt."
+      ]
+    },
+    {
+      "id": "0.985",
+      "label": "GS 0.985",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-10-24",
       "changes": [
         "Community uploads and share links now keep the Environment HDRI (a link or a file from your computer) and its Use as background setting, and restore them when the scene loads. Scenes uploaded before this load as before and keep your own HDRI.",

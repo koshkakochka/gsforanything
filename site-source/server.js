@@ -123,6 +123,7 @@ The page also provides these window globals:
 - Pointer input on these panels works everywhere, including in a headset: pointing a VR controller (or hand) at the panel and pulling the trigger / pinching, or clicking / tapping it in the 3D view, sends pointer and mouse events to the canvas at the matching pixel. p5's \`mouseX\`, \`mouseY\`, \`mouseIsPressed\`, \`mousePressed()\`, \`mouseReleased()\`, \`mouseDragged()\` and \`mouseClicked()\` work, as do \`canvas.addEventListener('pointerdown' | 'mousedown' | 'click', ...)\` with \`e.offsetX/e.offsetY\` in canvas pixels.
 - \`gsGamepad\` — game controllers (Xbox / PlayStation / other USB or Bluetooth pads via the Gamepad API): \`connected\`, \`axis('leftX' | 'leftY' | 'rightX' | 'rightY')\`, \`button(name)\`, \`pressed(name)\`, \`justPressed(name)\`, \`onButton(name, fn)\`, \`rumble(ms, strength)\`, and \`captureCamera = true\` to stop the sticks moving the editor camera. Headset (WebXR) controllers are separate.
 - Desktop camera controls are the stock three.js addons, owned by the app — never create your own OrbitControls / PointerLockControls / FlyControls or add WASD / mouse-look camera code. The user picks the mode in the Controls tab: Orbit (OrbitControls, default, target at the scene origin 0,0,0), Map (MapControls), Trackball, Fly (FlyControls), First person (PointerLockControls + WASD) or Off. From code: \`window.gsControls.mode\`, \`gsControls.controls\` (the active control instance, also \`window.controls\`; \`null\` when Off), \`gsControls.setMode('orbit' | 'map' | 'trackball' | 'fly' | 'firstperson' | 'off')\` only when the user asks for a mode, \`gsControls.reset()\` to restore the default view, and \`gsOrbit.pivot()\` / \`gsOrbit.recenter()\`. Keyboard keys reach the controls except while a text field is focused; in VR the headset drives the camera.
+- \`gsFitScene()\` — fits sky / HDRI domes, \`camera.far\` and fog to the whole scene (see "Sky domes, HDRI backgrounds and render distance").
 - Origin rotation: the user can turn the whole scene about its origin (Environment → Origin rotation) to line it up with their view. Keep building in scene coordinates with \`scene.add(...)\` (floor y = 0, physics gravity -y): while the origin is rotated the app moves scene content into \`gsOrigin.root\` (the group named 'gsOriginRoot') and rotates it, so positions, physics and hot reload need no changes. Find objects with \`scene.getObjectByName(name)\` or \`window\` references, not \`scene.children\`; \`scene.remove(obj)\` still works. Convert world-space points (the camera position, raycast hits) with \`gsOrigin.toLocal(v)\` before using them as positions (\`gsOrigin.toWorld(v)\` goes back). Set \`obj.userData.gsWorldLocked = true\` before \`scene.add\` only for something that must stay level with the room when the scene is rotated. Never change the origin rotation unless the user asks (\`gsOrigin.set({ yaw, pitch, roll })\` in degrees, \`gsOrigin.reset()\`).
 
 When the scene needs physics (gravity, collisions, rigid bodies), use ammo.js through \`gsRequire('ammo')\`: one \`btDiscreteDynamicsWorld\` stored on \`window\`, stepped in a \`window._vrAnimations\` callback, copying each body's transform onto its mesh every frame.
@@ -184,7 +185,7 @@ Lighting:
   \`scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture; scene.environmentIntensity = 0.4;\`
   Keep \`environmentIntensity\` modest so it doesn't flatten the lighting.
 - Tone mapping: \`renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1; renderer.outputColorSpace = THREE.SRGBColorSpace;\`.
-- For depth, optional fog that matches the background: \`scene.fog = new THREE.Fog(color, near, far)\`.
+- For depth, optional fog that matches the background: \`scene.fog = new THREE.Fog(color, near, far)\`, with \`far\` beyond the farthest object so nothing disappears into it.
 
 Materials:
 - Use \`MeshStandardMaterial\`, or \`MeshPhysicalMaterial\` for clearcoat (car paint, varnish), \`transmission\` + \`ior\` + \`thickness\` (glass, water, ice) and \`sheen\` (fabric, velvet). Don't use MeshBasic / Lambert / Phong for lit objects.
@@ -193,6 +194,37 @@ Materials:
 - Colour spaces: colour textures (\`map\`, \`emissiveMap\`) get \`texture.colorSpace = THREE.SRGBColorSpace\`. Data textures (roughness, metalness, normal, bump) stay linear.
 
 VR performance (Quest): at most one or two shadow-casting lights, shadow maps of 1024 or less, few dynamic lights, and no post-processing (EffectComposer, bloom, SSAO) in VR. It drops the frame rate badly in a headset.
+
+## Sky domes, HDRI backgrounds and render distance (IMPORTANT)
+
+The whole scene must always be visible at once: inside the sky, inside the render distance and not hidden by fog.
+- For an HDRI / 360 background with no geometry, prefer \`scene.background = texture\` (\`texture.mapping = THREE.EquirectangularReflectionMapping\`): it is infinitely far away and never cuts anything off. Don't replace an HDRI the user set in the Environment tab.
+- When you build a dome (an inside-out \`SphereGeometry\` with \`side: THREE.BackSide\`, or \`GroundedSkybox\`): give it a \`name\`, set \`dome.userData.gsHdriDome = true\`, give its material \`fog: false\`, and never leave it at a fixed size. Size it from the full scene bounds after every object has been added: Box3 over everything except the dome, bounding-sphere radius × 1.5 (never smaller than the dome's starting size), centred on the bounds centre. A GroundedSkybox keeps its floor at y = 0: scale it and set \`position.y = height × scale\`. Refit whenever objects are added, moved or removed, or the scene grows.
+- Render distance: \`camera.far\` must reach the far side of everything, the dome included (distance from the camera to the bounds centre + radius, × 1.05), followed by \`camera.updateProjectionMatrix()\`. Never lower \`camera.far\` to a fixed small number. Keep \`camera.near\` at 0.1 (raise it a little only for scenes many km across). In VR three.js copies near/far into the XR session's depthNear/depthFar, so setting the camera is enough; don't call \`session.updateRenderState\` yourself.
+- Fog must not hide objects: with \`THREE.Fog\`, \`fog.far\` ≥ the scene's extent; with \`FogExp2\`, keep \`density\` ≤ about 1.5 / the scene's extent. Don't hide, cull or drop objects by distance (no LOD level that is empty, no \`visible = false\` beyond a range, no small \`frustumCulled\` tricks).
+- The page does this for you: \`gsFitScene()\` fits every dome, the far plane and fog to the current scene and returns \`{ center, radius, domes, far }\`. It also runs by itself a few times a second, but call it right after building or changing a scene. Objects with \`userData.gsIgnoreBounds = true\` are left out of the bounds (e.g. a ground plane meant to be "infinite").
+
+Example dome that fits the scene:
+\`\`\`vr-exec
+const tex = await new THREE.TextureLoader().loadAsync('https://example.com/sky-360.jpg');
+tex.mapping = THREE.EquirectangularReflectionMapping; tex.colorSpace = THREE.SRGBColorSpace;
+let dome = scene.getObjectByName('skyDome');
+if (!dome) {
+  dome = new THREE.Mesh(new THREE.SphereGeometry(50, 64, 32), new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false, depthWrite: false }));
+  dome.name = 'skyDome'; dome.userData.gsHdriDome = true; scene.add(dome);
+}
+// ... add the rest of the scene first, then fit everything to it:
+if (window.gsFitScene) gsFitScene();
+else {
+  dome.visible = false;
+  const s = new THREE.Box3().setFromObject(scene).getBoundingSphere(new THREE.Sphere());
+  dome.visible = true;
+  const r = Math.max(50, s.radius * 1.5);
+  dome.position.copy(s.center); dome.scale.setScalar(r / 50); // geometry radius is 50
+  camera.far = Math.max(camera.far, (camera.position.distanceTo(s.center) + r) * 1.05);
+  camera.updateProjectionMatrix();
+}
+\`\`\`
 
 ## How to modify the scene
 
@@ -240,6 +272,7 @@ const CHAT_PROMPT_REQUIRED = `## GS technical requirements (always added by GS; 
 - Code that should change the scene must be in fenced code blocks tagged \`vr-exec\` (\`\`\`vr-exec ... \`\`\`). Other code blocks are shown, not run. Several vr-exec blocks run in order.
 - vr-exec blocks run inside an async function (top-level \`await\` works) with these globals: \`THREE\`, \`scene\`, \`camera\`, \`renderer\`, \`document\`, \`hud\` (head-locked group, only on request) and \`gs\` (\`gs.state\`, \`gs.onUpdate(fn)\`, \`gs.on(target, event, fn)\`, \`gs.onDispose(fn)\`). The page also has \`gsRequire\`, \`gsCreateCanvasSurface\`, \`gsCreateP5Surface\`, \`gsGamepad\` and \`gsControls\`.
 - y = 0 is the floor, eye level is about 1.6 m, and the user faces -z. Don't create your own camera controls.
+- The whole scene must be visible at once. A sky / HDRI dome (inside-out sphere or GroundedSkybox) gets \`userData.gsHdriDome = true\` and must enclose every object: size it from the full scene bounds (radius × 1.5) and refit when the scene changes. \`camera.far\` must reach past everything, dome included (never a fixed small value), and fog must not hide objects. Call \`gsFitScene()\` after building or changing a scene: it fits domes, camera.far and fog to the scene bounds.
 - A user message may start with a "[GS editor settings: ...]" note. Follow it and don't mention it.`;
 
 // Returns the system prompt for a /api/chat request: the default, or the
@@ -269,6 +302,7 @@ The code runs inside an \`AsyncFunction('THREE', 'scene', 'camera', 'renderer', 
 - \`window._vrAnimations\` — array of per-frame animation callbacks
 - \`gs\` — hot-reload helpers: \`gs.state\` (persistent per-block object), \`gs.onUpdate(fn)\`, \`gs.on(target, type, fn)\`, \`gs.onDispose(fn)\`, \`gs.hot\`; also \`window.gsState\`. Valid — keep using them, and keep stable \`name\`s on objects.
 - \`window.gsRequire(name)\` (async; \`'ammo'\` → initialised ammo.js, \`'p5'\` → p5 constructor), \`window.gsCreateCanvasSurface(opts)\`, \`window.gsCreateP5Surface(sketch, opts)\` \`window.gsGamepad\`, \`window.gsControls\` / \`window.controls\` (the app's stock three.js camera controls) and \`window.gsOrbit\` — page helpers; these are valid, keep using them. Never call \`Ammo()\` directly: use \`const Ammo = await gsRequire('ammo');\`
+- \`window.gsFitScene()\` — valid page helper: fits sky / HDRI domes (\`userData.gsHdriDome = true\`), camera.far and fog to the whole scene's bounds. Keep calls to it.
 - \`window.gsOrigin\` (origin rotation: \`root\`, \`rotation\`, \`toLocal(v)\`, \`toWorld(v)\`, \`set()\`, \`reset()\`) — valid page helper; objects added with \`scene.add\` may end up under \`gsOrigin.root\`, so find them with \`scene.getObjectByName\`.
 
 Top-level \`await\` IS allowed because the function is async.
