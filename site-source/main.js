@@ -249,10 +249,8 @@ const dchatSaturation = document.getElementById('dchat-saturation');
 const dchatResetCameraBtn = document.getElementById('dchat-reset-camera');
 const dchatNavType = document.getElementById('dchat-nav-type');
 const dchatScenesButtonsMount = document.getElementById('dchat-scenes-buttons');
-const dchatSceneList = document.getElementById('dchat-scene-list');
-const dchatExportCombinedMount = document.getElementById('dchat-export-combined-mount');
+const dchatCurrentScene = document.getElementById('dchat-current-scene');
 const dchatCommunityButtonsMount = document.getElementById('dchat-community-buttons');
-const dchatCommunityLoadModeMount = document.getElementById('dchat-community-loadmode');
 const dchatCommunityList = document.getElementById('dchat-community-list');
 const dchatThemesButtonsMount = document.getElementById('dchat-themes-buttons');
 const dchatThemesList = document.getElementById('dchat-themes-list');
@@ -292,15 +290,11 @@ const EXIT_XR_BUTTON = [
 const SCENES_BUTTONS = [
 	{ id: 'export', label: 'Export', action: 'scenes:export', variant: 'accent' },
 	{ id: 'importFile', label: 'Import File', action: 'scenes:importFile' },
-	{ id: 'importFolder', label: 'Import Folder', action: 'scenes:importFolder' },
 	{ id: 'loadSaved', label: 'Load Saved', action: 'scenes:loadSaved', variant: 'success' },
 	{ id: 'clearScene', label: 'Clear scene', action: 'scenes:clear', variant: 'secondary' },
 	// Share & 3D export (exporter.js): one shortcut to the Share tab (the same
 	// menu is shown in VR, so the Share tab is reachable there too).
 	{ id: 'openShare', label: 'Share & Export 3D', action: 'scenes:openShareTab', variant: 'accent' }
-];
-const EXPORT_COMBINED_BUTTON = [
-	{ id: 'exportCombined', label: 'Export Combined', action: 'scenes:exportCombined', variant: 'warning' }
 ];
 const COMMUNITY_BUTTONS = [
 	{ id: 'upload', label: 'Upload Current Scene', action: 'community:upload', variant: 'accent' },
@@ -340,7 +334,7 @@ function handleMenuAction(action) {
 			renderDomEnv();
 			break;
 		case 'scenes:export':
-			showExportModal(false);
+			showExportModal();
 			break;
 		case 'scenes:exportModel:glb':
 		case 'scenes:exportModel:gltf':
@@ -358,16 +352,8 @@ function handleMenuAction(action) {
 		case 'scenes:importFile':
 			fileInput.click();
 			break;
-		case 'scenes:importFolder':
-			folderInput.click();
-			break;
 		case 'scenes:loadSaved':
 			loadSceneFromServer();
-			break;
-		case 'scenes:exportCombined':
-			if ((loadedScenes.some(s => s.active) || executedCodeBlocks.length > 0) && loadedScenes.length > 0) {
-				showExportModal(true);
-			}
 			break;
 		case 'scenes:clear':
 			clearSceneContent();
@@ -402,12 +388,6 @@ function handleMenuAction(action) {
 			break;
 		case 'community:refresh':
 			refreshCommunityScenes();
-			break;
-		case 'community:loadMode:clear':
-			setCommunityLoadMode('clear');
-			break;
-		case 'community:loadMode:layer':
-			setCommunityLoadMode('layer');
 			break;
 		case 'themes:upload':
 			uploadCurrentThemeToCommunity();
@@ -464,6 +444,7 @@ function exitXrToDesktop() {
 // ============================================================================
 let messages = [];       // Full messages for API context (includes raw code blocks)
 let displayMessages = []; // Cleaned messages for canvas display
+const WELCOME_MSG = 'VR Code Assistant ready. Ask me to add objects, modify the scene, or inject HTML — I\'ll write and execute the code live.';
 let isLoading = false;
 let selectedBackend = null; // backend key from /api/backends (e.g. 'claude', 'openai-sol', 'ollama') - set once it resolves
 let backendLabels = {}; // id -> display label from /api/backends
@@ -630,19 +611,24 @@ let vrBgSat = 0.15;      // 0-1
 let vrBgLight = 0.12;    // 0-1
 let vrSkybox = null;     // inverted sphere to block passthrough in VR mode
 let executedCodeBlocks = [];  // vr-exec code blocks from current chat session
-let loadedScenes = [];        // imported scene files: { id, name, thumbnail, codeBlocks, active, createdAt, _thumbImage }
+// The one scene in the world. null = a blank scene (chat-built code only).
+// { id, name, thumbnail, codeBlocks, createdAt, mergedFrom?, community*? }.
+// Loading any scene replaces it (see replaceActiveScene); there is no list of
+// stacked scenes. Chat history belongs to it and is reset with it.
+let activeScene = null;
+// Bumped every time the active scene is replaced; async work (community
+// fetches, chat replies) started for an older scene checks it and drops out.
+let sceneEpoch = 0;
 let sceneFileExtension = 'vrscene';
 let scenePanelSubTab = 'scenes'; // 'scenes' | 'files' | 'code' | 'community' - see SCENE_PANEL_SUB_TABS
 let communityScenesCache = []; // last-fetched list
 let communityThemesCache = [];
 let communitySection = 'scenes'; // Community tab: 'scenes' | 'themes'
-// Community scene load: 'clear' blanks the world first (default); 'layer' adds.
-let communityLoadMode = 'clear';
-// Bumped by a clear-load (and used to drop stale applies). See beginCommunityLoad.
-let communityClearEpoch = 0;
-let communityLayerCancel = 0;
-// In-flight fetches keyed by `${mode}:${communityKey}` so spam-clicks share one apply.
+// In-flight fetches keyed by communityKey so spam-clicks share one apply.
 const communityLoadInflight = new Map();
+// Bumped by every Community click and every scene change; a fetch that lands
+// with an older ticket is dropped (see loadCommunityScene).
+let communityLoadTicket = 0;
 // Applies run one at a time so two loads can't scene.add while the other is still executing.
 let communityApplyChain = Promise.resolve();
 let chatSection = 'scene'; // Chat tab: 'scene' | 'theme' | 'prompt'
@@ -1669,7 +1655,6 @@ function keepHdriBackground() {
 // Scene Manager
 // ============================================================================
 const fileInput = document.getElementById('scene-file-input');
-const folderInput = document.getElementById('scene-folder-input');
 const exportModal = document.getElementById('export-modal');
 const exportNameInput = document.getElementById('export-name');
 const exportExtInput = document.getElementById('export-ext');
@@ -1680,7 +1665,6 @@ const exportConfirmBtn = document.getElementById('export-confirm-btn');
 const exportDownloadBtn = document.getElementById('export-download-btn');
 
 let pendingExportThumbnail = null;
-let pendingExportCombined = false;
 
 // GLB / FBX export (exporter.js). Roots = everything clearUserObjects would
 // remove: user content under the scene root and the Walk-in-AR placement group.
@@ -1688,7 +1672,7 @@ const sceneModelExport = initSceneExport({
 	// World transforms are exported, so a rotated origin is baked in (the file
 	// matches what is on screen).
 	getRoots: () => userContentRoots(),
-	getSceneName: () => loadedScenes.filter((sc) => sc.active).map((sc) => sc.name).filter(Boolean).join(' + ') || 'GS scene',
+	getSceneName: () => activeScene?.name || 'GS scene',
 	notify: (text, kind) => updateStatus(text, kind),
 	isImmersive: () => renderer.xr.isPresenting
 });
@@ -1752,7 +1736,7 @@ function disposeRecursive(obj) {
 
 
 // ============================================================================
-// Code tab — view/edit generated VR program (active scenes + session blocks)
+// Code tab — view/edit generated VR program (active scene + session blocks)
 // ============================================================================
 function setCodeEditorStatus(text, kind) {
 	if (!dchatCodeStatus) return;
@@ -1762,10 +1746,10 @@ function setCodeEditorStatus(text, kind) {
 
 function buildCodeEditorSource() {
 	const chunks = [];
-	for (const sc of loadedScenes) {
-		if (!sc.active) continue;
+	const sc = activeScene;
+	if (sc) {
+		const name = String(sc.name || 'Scene').replace(/\n/g, ' ');
 		(sc.codeBlocks || []).forEach((code, i) => {
-			const name = String(sc.name || 'Scene').replace(/\n/g, ' ');
 			chunks.push(`// --- scene[${sc.id}] #${i} ${name} ---\n${String(code).trim()}`);
 		});
 	}
@@ -1775,11 +1759,13 @@ function buildCodeEditorSource() {
 	return chunks.join('\n\n');
 }
 
+/** Editor text -> { sceneBlocks, sessionBlocks }. sceneBlocks is null when the
+ *  text has no `scene[<active id>]` markers (the scene's code is left as is). */
 function parseCodeEditorSource(text) {
-	const sceneUpdates = new Map(); // sceneId -> code[]
+	let sceneBlocks = null;
 	const sessionBlocks = [];
 	const trimmed = (text || '').trim();
-	if (!trimmed) return { sceneUpdates, sessionBlocks };
+	if (!trimmed) return { sceneBlocks, sessionBlocks };
 
 	const parts = trimmed.split(/(?=^\/\/ --- .+? ---$)/m);
 	for (const part of parts) {
@@ -1794,14 +1780,12 @@ function parseCodeEditorSource(text) {
 		if (!code) continue;
 		const sceneMatch = label.match(/^scene\[([^\]]+)\]/);
 		if (sceneMatch) {
-			const id = sceneMatch[1];
-			if (!sceneUpdates.has(id)) sceneUpdates.set(id, []);
-			sceneUpdates.get(id).push(code);
+			if (activeScene && sceneMatch[1] === activeScene.id) (sceneBlocks ||= []).push(code);
 		} else {
 			sessionBlocks.push(code);
 		}
 	}
-	return { sceneUpdates, sessionBlocks };
+	return { sceneBlocks, sessionBlocks };
 }
 
 function sceneBlockKey(sc, i) { return `scene:${sc.id}#${i}`; }
@@ -1809,15 +1793,14 @@ function sessionBlockKey(i) { return `block:${i}`; }
 
 /** Editor text -> ordered [{key, code, sceneId}] using the // --- markers. */
 function parseCodeEditorBlocks(text) {
-	const { sceneUpdates, sessionBlocks } = parseCodeEditorSource(text);
+	const { sceneBlocks, sessionBlocks } = parseCodeEditorSource(text);
 	const blocks = [];
-	for (const sc of loadedScenes) {
-		if (!sc.active) continue;
-		const codes = sceneUpdates.has(sc.id) ? sceneUpdates.get(sc.id) : (sc.codeBlocks || []);
-		codes.forEach((code, i) => blocks.push({ key: sceneBlockKey(sc, i), code, sceneId: sc.id }));
+	const sc = activeScene;
+	if (sc) {
+		(sceneBlocks || sc.codeBlocks || []).forEach((code, i) => blocks.push({ key: sceneBlockKey(sc, i), code, sceneId: sc.id }));
 	}
 	sessionBlocks.forEach((code, i) => blocks.push({ key: sessionBlockKey(i), code, sceneId: null }));
-	return { blocks, sceneUpdates, sessionBlocks };
+	return { blocks, sceneBlocks, sessionBlocks };
 }
 
 function blockLabel(key) {
@@ -1840,7 +1823,7 @@ async function hotReloadFromEditor({ fromLive = false } = {}) {
 	if (dchatCodeApply) dchatCodeApply.disabled = true;
 	const text = dchatCodeEditor.value;
 	try {
-		const { blocks, sceneUpdates, sessionBlocks } = parseCodeEditorBlocks(text);
+		const { blocks, sceneBlocks, sessionBlocks } = parseCodeEditorBlocks(text);
 		const wanted = new Map(blocks.map((b) => [b.key, b]));
 		const changed = [];
 		for (const b of blocks) {
@@ -1866,10 +1849,7 @@ async function hotReloadFromEditor({ fromLive = false } = {}) {
 		}
 		setCodeEditorStatus(fromLive ? 'Hot reloading…' : 'Applying (hot reload)…', 'pending');
 		// 2. Commit the new code to the model.
-		for (const [id, codes] of sceneUpdates) {
-			const sc = loadedScenes.find((x) => x.id === id);
-			if (sc) sc.codeBlocks = codes;
-		}
+		if (activeScene && sceneBlocks) activeScene.codeBlocks = sceneBlocks;
 		executedCodeBlocks = sessionBlocks;
 		// 3. Drop blocks that were deleted from the editor.
 		for (const rt of removed) teardownBlock(rt);
@@ -1938,7 +1918,7 @@ async function hotReloadFromEditor({ fromLive = false } = {}) {
 
 function setModelBlockCode(b, code) {
 	if (b.sceneId) {
-		const sc = loadedScenes.find((x) => x.id === b.sceneId);
+		const sc = activeScene && activeScene.id === b.sceneId ? activeScene : null;
 		const i = Number(b.key.split('#').pop());
 		if (sc && sc.codeBlocks && i < sc.codeBlocks.length) sc.codeBlocks[i] = code;
 	} else {
@@ -1949,10 +1929,10 @@ function setModelBlockCode(b, code) {
 
 function updateCodeEditorHint() {
 	if (!dchatCodeHint) return;
-	const sceneCount = loadedScenes.filter(s => s.active).reduce((n, s) => n + (s.codeBlocks?.length || 0), 0);
+	const sceneCount = activeScene?.codeBlocks?.length || 0;
 	const sessionCount = executedCodeBlocks.length;
 	dchatCodeHint.textContent =
-		`Active scenes: ${sceneCount} block${sceneCount === 1 ? '' : 's'} · Session: ${sessionCount} block${sessionCount === 1 ? '' : 's'}. ` +
+		`Scene: ${sceneCount} block${sceneCount === 1 ? '' : 's'} · Session: ${sessionCount} block${sessionCount === 1 ? '' : 's'}. ` +
 		`Apply / Live hot reload only changed blocks and keep state; Full reset re-runs everything. ` +
 		`Markers like // --- block N --- separate blocks.`;
 }
@@ -1996,21 +1976,16 @@ async function applyCodeFromEditor({ fromLive = false } = {}) {
 	if (dchatCodeApply) dchatCodeApply.disabled = true;
 	try {
 		const text = dchatCodeEditor.value;
-		const { sceneUpdates, sessionBlocks } = parseCodeEditorSource(text);
+		const { sceneBlocks, sessionBlocks } = parseCodeEditorSource(text);
 
-		for (const [id, codes] of sceneUpdates) {
-			const sc = loadedScenes.find(s => s.id === id);
-			if (sc) sc.codeBlocks = codes;
-		}
+		if (activeScene && sceneBlocks) activeScene.codeBlocks = sceneBlocks;
 		executedCodeBlocks = sessionBlocks;
 
 		clearUserObjects();
-		for (const sc of loadedScenes) {
-			if (!sc.active) continue;
-			const codes = sc.codeBlocks || [];
-			for (let i = 0; i < codes.length; i++) {
-				await executeVrCode(codes[i], sceneBlockKey(sc, i));
-			}
+		const sc = activeScene;
+		const codes = sc?.codeBlocks || [];
+		for (let i = 0; i < codes.length; i++) {
+			await executeVrCode(codes[i], sceneBlockKey(sc, i));
 		}
 		for (let i = 0; i < executedCodeBlocks.length; i++) {
 			await executeVrCode(executedCodeBlocks[i], sessionBlockKey(i));
@@ -2098,55 +2073,51 @@ function clearUserObjects() {
 	}
 }
 
-/** Remove every user-placed object from the live 3D scene. Keeps imported
- *  scene files in the Scenes list (unchecked), Files library, and Community. */
+/** Clear scene = start a new blank scene: every user-placed object, the
+ *  loaded scene and its chat history go. Files library and Community uploads
+ *  are not affected. */
 function clearSceneContent() {
-	const userRoots = userContentRoots().length;
-	const arExtras = 0;
-	const activeCount = loadedScenes.filter(s => s.active).length;
-	const sessionCount = executedCodeBlocks.length;
-	if (userRoots + arExtras + activeCount + sessionCount === 0) {
+	if (!activeScene && userContentRoots().length === 0 && executedCodeBlocks.length === 0 && messages.length === 0) {
 		recenterOrbitPivot();
 		updateStatus('Scene is already empty', '');
 		return;
 	}
 	if (!window.confirm(
-		'Clear all objects from the scene? Imported scene files stay in the list (unchecked). Files library and Community uploads are not affected.'
+		'Clear the scene? All objects and this scene\'s chat history are removed. Files library and Community uploads are not affected.'
 	)) return;
 
-	for (const sc of loadedScenes) sc.active = false;
-	executedCodeBlocks = [];
-	clearUserObjects();
+	setActiveScene(null);
 	recenterOrbitPivot();
-	notifyCodeEditorExternalChange();
-	renderDomSceneList();
 	updateStatus('Scene cleared', 'connected');
 }
 
-function rebuildSceneFromActive() {
+/** Make `sc` (a scene record, or null for a blank scene) the one active
+ *  scene. Everything the old scene made is stopped and removed, its
+ *  chat-built blocks are dropped and the chat starts over, so the chat only
+ *  ever shows the active scene's history. Callers then run the new scene's
+ *  code and restore its creation history (loadSceneData). */
+function setActiveScene(sc) {
+	sceneEpoch += 1;
+	communityLoadTicket += 1; // a slower Community fetch must not replace this scene
 	clearUserObjects();
-	// Re-execute loaded scenes first. executeVrCode is async; we
-	// fire-and-forget here and just log any rejections.
-	for (const sc of loadedScenes) {
-		if (sc.active) {
-			sc.codeBlocks.forEach((code, i) => {
-				Promise.resolve(executeVrCode(code, sceneBlockKey(sc, i))).catch(e => {
-					console.error(`Scene "${sc.name}" error:`, e);
-				});
-			});
-		}
-	}
-	// Then re-execute current session code
-	executedCodeBlocks.forEach((code, i) => {
-		Promise.resolve(executeVrCode(code, sessionBlockKey(i))).catch(e => {
-			console.error('Session code error:', e);
-		});
-	});
+	executedCodeBlocks = [];
+	activeScene = sc;
+	resetSceneChat();
+	syncCodeEditorFromState({ force: true });
+	renderDomSceneList();
 }
 
-function showExportModal(combined) {
-	pendingExportCombined = combined;
-	exportNameInput.value = combined ? 'Combined Scene' : 'My Scene';
+/** Chat back to a fresh start: API history, bubbles (desktop + VR) and the
+ *  creation-context session log. */
+function resetSceneChat() {
+	messages = [];
+	displayMessages = [{ role: 'assistant', content: WELCOME_MSG }];
+	GSContext.resetSession();
+	renderDomChat();
+}
+
+function showExportModal() {
+	exportNameInput.value = activeScene?.name || 'My Scene';
 	exportExtInput.value = sceneFileExtension;
 	pendingExportThumbnail = null;
 	exportPreview.innerHTML = '<span style="color:rgba(255,255,255,0.4);font-size:12px;text-align:center">No screenshot</span>';
@@ -2157,16 +2128,12 @@ function hideExportModal() {
 	exportModal.style.display = 'none';
 }
 
-// Gathers the current exportable scene (active loaded scenes + this
-// session's chat-executed code) into the on-disk/on-wire scene format.
+// Gathers the current exportable scene (the active scene + the code chat
+// added to it) into the on-disk/on-wire scene format.
 // Shared by "Export" (save to server), "Save to Device" (local download),
 // and "Upload Current Scene" (community).
 function buildSceneData(name) {
-	const codeBlocks = [];
-	for (const sc of loadedScenes) {
-		if (sc.active) codeBlocks.push(...sc.codeBlocks);
-	}
-	codeBlocks.push(...executedCodeBlocks);
+	const codeBlocks = [...(activeScene?.codeBlocks || []), ...executedCodeBlocks];
 
 	return {
 		version: 1,
@@ -2176,7 +2143,7 @@ function buildSceneData(name) {
 		...environmentHdriForScene(), // { environmentHdri } when an HDRI is active (URL ones; files on upload)
 		codeBlocks,
 		...originRotationForScene(), // { originRotation } only when rotated
-		...GSMerge.sceneCredits(loadedScenes) // mergedFrom / credits of a merged scene
+		...GSMerge.sceneCredits(activeScene) // mergedFrom / credits of a merged scene
 	};
 }
 
@@ -2227,11 +2194,12 @@ async function doDownloadExport() {
 	hideExportModal();
 }
 
-// Adds a loaded scene's code blocks to the scene, runs them, and refreshes
-// the scene list/thumbnails. Shared by file import, folder import, the
-// single server-saved scene, and community scenes.
-function addLoadedScene(data, fallbackName) {
-	if (!data || !data.codeBlocks || !Array.isArray(data.codeBlocks)) {
+// Loads a scene record (file import, the server-saved slot, Community, share
+// links) as the one active scene: the old scene, its chat-built code and its
+// chat history are replaced, never stacked. Resolves once its code has run,
+// with the HDRI promise (a note when the scene's HDRI couldn't load).
+async function loadSceneData(data, fallbackName, { key, source = 'file', extra = null } = {}) {
+	if (!data || !Array.isArray(data.codeBlocks)) {
 		throw new Error('Invalid scene data: missing codeBlocks');
 	}
 	const sc = {
@@ -2239,59 +2207,59 @@ function addLoadedScene(data, fallbackName) {
 		name: data.name || fallbackName,
 		thumbnail: data.thumbnail || '',
 		codeBlocks: data.codeBlocks,
-		active: true,
 		createdAt: data.createdAt || new Date().toISOString(),
-		_thumbImage: null,
-		...(Array.isArray(data.mergedFrom) ? { mergedFrom: data.mergedFrom } : {})
+		...(Array.isArray(data.mergedFrom) ? { mergedFrom: data.mergedFrom } : {}),
+		...extra
 	};
-	loadedScenes.push(sc);
-	applySceneEnvironmentHdri(data);
-	recenterOrbitPivot();
+	setActiveScene(sc);
+	const hdriApplied = applySceneEnvironmentHdri(data);
 	applySceneOriginRotation(data);
+	await runLoadedSceneCode(sc);
+	if (activeScene !== sc) return { sc, hdriApplied }; // replaced while its code ran
+	notifyCodeEditorExternalChange();
+	GSContext.restoreFromScene(data, { key, source }).catch(err => console.warn('creation context restore failed:', err));
+	return { sc, hdriApplied };
+}
 
-	// Execute the scene's code blocks (async; surface failures via console)
-	sc.codeBlocks.forEach((code, i) => {
+function runLoadedSceneCode(sc) {
+	recenterOrbitPivot();
+	const blocks = sc.codeBlocks || [];
+	return Promise.all(blocks.map((code, i) =>
 		Promise.resolve(executeVrCode(code, sceneBlockKey(sc, i))).catch(err => {
 			console.error(`Scene "${sc.name}" load error:`, err);
-		});
-	});
+		})
+	));
+}
 
-	renderDomSceneList();
-	notifyCodeEditorExternalChange();
-	GSContext.restoreFromScene(data, { source: 'file' }).catch(err => console.warn('creation context restore failed:', err));
+function reportSceneLoaded({ sc, hdriApplied }) {
+	updateStatus(`Loaded "${sc.name}"`, 'connected');
+	hdriApplied.then((note) => { if (note && activeScene === sc) updateStatus(`Loaded "${sc.name}"${note}`, 'error'); });
 	return sc;
 }
 
 function loadSceneFile(file) {
 	const reader = new FileReader();
 	reader.onload = (e) => {
+		let data;
 		try {
-			const data = JSON.parse(e.target.result);
-			const sc = addLoadedScene(data, file.name.replace(/\.[^.]+$/, ''));
-			updateStatus(`Loaded "${sc.name}"`, 'connected');
+			data = JSON.parse(e.target.result);
 		} catch (err) {
 			console.error('Error parsing scene file:', err);
 			updateStatus(`Load error: ${err.message}`, 'error');
+			return;
 		}
+		loadSceneData(data, file.name.replace(/\.[^.]+$/, '')).then(reportSceneLoaded).catch(err => {
+			console.error('Error loading scene file:', err);
+			updateStatus(`Load error: ${err.message}`, 'error');
+		});
 	};
 	reader.readAsText(file);
 }
 
 fileInput.addEventListener('change', (e) => {
-	for (const file of e.target.files) loadSceneFile(file);
+	const file = e.target.files[0];
+	if (file) loadSceneFile(file);
 	fileInput.value = '';
-});
-
-// Whole-folder import: webkitdirectory hands back every file in the tree,
-// so only pick up the scene files and ignore anything else that's in there.
-folderInput.addEventListener('change', (e) => {
-	const files = [...e.target.files].filter(f => /\.(vrscene|json)$/i.test(f.name));
-	if (files.length === 0) {
-		updateStatus('No .vrscene/.json files found in that folder', 'error');
-	} else {
-		for (const file of files) loadSceneFile(file);
-	}
-	folderInput.value = '';
 });
 
 function loadSceneFromServer() {
@@ -2301,10 +2269,8 @@ function loadSceneFromServer() {
 			if (!res.ok) throw new Error(res.status === 404 ? 'No saved scene found' : 'Server error');
 			return res.json();
 		})
-		.then(data => {
-			const sc = addLoadedScene(data, 'Loaded Scene');
-			updateStatus(`Loaded "${sc.name}"`, 'connected');
-		})
+		.then(data => loadSceneData(data, 'Loaded Scene'))
+		.then(reportSceneLoaded)
 		.catch(err => {
 			updateStatus(`Load error: ${err.message}`, 'error');
 		});
@@ -2435,7 +2401,7 @@ async function copyText(text) {
 
 async function uploadCurrentSceneToCommunity() {
 	if (displayOnlyMode) return null;
-	const name = (loadedScenes.find(s => s.active)?.name) || 'My Scene';
+	const name = activeScene?.name || 'My Scene';
 	let sceneData = buildSceneData(name);
 	if (sceneData.codeBlocks.length === 0) {
 		updateStatus('Nothing to upload - add or load something first', 'error');
@@ -2481,19 +2447,19 @@ async function uploadCurrentSceneToCommunity() {
 let lastUploadedShare = null;
 function shareCurrentScene() {
 	if (displayOnlyMode) return Promise.resolve(null);
-	const active = loadedScenes.filter(s => s.active);
+	const sc = activeScene;
 	const sig = shareSignature(buildSceneData('').codeBlocks);
 	let share = null;
-	if (active.length === 1 && active[0].communityId && executedCodeBlocks.length === 0
-		&& JSON.stringify(active[0].codeBlocks) === active[0].communitySig
-		&& JSON.stringify(originRotationActive() ? originRotation.rotation : null) === (active[0].communityOrigin ?? 'null')) {
-		share = sharePayloadFromMeta({ id: active[0].communityId, name: active[0].name }, active[0]);
+	if (sc && sc.communityId && executedCodeBlocks.length === 0
+		&& JSON.stringify(sc.codeBlocks) === sc.communitySig
+		&& JSON.stringify(originRotationActive() ? originRotation.rotation : null) === (sc.communityOrigin ?? 'null')) {
+		share = sharePayloadFromMeta({ id: sc.communityId, name: sc.name }, sc);
 	} else if (lastUploadedShare && lastUploadedShare.sig === sig) {
 		share = lastUploadedShare.share;
 	}
 	// The environment HDRI is part of what was shared too.
 	const hdriSig = hdriShareSig();
-	const hdriMatches = (s) => (s === lastUploadedShare?.share ? lastUploadedShare.hdriSig : (active[0]?.communityHdri ?? 'null')) === hdriSig;
+	const hdriMatches = (s) => (s === lastUploadedShare?.share ? lastUploadedShare.hdriSig : (sc?.communityHdri ?? 'null')) === hdriSig;
 	if (share && !hdriMatches(share)) {
 		share = lastUploadedShare && lastUploadedShare.sig === sig && lastUploadedShare.hdriSig === hdriSig ? lastUploadedShare.share : null;
 	}
@@ -2618,7 +2584,7 @@ function renderCommunitySceneList(scenes) {
 		actions.className = 'dchat-scene-actions dchat-community-scene-actions-row';
 
 		const loadKey = communitySceneKeyFrom(cs);
-		if (loadKey && loadedScenes.some(s => s.communityKey === loadKey && s.active)) {
+		if (loadKey && activeScene?.communityKey === loadKey) {
 			item.classList.add('active');
 		}
 
@@ -2646,38 +2612,15 @@ function renderCommunitySceneList(scenes) {
 	}
 }
 
-// Identity for "this community scene is already in the world": server id,
-// else the blob url for legacy records that have no id. One loadedScenes
-// entry per key; code runs only when that entry is not already active
-// (layer) or after the world is blanked (clear / replace).
+// Identity of a Community scene: server id, else the blob url for legacy
+// records that have no id. Marks the Community row of the active scene and
+// lets spam-clicks on one row share a single fetch.
 function communitySceneKeyFrom(cs) {
 	if (!cs) return null;
 	const id = cs.id || cs.communityId;
 	if (id) return `id:${id}`;
 	if (cs.url) return `url:${cs.url}`;
 	return null;
-}
-
-function findLoadedByCommunityKey(key) {
-	if (!key) return null;
-	return loadedScenes.find(s => s.communityKey === key) || null;
-}
-
-function communityLoadModeButtons() {
-	return [
-		{
-			id: 'loadClear',
-			label: 'Clear first',
-			action: 'community:loadMode:clear',
-			variant: communityLoadMode === 'clear' ? 'active' : 'inactiveToggle'
-		},
-		{
-			id: 'loadLayer',
-			label: 'Layer',
-			action: 'community:loadMode:layer',
-			variant: communityLoadMode === 'layer' ? 'active' : 'inactiveToggle'
-		}
-	];
 }
 
 /** Desktop Community header controls as HTML buttons (not SVG).
@@ -2705,94 +2648,23 @@ function renderCommunityDesktopButtons() {
 	mountHtmlActionButtons(dchatCommunityButtonsMount, COMMUNITY_BUTTONS);
 }
 
-function renderCommunityLoadModeControls() {
-	mountHtmlActionButtons(dchatCommunityLoadModeMount, communityLoadModeButtons());
-}
-
-function setCommunityLoadMode(mode) {
-	communityLoadMode = mode === 'layer' ? 'layer' : 'clear';
-	renderCommunityLoadModeControls();
-	if (scenePanelSubTab === 'community') renderDomSceneList();
-	updateStatus(
-		communityLoadMode === 'layer'
-			? 'Community load: layer onto the current scene'
-			: 'Community load: clear the scene first',
-		''
-	);
-}
-
-// Clear-load bumps both tokens so older clear-loads and older layer-loads
-// do not apply. Layer-load bumps only the clear epoch (a later layer must
-// not be wiped by an in-flight clear) and does not cancel other layers.
-function beginCommunityLoad(loadMode) {
-	if (loadMode === 'clear') {
-		communityClearEpoch += 1;
-		communityLayerCancel += 1;
-		return { mode: 'clear', epoch: communityClearEpoch, layerCancel: communityLayerCancel };
-	}
-	communityClearEpoch += 1;
-	return { mode: 'layer', epoch: communityClearEpoch, layerCancel: communityLayerCancel };
-}
-
-function communityLoadStillCurrent(ticket) {
-	if (ticket.mode === 'clear') return ticket.epoch === communityClearEpoch;
-	return ticket.layerCancel === communityLayerCancel;
-}
-
-/** Blank the live world the same way Clear scene does, without the confirm
- *  and without dropping imported files from the Scenes list. */
-function blankLiveSceneForCommunityLoad() {
-	for (const sc of loadedScenes) sc.active = false;
-	executedCodeBlocks = [];
-	clearUserObjects();
-}
-
-function runLoadedSceneCode(sc) {
-	recenterOrbitPivot();
-	const blocks = sc.codeBlocks || [];
-	return Promise.all(blocks.map((code, i) =>
-		Promise.resolve(executeVrCode(code, sceneBlockKey(sc, i))).catch(err => {
-			console.error(`Scene "${sc.name}" load error:`, err);
-		})
-	));
-}
-
 function enqueueCommunityApply(fn) {
 	const apply = communityApplyChain.then(fn, fn);
 	communityApplyChain = apply.then(() => {}, () => {});
 	return apply;
 }
 
-function upsertCommunityLoadedScene(data, fallbackName, key) {
-	let sc = findLoadedByCommunityKey(key);
-	if (!sc) {
-		sc = {
-			id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-			name: data.name || fallbackName,
-			thumbnail: data.thumbnail || '',
-			codeBlocks: data.codeBlocks,
-			active: true,
-			createdAt: data.createdAt || new Date().toISOString(),
-			_thumbImage: null,
-			communityKey: key,
-			communityId: data.id || (key.startsWith('id:') ? key.slice(3) : null)
-		};
-		loadedScenes.push(sc);
-	} else {
-		sc.name = data.name || sc.name || fallbackName;
-		if (data.thumbnail) sc.thumbnail = data.thumbnail;
-		sc.codeBlocks = Array.isArray(data.codeBlocks) ? data.codeBlocks : sc.codeBlocks;
-		sc.active = true;
-		sc.communityKey = key;
-		if (data.id) sc.communityId = data.id;
-	}
-	sc.communityHdri = environmentHdriSignature(data.environmentHdri); // shareCurrentScene: same HDRI?
-	sc.communitySig = JSON.stringify(sc.codeBlocks); // shareCurrentScene: unchanged since load?
-	sc.communityOrigin = JSON.stringify(isIdentityOriginRotation(data.originRotation) ? null : normalizeOriginRotation(data.originRotation));
-	if (data.editorUrl) sc.editorUrl = data.editorUrl;
-	if (data.viewUrl) sc.viewUrl = data.viewUrl;
-	if (Array.isArray(data.mergedFrom)) sc.mergedFrom = data.mergedFrom;
-	return sc;
+// What shareCurrentScene needs to tell "unchanged since it was loaded".
+function communitySceneFields(data, key) {
+	return {
+		communityKey: key,
+		communityId: data.id || (key.startsWith('id:') ? key.slice(3) : null),
+		communityHdri: environmentHdriSignature(data.environmentHdri),
+		communitySig: JSON.stringify(data.codeBlocks),
+		communityOrigin: JSON.stringify(isIdentityOriginRotation(data.originRotation) ? null : normalizeOriginRotation(data.originRotation)),
+		...(data.editorUrl ? { editorUrl: data.editorUrl } : {}),
+		...(data.viewUrl ? { viewUrl: data.viewUrl } : {})
+	};
 }
 
 function finishCommunityLoadUi() {
@@ -2801,7 +2673,10 @@ function finishCommunityLoadUi() {
 	else renderDomSceneList();
 }
 
-function loadCommunityScene(cs, { mode = communityLoadMode } = {}) {
+/** Load a Community scene as the active scene (replacing the current one).
+ *  The newest click wins: an older fetch that lands later is dropped, as is
+ *  one that lands after any other scene was loaded. */
+function loadCommunityScene(cs) {
 	const name = (cs && cs.name) || 'Community scene';
 	const key = communitySceneKeyFrom(cs);
 	if (!key) {
@@ -2809,27 +2684,16 @@ function loadCommunityScene(cs, { mode = communityLoadMode } = {}) {
 		updateStatus(`Load error: ${err.message}`, 'error');
 		return Promise.reject(err);
 	}
-	const loadMode = mode === 'layer' ? 'layer' : 'clear';
 
-	// Layer + already active: no-op. Never execute the code again.
-	if (loadMode === 'layer') {
-		const existing = findLoadedByCommunityKey(key);
-		if (existing && existing.active) {
-			updateStatus(`"${existing.name}" is already loaded`, '');
-			return Promise.resolve(existing);
-		}
-	}
-
-	const inflightKey = `${loadMode}:${key}`;
-	const inflight = communityLoadInflight.get(inflightKey);
+	const inflight = communityLoadInflight.get(key);
 	// Reuse only a still-current fetch. A superseded one resolves to null and
 	// must not swallow a newer click on the same scene.
-	if (inflight && communityLoadStillCurrent(inflight.ticket)) {
+	if (inflight && inflight.ticket === communityLoadTicket) {
 		updateStatus(`Loading "${name}"...`, 'connecting');
 		return inflight.promise;
 	}
 
-	const ticket = beginCommunityLoad(loadMode);
+	const ticket = ++communityLoadTicket;
 	updateStatus(`Loading "${name}"...`, 'connecting');
 	const fetchUrl = cs.id ? `/api/community-scenes/${encodeURIComponent(cs.id)}` : cs.url;
 
@@ -2842,44 +2706,23 @@ function loadCommunityScene(cs, { mode = communityLoadMode } = {}) {
 			if (!data || !Array.isArray(data.codeBlocks)) {
 				throw new Error('Invalid scene data: missing codeBlocks');
 			}
-			if (!communityLoadStillCurrent(ticket)) return null;
+			if (ticket !== communityLoadTicket) return null;
 			// Prefer the id we asked for so list rows and the fetched record match.
 			const resolvedKey = communitySceneKeyFrom({ id: cs.id || data.id, url: cs.url || data.url }) || key;
-			if (loadMode === 'clear') {
-				// Replace in place: one entry, world blanked, code run once.
-				blankLiveSceneForCommunityLoad();
-				const hdriApplied = applySceneEnvironmentHdri(data, { replace: true });
-				const sc = upsertCommunityLoadedScene(data, data.name || name, resolvedKey);
-				applySceneOriginRotation(data, { replace: true });
-				await runLoadedSceneCode(sc);
-				finishCommunityLoadUi();
-				updateStatus(`Loaded "${sc.name}"`, 'connected');
-				hdriApplied.then((note) => { if (note) updateStatus(`Loaded "${sc.name}"${note}`, 'error'); });
-				GSContext.restoreFromScene(data, { key: resolvedKey, source: 'community' }).catch(err => console.warn('creation context restore failed:', err));
-				return sc;
-			}
-			const existing = findLoadedByCommunityKey(resolvedKey);
-			if (existing && existing.active) {
-				updateStatus(`"${existing.name}" is already loaded`, '');
-				return existing;
-			}
-			const sc = upsertCommunityLoadedScene(data, data.name || name, resolvedKey);
-			await runLoadedSceneCode(sc);
+			const loaded = await loadSceneData(data, data.name || name, { key: resolvedKey, source: 'community', extra: communitySceneFields(data, resolvedKey) });
 			finishCommunityLoadUi();
-			updateStatus(`Layered "${sc.name}"`, 'connected');
-			GSContext.restoreFromScene(data, { key: resolvedKey, source: 'community' }).catch(err => console.warn('creation context restore failed:', err));
-			return sc;
+			return reportSceneLoaded(loaded);
 		}))
 		.catch(err => {
 			updateStatus(`Load error: ${err.message}`, 'error');
 			throw err;
 		})
 		.finally(() => {
-			const cur = communityLoadInflight.get(inflightKey);
-			if (cur && cur.promise === promise) communityLoadInflight.delete(inflightKey);
+			const cur = communityLoadInflight.get(key);
+			if (cur && cur.promise === promise) communityLoadInflight.delete(key);
 		});
 
-	communityLoadInflight.set(inflightKey, { promise, ticket });
+	communityLoadInflight.set(key, { promise, ticket });
 	return promise;
 }
 
@@ -3377,60 +3220,40 @@ exportCancelBtn.addEventListener('click', hideExportModal);
 exportConfirmBtn.addEventListener('click', doExport);
 exportDownloadBtn.addEventListener('click', doDownloadExport);
 
-// The loaded-scenes list in the Scenes tab: checkbox toggles active,
-// × removes, thumbnail if any.
+// The Scenes tab's current-scene card: thumbnail, name and how many blocks
+// it has (its own code + what chat added). There is only ever one scene.
 function renderDomSceneList() {
-	if (!dchatSceneList) return;
-
-	dchatSceneList.innerHTML = '';
-	if (loadedScenes.length === 0) {
+	if (!dchatCurrentScene) return;
+	dchatCurrentScene.innerHTML = '';
+	const sc = activeScene;
+	const total = (sc?.codeBlocks?.length || 0) + executedCodeBlocks.length;
+	if (!sc && total === 0) {
 		const empty = document.createElement('div');
 		empty.className = 'dchat-scene-empty';
-		empty.textContent = 'No scenes loaded. Use Import File or Load Saved.';
-		dchatSceneList.appendChild(empty);
-	} else {
-		for (let i = 0; i < loadedScenes.length; i++) {
-			const sc = loadedScenes[i];
-			const item = document.createElement('div');
-			item.className = 'dchat-scene-item' + (sc.active ? ' active' : '');
-
-			const checkbox = document.createElement('input');
-			checkbox.type = 'checkbox';
-			checkbox.checked = sc.active;
-			checkbox.addEventListener('change', () => {
-				sc.active = checkbox.checked;
-				rebuildSceneFromActive();
-				renderDomSceneList();
-				notifyCodeEditorExternalChange();
-			});
-
-			const thumb = document.createElement('img');
-			thumb.className = 'dchat-scene-thumb';
-			if (sc.thumbnail) thumb.src = sc.thumbnail;
-
-			const name = document.createElement('div');
-			name.className = 'dchat-scene-name';
-			name.textContent = sc.name;
-			name.title = sc.name;
-
-			const remove = document.createElement('button');
-			remove.className = 'dchat-scene-remove';
-			remove.textContent = '×';
-			remove.title = 'Remove scene';
-			remove.addEventListener('click', () => {
-				loadedScenes.splice(i, 1);
-				rebuildSceneFromActive();
-				renderDomSceneList();
-				notifyCodeEditorExternalChange();
-			});
-
-			item.append(checkbox, thumb, name, remove);
-			dchatSceneList.appendChild(item);
-		}
+		empty.textContent = 'Empty scene. Chat to build one, or use Import File, Load Saved or Community. Loading a scene replaces this one.';
+		dchatCurrentScene.appendChild(empty);
+		return;
 	}
+	const item = document.createElement('div');
+	item.className = 'dchat-scene-item active';
 
-	const hasContent = loadedScenes.some(s => s.active) || executedCodeBlocks.length > 0;
-	dchatExportCombinedMount.classList.toggle('visible', hasContent && loadedScenes.length > 0);
+	const thumb = document.createElement('img');
+	thumb.className = 'dchat-scene-thumb';
+	if (sc?.thumbnail) thumb.src = sc.thumbnail;
+
+	const info = document.createElement('div');
+	info.className = 'dchat-scene-info';
+	const name = document.createElement('div');
+	name.className = 'dchat-scene-name';
+	name.textContent = sc?.name || 'Untitled scene';
+	name.title = name.textContent;
+	const meta = document.createElement('div');
+	meta.className = 'dchat-scene-dates';
+	meta.textContent = `Current scene · ${total} block${total === 1 ? '' : 's'}`;
+	info.append(name, meta);
+
+	item.append(thumb, info);
+	dchatCurrentScene.appendChild(item);
 }
 
 
@@ -4506,6 +4329,9 @@ async function sendMessage(userMessage) {
 	const { content: userContent, images: ollamaImages } = buildUserContent(userMessage, attachments, selectedBackend);
 	const turnBackend = selectedBackend;
 	const turnModel = getActiveModelDisplayName();
+	// A reply that lands after another scene was loaded belongs to the old
+	// scene's chat: drop it instead of adding it (and its code) to this one.
+	const turnEpoch = sceneEpoch;
 	GSContext.recordUserTurn({ text: userMessage, attachments, backend: turnBackend, model: turnModel });
 
 	// Add user message to both arrays
@@ -4562,6 +4388,7 @@ async function sendMessage(userMessage) {
 				throw new Error(data.error || `API error: ${response.status}`);
 			}
 		}
+		if (turnEpoch !== sceneEpoch) return;
 		const rawText = data.content[0]?.text || 'No response';
 
 		// Parse and execute any vr-exec code blocks
@@ -4576,6 +4403,7 @@ async function sendMessage(userMessage) {
 			let execCount = 0;
 			let fixCount = 0;
 			for (const code of codeBlocks) {
+				if (turnEpoch !== sceneEpoch) return;
 				const blockKey = sessionBlockKey(executedCodeBlocks.length);
 				try {
 					await executeVrCode(code, blockKey);
@@ -4591,6 +4419,7 @@ async function sendMessage(userMessage) {
 
 					// Attempt auto-fix
 					const fix = await attemptAutoFix(code, execErr.message, execErr.stack, blockKey);
+					if (turnEpoch !== sceneEpoch) return;
 					if (fix.success) {
 						executedCodeBlocks.push(fix.code);
 						execCount++;
@@ -4622,6 +4451,7 @@ async function sendMessage(userMessage) {
 
 	} catch (error) {
 		console.error('Chat error:', error);
+		if (turnEpoch !== sceneEpoch) return;
 		updateStatus(`Error: ${error.message}`, 'error');
 		const errMsg = `Error: ${error.message}`;
 		messages.push({ role: 'assistant', content: errMsg });
@@ -4646,7 +4476,7 @@ GSContext.initCreationContext({
 	}),
 	getSettingsNote: () => buildGsSettingsNote(),
 	getLibraryFiles: () => contextLibrary.map(f => ({ name: f.name, kind: f.kind, size: f.size || 0 })),
-	getSceneName: () => loadedScenes.find(s => s.active)?.name || 'Current session',
+	getSceneName: () => activeScene?.name || 'Current session',
 	// Restored history goes into both arrays: `messages` is what the next
 	// /api/chat request sends, `displayMessages` is drawn on desktop and in VR.
 	appendChatHistory: (apiMsgs, displayMsgs) => {
@@ -4699,18 +4529,12 @@ GSMerge.initCommunityMerge({
 		renderDomChat();
 		try { return await callSceneChatBackend(apiMessages); } finally { isLoading = false; renderDomChat(); }
 	},
-	// New working scene; neither original is touched. Failing blocks go
-	// through the normal auto-fix (asset tokens keep base64 out of the fix call).
-	installMergedScene: async ({ name, codeBlocks, mergedFrom, replaceWorld, tokenize, expand }) => {
-		const stamp = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-		if (replaceWorld) {
-			if (executedCodeBlocks.length) {
-				loadedScenes.push({ id: stamp(), name: 'Session before merge', thumbnail: '', codeBlocks: executedCodeBlocks.slice(), active: false, createdAt: new Date().toISOString(), _thumbImage: null });
-			}
-			blankLiveSceneForCommunityLoad();
-		}
-		const sc = { id: stamp(), name, thumbnail: '', codeBlocks: [], active: true, createdAt: new Date().toISOString(), _thumbImage: null, mergedFrom };
-		loadedScenes.push(sc);
+	// The merged scene replaces the active scene (and its chat); neither
+	// original is touched. Failing blocks go through the normal auto-fix
+	// (asset tokens keep base64 out of the fix call).
+	installMergedScene: async ({ name, codeBlocks, mergedFrom, tokenize, expand }) => {
+		const sc = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8), name, thumbnail: '', codeBlocks: [], createdAt: new Date().toISOString(), mergedFrom };
+		setActiveScene(sc);
 		let fixed = 0, failed = 0;
 		for (const code of codeBlocks) {
 			// Run under the scene's block key (PR #3 hot reload): the Code tab
@@ -5157,12 +4981,9 @@ originRotation = createOriginRotation({
 	if (saved) originRotation.set(normalizeOriginRotation(saved), 'load');
 }
 
-/** A loaded scene brings its own origin rotation when it is the only thing in
- *  the scene (replace / first load); layering onto other content keeps the
- *  current one. Scenes saved before 0.98 have none (= unrotated). */
-function applySceneOriginRotation(data, { replace = false } = {}) {
-	const others = loadedScenes.filter((sc) => sc.active).length - 1 + executedCodeBlocks.length;
-	if (!replace && others > 0) return;
+/** A loaded scene brings its own origin rotation. Scenes saved before 0.98
+ *  have none (= unrotated). */
+function applySceneOriginRotation(data) {
 	originRotation.set(normalizeOriginRotation(data && data.originRotation), 'scene');
 }
 
@@ -5634,10 +5455,8 @@ window.gsSessionCode = {
 			return out;
 		};
 		executedCodeBlocks = keep(executedCodeBlocks, sessionBlockKey);
-		for (const sc of loadedScenes) {
-			if (!sc.active || !Array.isArray(sc.codeBlocks)) continue;
-			sc.codeBlocks = keep(sc.codeBlocks, (i) => sceneBlockKey(sc, i));
-		}
+		const sc = activeScene;
+		if (sc && Array.isArray(sc.codeBlocks)) sc.codeBlocks = keep(sc.codeBlocks, (i) => sceneBlockKey(sc, i));
 		if (removed) { notifyCodeEditorExternalChange(); renderDomSceneList(); }
 		return removed;
 	}
@@ -7218,16 +7037,12 @@ function restoreUserHdri() {
 }
 
 /**
- * A loaded scene brings its environment HDRI when it is the only thing in
- * the scene (replace / first load); layering onto other content keeps the
- * current one (same rule as the origin rotation). Scenes without
+ * A loaded scene brings its environment HDRI. Scenes without
  * environmentHdri (saved before it existed, or with no HDRI) keep the viewer's own
  * environment; one left behind by a previous scene is replaced by it.
  * Resolves '' or a short note when the scene's HDRI could not be loaded.
  */
-function applySceneEnvironmentHdri(data, { replace = false } = {}) {
-	const others = loadedScenes.filter((sc) => sc.active).length - 1 + executedCodeBlocks.length;
-	if (!replace && others > 0) return Promise.resolve('');
+function applySceneEnvironmentHdri(data) {
 	const desc = normalizeEnvironmentHdri(data && data.environmentHdri);
 	const url = environmentHdriLoadUrl(desc);
 	if (!desc || !url) {
@@ -7452,13 +7267,9 @@ if (dchatSaturation) dchatSaturation.addEventListener('input', () => {
 dchatResetCameraBtn.addEventListener('click', resetCameraView);
 
 // Scenes / Community tabs: shared button specs (SCENES_BUTTONS,
-// EXPORT_COMBINED_BUTTON, COMMUNITY_BUTTONS) mounted once - their content
-// never changes, only EXPORT_COMBINED_BUTTON's visibility does (toggled in
-// renderDomSceneList via the .visible class on its mount div).
+// COMMUNITY_BUTTONS) mounted once - their content never changes.
 mountButtonsToDOM(dchatScenesButtonsMount, SCENES_BUTTONS, { width: 384, height: phoneMenuButtonHeight(44, 384), gap: 8, minWidth: 100, fontSize: 12 }, handleMenuAction);
-mountButtonsToDOM(dchatExportCombinedMount, EXPORT_COMBINED_BUTTON, { width: 384, height: phoneMenuButtonHeight(44, 384), gap: 8, perRow: 1, fontSize: 13 }, handleMenuAction);
 renderCommunityDesktopButtons();
-renderCommunityLoadModeControls();
 if (dchatThemesButtonsMount) {
 	mountButtonsToDOM(dchatThemesButtonsMount, THEME_BUTTONS, { width: 384, height: phoneMenuButtonHeight(44, 384), gap: 8, perRow: 3, fontSize: 11 }, handleMenuAction);
 }
@@ -7899,8 +7710,7 @@ bootSharedScene();
 snapshotSystemObjects();
 
 // Add welcome message
-const welcomeMsg = 'VR Code Assistant ready. Ask me to add objects, modify the scene, or inject HTML — I\'ll write and execute the code live.';
-displayMessages.push({ role: 'assistant', content: welcomeMsg });
+displayMessages.push({ role: 'assistant', content: WELCOME_MSG });
 renderDomChat();
 
 const _rayTempMatrix = new THREE.Matrix4();

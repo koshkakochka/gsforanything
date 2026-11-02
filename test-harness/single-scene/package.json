@@ -1,0 +1,9 @@
+{
+  "name": "gs-single-scene-test",
+  "private": true,
+  "type": "module",
+  "description": "One active scene: loading a scene replaces the old one (objects, code, chat history); exports and share/publish use only the active scene.",
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}

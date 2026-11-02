@@ -40,7 +40,6 @@
 		#desktop-chat-messages,
 		#dchat-theme-chat-messages,
 		#dchat-files-list,
-		#dchat-scene-list,
 		#dchat-community-list,
 		#dchat-themes-list,
 		#files-picker-list {
@@ -1110,14 +1109,7 @@
 			height: 44px;
 			max-height: 44px;
 		}
-		#dchat-community-loadmode svg {
-			display: block;
-			width: 100%;
-			height: 36px;
-			max-height: 36px;
-		}
-		#dchat-community-buttons,
-		#dchat-community-loadmode {
+		#dchat-community-buttons {
 			flex: 0 0 auto;
 			flex-shrink: 0;
 			display: flex;
@@ -1128,9 +1120,7 @@
 			height: auto;
 			max-height: 84px; /* at most two 36px rows + gap */
 		}
-		#dchat-community-loadmode { margin-top: 8px; }
-		#dchat-community-buttons .dchat-btn,
-		#dchat-community-loadmode .dchat-btn {
+		#dchat-community-buttons .dchat-btn {
 			flex: 1 1 calc(50% - 4px);
 			min-width: 0;
 			box-sizing: border-box;
@@ -1142,19 +1132,17 @@
 			line-height: 36px;
 			text-align: center;
 		}
+
+		#dchat-community {
+			overflow-y: auto;
+		}
 		.dchat-community-loadhint {
 			margin: 6px 2px 0;
 			font-size: 11px;
 			line-height: 1.35;
 			color: var(--dchat-text-muted, rgba(255,255,255,0.45));
-			flex-shrink: 0;
-		}
-
-		#dchat-community {
-			overflow-y: auto;
 		}
 		#dchat-community-section-scenes > #dchat-community-buttons,
-		#dchat-community-section-scenes > #dchat-community-loadmode,
 		#dchat-community-section-scenes > .dchat-community-loadhint {
 			flex: 0 0 auto;
 		}
@@ -1170,17 +1158,14 @@
 		#dchat-community-list::-webkit-scrollbar { width: 8px; }
 		#dchat-community-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
 
-		#dchat-scene-list {
+		#dchat-current-scene {
 			flex: 1;
-			overflow-y: auto;
 			display: flex;
 			flex-direction: column;
 			gap: 6px;
 			min-height: 0;
+			margin-top: 10px;
 		}
-
-		#dchat-scene-list::-webkit-scrollbar { width: 8px; }
-		#dchat-scene-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
 
 		.dchat-scene-empty {
 			text-align: center;
@@ -1199,14 +1184,6 @@
 		}
 
 		.dchat-scene-item.active { background: rgba(99, 102, 241, 0.15); }
-
-		.dchat-scene-item input[type="checkbox"] {
-			width: 18px;
-			height: 18px;
-			accent-color: #6366f1;
-			flex-shrink: 0;
-			cursor: pointer;
-		}
 
 		.dchat-scene-thumb {
 			width: 36px;
@@ -1246,22 +1223,6 @@
 			word-break: break-word;
 		}
 
-		.dchat-scene-remove {
-			border: none;
-			background: #dc2626;
-			color: #fff;
-			font-weight: 700;
-			width: 24px;
-			height: 24px;
-			border-radius: 6px;
-			cursor: pointer;
-			flex-shrink: 0;
-		}
-
-		.dchat-scene-remove:hover { background: #b91c1c; }
-
-		.dchat-single-btn-mount { flex-shrink: 0; display: none; }
-		.dchat-single-btn-mount.visible { display: block; }
 
 		#desktop-chat-input-row {
 			display: flex;
@@ -1643,7 +1604,7 @@
 		}
 
 		/* Hidden file inputs */
-		#scene-file-input, #scene-folder-input {
+		#scene-file-input {
 			display: none;
 		}
 
@@ -2440,9 +2401,7 @@
 		<!-- Scene file input (hidden). Note: "*" is not a valid accept value and
 		     made Chrome's file picker filter out everything, appearing to show
 		     only folders - only list real extensions/MIME types here. -->
-		<input type="file" id="scene-file-input" multiple accept=".vrscene,.json,application/json" />
-		<!-- Whole-folder import (hidden) -->
-		<input type="file" id="scene-folder-input" webkitdirectory directory multiple />
+		<input type="file" id="scene-file-input" accept=".vrscene,.json,application/json" />
 
 		<!-- Export modal -->
 		<div id="export-modal">
@@ -2726,8 +2685,7 @@
 		<div id="dchat-panel-scenes" class="dchat-panel">
 			<div id="dchat-scenes" style="display:flex;flex-direction:column;flex:1;min-height:0">
 				<div id="dchat-scenes-buttons"></div>
-				<div id="dchat-scene-list"></div>
-				<div id="dchat-export-combined-mount" class="dchat-single-btn-mount"></div>
+				<div id="dchat-current-scene"></div>
 			</div>
 		</div>
 
@@ -2757,7 +2715,7 @@
 					<button type="button" id="dchat-code-reset" class="dchat-btn secondary" title="Clear the scene and re-run every block from scratch (resets state)">Full reset</button>
 					<span id="dchat-code-status"></span>
 				</div>
-				<div id="dchat-code-hint">Generated VR program (active scenes + session blocks). Apply (or Live) hot reloads only the blocks you changed and keeps positions, scores and other state; Full reset rebuilds everything from scratch.</div>
+				<div id="dchat-code-hint">Generated VR program (active scene + chat blocks). Apply (or Live) hot reloads only the blocks you changed and keeps positions, scores and other state; Full reset rebuilds everything from scratch.</div>
 				<div class="dchat-code-editor-wrap">
 					<pre class="dchat-code-highlight" aria-hidden="true"><code id="dchat-code-highlight"></code></pre>
 					<textarea id="dchat-code-editor" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="// vr-exec blocks appear here after chat generates them…"></textarea>
@@ -2774,8 +2732,7 @@
 
 				<div id="dchat-community-section-scenes" class="dchat-community-section active">
 					<div id="dchat-community-buttons"></div>
-					<div id="dchat-community-loadmode"></div>
-					<p class="dchat-community-loadhint">Clear first loads onto a blank scene. Layer keeps what is already there. Loading a scene again never stacks a second copy.</p>
+					<p class="dchat-community-loadhint">Loading a scene replaces the current one, chat history included.</p>
 					<div id="dchat-community-list"></div>
 				</div>
 

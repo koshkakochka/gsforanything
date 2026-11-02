@@ -13,7 +13,8 @@
  *      `// @gs-keep A2` lines with the original block and every asset token
  *      with the original literal, byte for byte
  *   4. main.js runs the blocks with the normal auto-fix and installs them as a
- *      NEW scene ("A + B (merged)"); the originals are never modified
+ *      NEW scene ("A + B (merged)") that replaces the active scene and its
+ *      chat; the originals are never modified
  *   5. the chat + creation context record the merge (parents, prompt, picks),
  *      and the scene carries `mergedFrom` credits when saved or published.
  *
@@ -315,7 +316,6 @@ const CSS = `
 .gs-merge-actions button:disabled { opacity: 0.5; cursor: default; }
 #gs-merge-status { font-size: 13px; min-height: 18px; white-space: pre-wrap; }
 #gs-merge-status.error { color: #fca5a5; }
-.gs-merge-check { display: flex; gap: 8px; font-size: 13px; align-items: flex-start; }
 body.display-only #gs-merge-bar, body.display-only .gs-merge-row-btn { display: none !important; }
 `;
 
@@ -437,8 +437,6 @@ export async function openMergeDialog() {
 		model.value = src.value;
 		model.addEventListener('change', () => { src.value = model.value; src.dispatchEvent(new Event('change', { bubbles: true })); });
 	}
-	const replace = el('input', { type: 'checkbox', id: 'gs-merge-replace' });
-	replace.checked = true;
 	const status = el('div', { id: 'gs-merge-status' });
 	const go = el('button', { type: 'button', class: 'primary', id: 'gs-merge-go' }, 'Merge');
 	const cancel = el('button', { type: 'button', id: 'gs-merge-cancel', onclick: () => { if (!busy) closeMergeDialog(); } }, 'Close');
@@ -452,7 +450,7 @@ export async function openMergeDialog() {
 		for (const cb of aspects.querySelectorAll('input:checked')) picks[cb.dataset.aspect] = cb.dataset.from;
 		busy = true; go.disabled = true; cancel.disabled = true;
 		try {
-			await runMerge({ a, b, prompt: prompt.value, picks, replaceWorld: replace.checked, onStatus: (t) => setStatus(t) });
+			await runMerge({ a, b, prompt: prompt.value, picks, onStatus: (t) => setStatus(t) });
 			closeMergeDialog();
 			state.a = state.b = null;
 			updateBar();
@@ -466,13 +464,12 @@ export async function openMergeDialog() {
 	function setStatus(t, isErr = false) { status.textContent = t; status.classList.toggle('error', !!isErr); }
 	dialog.appendChild(el('div', { id: 'gs-merge-inner' },
 		el('h3', { id: 'gs-merge-title' }, '🔀 Merge two Community scenes'),
-		el('div', { class: 'gs-merge-sub' }, 'The AI writes one new scene from A and B. Both originals stay as they are; the result loads as a new scene you can keep chatting about, save or publish (it credits both).'),
+		el('div', { class: 'gs-merge-sub' }, 'The AI writes one new scene from A and B. Both originals stay as they are; the result replaces the current scene (and its chat) as a new scene you can keep chatting about, save or publish (it credits both).'),
 		mkPicker('A'), mkPicker('B'),
 		el('div', { class: 'gs-merge-sub' }, 'What to take from each (optional):'),
 		aspects,
 		prompt,
 		el('div', { class: 'gs-merge-pick' }, el('span', {}, '🤖'), model),
-		el('label', { class: 'gs-merge-check' }, replace, el('span', {}, 'Replace what\'s in the world now (your current scene stays in the Scenes list)')),
 		status,
 		el('div', { class: 'gs-merge-actions' }, cancel, go)
 	));
@@ -494,7 +491,7 @@ async function fetchSceneWithContext(cs) {
 }
 
 /** The whole merge. Exported for tests and for a future VR entry point. */
-export async function runMerge({ a, b, prompt = '', picks = {}, replaceWorld = true, onStatus = () => {} }) {
+export async function runMerge({ a, b, prompt = '', picks = {}, onStatus = () => {} }) {
 	onStatus(`Loading "${a.name}" and "${b.name}"…`);
 	const [sa, sb] = await Promise.all([fetchSceneWithContext(a), fetchSceneWithContext(b)]);
 	sa.label = 'A'; sb.label = 'B';
@@ -514,7 +511,7 @@ export async function runMerge({ a, b, prompt = '', picks = {}, replaceWorld = t
 	// resolve as globals, so a fix can be written against the tokenised code.
 	defineAssetGlobals(req.tables);
 	const result = await host.installMergedScene({
-		name, codeBlocks: expanded.blocks, mergedFrom: parents, replaceWorld,
+		name, codeBlocks: expanded.blocks, mergedFrom: parents,
 		tokenize: (code) => retokenize(code, req.tables),
 		expand: (code) => expandMergedBlocks([code], req.tables).blocks[0] || ''
 	});
@@ -536,12 +533,11 @@ export async function runMerge({ a, b, prompt = '', picks = {}, replaceWorld = t
 	return { name, parents, blocks: expanded.blocks, stats: req.stats, kept: expanded.kept, restored: expanded.restored, result };
 }
 
-/** Credits for buildSceneData(): mergedFrom of the active merged scene(s). */
-export function sceneCredits(loadedScenes) {
+/** Credits for buildSceneData(): mergedFrom of the active scene, if it was merged. */
+export function sceneCredits(activeScene) {
 	const parents = [];
-	for (const sc of loadedScenes || []) {
-		if (!sc.active || !Array.isArray(sc.mergedFrom)) continue;
-		for (const p of sc.mergedFrom) if (p && !parents.some(x => x.id === p.id)) parents.push({ id: p.id || null, name: String(p.name || 'Untitled').slice(0, 80) });
+	for (const p of (Array.isArray(activeScene?.mergedFrom) ? activeScene.mergedFrom : [])) {
+		if (p && !parents.some(x => x.id === p.id)) parents.push({ id: p.id || null, name: String(p.name || 'Untitled').slice(0, 80) });
 	}
 	if (!parents.length) return {};
 	return { mergedFrom: parents, credits: `Merged from ${parents.map(p => `"${p.name}"`).join(' + ')}` };

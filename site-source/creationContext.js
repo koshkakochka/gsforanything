@@ -1,6 +1,9 @@
 /**
  * Scene creation context: the chat log and info log that produced a scene.
  *
+ * The log belongs to the one active scene: loading another scene (or Clear
+ * scene) calls resetSession(), so a scene's history never mixes with another's.
+ *
  * While you work, this module keeps a session log of every scene-chat turn
  * (prompt, reply, backend/model, timestamps, attached files, editor settings),
  * auto-fix notes and Code-tab edits. When a scene is saved or published, the
@@ -55,8 +58,8 @@ const chatLog = [];          // { id, role, kind, ts, text, display, raw, backen
 const files = new Map();     // fileId -> { id, name, kind, mediaType, size, text?, base64?, addedAt, origin }
 const edits = [];            // { ts, source, chars, code, origin }
 const merges = [];           // { ts, parents: [{ id, name }], prompt, picks, resultName, stats }
-const loadedContexts = [];   // { key, sceneName, payload, summary, loadedAt }
-const restoredKeys = new Set();
+const loadedContexts = [];   // { key, sceneName, payload, summary, loadedAt } (the active scene's, if it has one)
+let sessionGeneration = 0;   // bumped by resetSession(); stale async restores check it
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -179,6 +182,19 @@ export function findSecrets(strings) {
 export function initCreationContext(hostApi) {
 	host = hostApi || {};
 	injectUi();
+}
+
+/** A different scene became active: forget the old scene's log and history. */
+export function resetSession() {
+	sessionGeneration += 1;
+	sessionStartedAt = nowIso();
+	chatLog.length = 0;
+	files.clear();
+	edits.length = 0;
+	merges.length = 0;
+	loadedContexts.length = 0;
+	closeViewer();
+	updateHistoryButton();
 }
 
 function settingsSnapshot() {
@@ -596,64 +612,48 @@ export function historyToMessages(payload, { sceneName } = {}) {
 }
 
 function adoptIntoSession(payload, origin) {
-	// Entries keep their ids, so re-opening a scene made earlier in this same
-	// session (or one already layered in) doesn't duplicate its history.
-	const seenChat = new Set(chatLog.map(e => e.id));
-	const seenEdits = new Set(edits.map(e => `${e.ts}|${e.chars}`));
-	for (const f of payload.files || []) {
-		if (files.has(f.id)) continue;
-		files.set(f.id, { ...f, origin: f.origin || origin });
-	}
-	for (const e of payload.chat || []) if (!seenChat.has(e.id)) chatLog.push({ ...e, origin: e.origin || origin });
-	for (const e of payload.editHistory || []) if (!seenEdits.has(`${e.ts}|${e.chars}`)) edits.push({ ...e, origin: e.origin || origin });
-	for (const m of payload.merges || []) if (!merges.some(x => x.ts === m.ts && x.resultName === m.resultName)) merges.push({ ...m, origin: m.origin || origin });
-}
-
-function alreadyInSession(payload) {
-	const ids = new Set(chatLog.map(e => e.id));
-	const chat = payload.chat || [];
-	return chat.length > 0 && chat.every(e => e.id && ids.has(e.id));
+	// The session was just reset for this scene, so its log starts from here.
+	for (const f of payload.files || []) files.set(f.id, { ...f, origin: f.origin || origin });
+	for (const e of payload.chat || []) chatLog.push({ ...e, origin: e.origin || origin });
+	for (const e of payload.editHistory || []) edits.push({ ...e, origin: e.origin || origin });
+	for (const m of payload.merges || []) merges.push({ ...m, origin: m.origin || origin });
 }
 
 /**
  * Called after a saved / file / community scene has loaded. Restores its
- * creation history into the chat (once per scene per page load).
+ * creation history into the chat. main.js resets the session when the scene
+ * becomes active, so the chat only ever holds this scene's history.
  */
 export async function restoreFromScene(data, { key, source = 'file' } = {}) {
 	if (!data || host?.isDisplayOnly?.()) return null;
 	const sceneName = data.name || 'Untitled';
 	const k = sceneKeyFor(data, key);
 	if (!data.creationContext) {
-		if (Array.isArray(data.mergedFrom) && data.mergedFrom.length && !restoredKeys.has(k) && !data.creationContextOmitted) {
-			restoredKeys.add(k);
+		if (Array.isArray(data.mergedFrom) && data.mergedFrom.length && !data.creationContextOmitted) {
 			host?.pushChatNote?.(`🔀 "${sceneName}" was merged from ${data.mergedFrom.map(p => `"${p.name}"`).join(' + ')}.`);
 		}
-		if (data.creationContextOmitted && !restoredKeys.has(k)) {
-			restoredKeys.add(k);
+		if (data.creationContextOmitted) {
 			host?.pushChatNote?.(`📜 "${sceneName}" was published without its creation context, so there is no earlier chat to restore.`);
 		}
 		return null;
 	}
-	if (restoredKeys.has(k)) return null;
-	restoredKeys.add(k);
+	const generation = sessionGeneration;
 	let loaded;
 	try {
 		loaded = await loadContextForScene(data);
 	} catch (err) {
+		if (generation !== sessionGeneration) return null; // another scene is active now
 		console.warn('creation context: load failed', err);
 		host?.pushChatNote?.(`📜 Couldn't load the creation history for "${sceneName}": ${err.message}`);
-		restoredKeys.delete(k);
 		return null;
 	}
-	if (!loaded) return null;
+	// The separate-context fetch is async: if another scene was loaded
+	// meanwhile, this history belongs to a scene that is gone.
+	if (!loaded || generation !== sessionGeneration) return null;
 	const { payload, summary } = loaded;
 	const origin = { sceneName, key: k, source };
 	loadedContexts.push({ key: k, sceneName, payload, summary, loadedAt: nowIso(), source });
 	updateHistoryButton();
-	if (alreadyInSession(payload)) {
-		host?.pushChatNote?.(`📜 The creation history of "${sceneName}" is already in this chat, so it wasn't added again.`);
-		return { payload, summary };
-	}
 	adoptIntoSession(payload, origin);
 	const { api, display } = historyToMessages(payload, { sceneName });
 	const fileNames = (payload.files || []).map(f => `${f.name}${f.omitted ? ' (reference)' : f.truncated ? ' (truncated)' : ''}`);
@@ -801,8 +801,9 @@ function injectUi() {
 
 function updateHistoryButton() {
 	const btn = document.getElementById('gs-ctx-history-btn');
-	if (btn) btn.classList.toggle('has-history', loadedContexts.length > 0);
-	if (btn && loadedContexts.length) btn.style.background = '#4f46e5';
+	if (!btn) return;
+	btn.classList.toggle('has-history', loadedContexts.length > 0);
+	btn.style.background = loadedContexts.length ? '#4f46e5' : '#3e4154';
 }
 
 /** Decorate a desktop chat bubble for a restored history message (called by main.js renderDomChat). */
