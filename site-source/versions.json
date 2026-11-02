@@ -1,9 +1,24 @@
 {
   "versions": [
     {
-      "id": "0.991",
-      "label": "GS 0.991 (this build)",
+      "id": "0.992",
+      "label": "GS 0.992 (this build)",
       "url": null,
+      "date": "2026-11-02",
+      "changes": [
+        "Take photos with your camera: a new 📷 button sits next to the 📎 upload button in the chat window (under More on phones). It opens a live camera preview between the messages and the buttons.",
+        "Pick which camera to use (front, back, webcam…) from the list under the preview. Your choice is remembered.",
+        "Take photo attaches the picture to your next message, just like an uploaded photo. ✕ closes the camera and turns it off.",
+        "If the camera is blocked, missing or busy, a short message in the panel says why and how to fix it.",
+        "On Meta Quest 3 the photo comes from the headset's passthrough cameras (left or right), and in VR the live preview shows right on the menu window. Quest asks for the Headset cameras permission the first time.",
+        "New AR / VR toggle next to Enter VR at the top of the window and in the 🎨 Environment tab of the menu window: AR shows your real room around the scene (passthrough), VR shows the scene with a colour sky. Options your device doesn't support are greyed out, and your choice is remembered.",
+        "Inside an AR session, the Environment tab switches between your room and the colour sky right away."
+      ]
+    },
+    {
+      "id": "0.991",
+      "label": "GS 0.991",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-02",
       "changes": [
         "Embed export: the Share tab has an Embed button that gives you an <iframe> code to put your scene on any website. Pick a size (responsive, 800×450, 1280×720 or square) and whether to include Enter VR, see a preview, and copy it. A scene that isn't uploaded yet is uploaded once for you.",
