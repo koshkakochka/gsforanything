@@ -377,6 +377,23 @@ function drawWrappedFieldText(ctx, el, style, text, faded, x, y, rect) {
 	}
 }
 
+const scrollsY = (v) => v === 'auto' || v === 'scroll' || v === 'overlay';
+function drawScrollThumb(ctx, el, style, rect, ox, oy) {
+	if (!scrollsY(style.overflowY) || el.scrollHeight <= el.clientHeight + 1 || el.clientHeight < 24) return;
+	const bt = parseFloat(style.borderTopWidth) || 0;
+	const br = parseFloat(style.borderRightWidth) || 0;
+	const trackH = el.clientHeight - 6;
+	const thumbH = Math.max(18, trackH * el.clientHeight / el.scrollHeight);
+	const t = Math.min(1, el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight));
+	const x = rect.right - ox - br - 7;
+	const y = rect.top - oy + bt + 3 + t * (trackH - thumbH);
+	ctx.save();
+	ctx.fillStyle = 'rgba(255,255,255,0.10)';
+	fillBox(ctx, x, rect.top - oy + bt + 3, 5, trackH, 2.5, 'rgba(255,255,255,0.10)');
+	fillBox(ctx, x, y, 5, thumbH, 2.5, 'rgba(255,255,255,0.55)');
+	ctx.restore();
+}
+
 function paintNode(ctx, el, ox, oy, clip) {
 	if (!(el instanceof Element)) return;
 	// Cull before getComputedStyle: anything entirely outside the current
@@ -436,6 +453,11 @@ function paintNode(ctx, el, ox, oy, clip) {
 
 	for (const child of el.children) paintNode(ctx, child, ox, oy, childClip);
 	ctx.restore();
+	// Scroll position indicator for anything that scrolls (the Code tab, chat
+	// log, lists): the page's own scrollbars are not part of the snapshot.
+	if (!(el instanceof HTMLTextAreaElement && el.hasAttribute('data-gs-wrap'))) {
+		try { drawScrollThumb(ctx, el, style, box, ox, oy); } catch { /* ignore */ }
+	}
 	if ((parseFloat(style.outlineWidth) || 0) > 0 && style.outlineStyle !== 'none') {
 		ctx.save();
 		if (Number.isFinite(opacity) && opacity < 1) ctx.globalAlpha *= opacity;

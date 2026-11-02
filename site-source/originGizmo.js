@@ -56,6 +56,7 @@ export function createOriginRotation({ THREE, root, getViewQuaternion, getViewDi
 	const UP = new THREE.Vector3(0, 1, 0);
 	let rot = { yaw: 0, pitch: 0, roll: 0 };
 	let snapToggle = false;
+	let grabbed = false; // held by a VR controller (grip), see beginGrab()
 	let ui = null;
 
 	const toQuat = (r, out = new THREE.Quaternion()) => out.setFromEuler(_e.set(
@@ -189,6 +190,12 @@ export function createOriginRotation({ THREE, root, getViewQuaternion, getViewDi
 		const ctx = canvas.getContext('2d');
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.clearRect(0, 0, g.w, g.h);
+		// Held by a VR controller: amber halo (same amber as the ray hover ring).
+		if (grabbed) {
+			ctx.beginPath(); ctx.arc(g.cx, g.cy, g.ringOut + 1, 0, Math.PI * 2);
+			ctx.fillStyle = 'rgba(250, 204, 21, 0.16)'; ctx.fill();
+			ctx.lineWidth = 3; ctx.strokeStyle = '#facc15'; ctx.stroke();
+		}
 		// ring (roll) with 15° ticks
 		ctx.beginPath(); ctx.arc(g.cx, g.cy, (g.ringIn + g.ringOut) / 2, 0, Math.PI * 2);
 		ctx.lineWidth = g.ringOut - g.ringIn;
@@ -339,6 +346,17 @@ export function createOriginRotation({ THREE, root, getViewQuaternion, getViewDi
 		set: (r, why) => set(r, why || 'api'),
 		reset: () => set({ yaw: 0, pitch: 0, roll: 0 }, 'reset'),
 		alignAxis: (id, sign) => alignAxisToView(id, sign),
+		/** VR controller grab (main.js): returns the rotation at grab time and
+		 *  highlights the gizmo until endGrab(). */
+		beginGrab() { grabbed = true; draw(); return root.quaternion.clone(); },
+		/** Rotation = delta * base (delta: the controller's world rotation since
+		 *  the grab, now * inverse(start)). Same path (and snap) as a drag. */
+		grabRotate(base, delta) {
+			_q.copy(delta).multiply(base).normalize();
+			return setQuaternion(_q, 'grab', snapToggle);
+		},
+		endGrab() { if (!grabbed) return; grabbed = false; draw(); },
+		get grabbed() { return grabbed; },
 		isIdentity: () => isIdentityOriginRotation(rot),
 		mount, tick, draw,
 		/** Debug/test hook: on-screen (client) position of each axis end. */

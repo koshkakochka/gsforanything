@@ -32,6 +32,20 @@ const rayPointer = (type, p, pointerId, button, buttons) => new PointerEvent(typ
 	bubbles: true, cancelable: true, composed: true, pointerId, pointerType: 'mouse',
 	isPrimary: true, button, buttons, clientX: p.x, clientY: p.y
 });
+// Scroll a box from the ray and tell its listeners right away. During an
+// immersive session the page does not render, so the browser's own (async,
+// frame-aligned) 'scroll' event can be held back for as long as you are in
+// VR. The Code tab's highlight layer follows its textarea on 'scroll', so the
+// painted code never moved. A synchronous synthetic event keeps every
+// listener (and the window repaint) in step.
+export function scrollBoxTo(el, top, left) {
+	const t0 = el.scrollTop, l0 = el.scrollLeft;
+	if (top !== undefined) el.scrollTop = top;
+	if (left !== undefined) el.scrollLeft = left;
+	if (el.scrollTop === t0 && el.scrollLeft === l0) return false;
+	el.dispatchEvent(new Event('scroll'));
+	return true;
+}
 const ACTIONABLE = 'button, a, label, select, input, textarea, summary, [data-action], [role="button"], [role="radio"], [role="tab"], .menu-btn';
 const SOURCE_CLASS = 'html-in-canvas-source';
 
@@ -358,8 +372,7 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			const dy = p.localY - d.startY;
 			if (!d.moved && (Math.abs(dx) > SCROLL_DRAG_PX || Math.abs(dy) > SCROLL_DRAG_PX)) d.moved = true;
 			if (!d.moved) return;
-			if (d.canY) d.scroller.scrollTop = d.originTop - dy;
-			if (d.canX) d.scroller.scrollLeft = d.originLeft - dx;
+			scrollBoxTo(d.scroller, d.canY ? d.originTop - dy : undefined, d.canX ? d.originLeft - dx : undefined);
 			markDirty();
 		};
 
@@ -377,15 +390,35 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			else win.tick(true);
 		};
 
-		// Thumbstick scroll of whatever scrolls under the ray.
-		win.scrollAt = (uv, dy) => {
+		// Something under the ray that scrolls vertically (thumbstick target).
+		win.verticalScrollerAt = (uv) => {
 			const el = win.elementAtUV(uv);
-			const scroll = el && win.scrollableAt(el);
-			if (!scroll || !scroll.canY) return false;
-			const before = scroll.el.scrollTop;
-			scroll.el.scrollTop = before + dy;
-			if (scroll.el.scrollTop !== before) markDirty();
-			return scroll.el.scrollTop !== before;
+			if (!el || blocked(el)) return null;
+			for (let node = el; node && source.contains(node); node = node.parentElement) {
+				const s = win.scrollableAt(node);
+				if (!s) return null;
+				if (s.canY) return s.el;
+				if (s.el === source) return null;
+				node = s.el; // only scrolls sideways: keep looking further out
+			}
+			return null;
+		};
+
+		// Thumbstick scroll of whatever scrolls under the ray (clamped by the
+		// browser to the content). Sub-pixel steps are accumulated so a light
+		// push still scrolls smoothly at 72-120 Hz.
+		win._scrollCarry = 0;
+		win.scrollAt = (uv, dy) => {
+			const el = win.verticalScrollerAt(uv);
+			if (!el) return false;
+			win._scrollCarry += dy;
+			const step = Math.trunc(win._scrollCarry);
+			if (!step) return false;
+			win._scrollCarry -= step;
+			const moved = scrollBoxTo(el, el.scrollTop + step);
+			if (moved) markDirty();
+			else win._scrollCarry = 0;
+			return moved;
 		};
 
 		windows.push(win);

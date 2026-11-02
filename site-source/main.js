@@ -761,13 +761,22 @@ const xrEntryButton = XRButton.createButton(renderer, {
 });
 // No-WebXR fallback is an <a> without an id; give it the same id for styling.
 if (!xrEntryButton.id) xrEntryButton.id = 'XRButton';
-// Lives in the bottom #gs-dock next to the version button (see index.html).
+// Lives in the window's top bar (#gs-dock in #desktop-chat-header), right
+// before the version button (see index.html).
 const gsDock = document.getElementById('gs-dock');
 if (gsDock) {
 	gsDock.insertBefore(xrEntryButton, document.getElementById('gs-version-btn'));
 } else {
 	document.body.appendChild(xrEntryButton);
 }
+// Exit VR: shown only inside a VR session, in the same top bar, which is the
+// top of the VR menu (CSS: body.gs-xr-presenting #gs-exit-vr-btn). One press
+// ends the session; sessionend brings the desktop view back.
+document.getElementById('gs-exit-vr-btn')?.addEventListener('click', (e) => {
+	e.preventDefault();
+	e.stopPropagation();
+	exitXrToDesktop();
+});
 // XRButton rewrites textContent (ENTER VR / EXIT VR / VR NOT SUPPORTED);
 // mirror that into data-xr-state so the dock can style usable vs. not.
 function syncXrEntryButtonState() {
@@ -5341,9 +5350,13 @@ function updateLocomotion(dt, session) {
 
 	const xrCam = renderer.xr.getCamera();
 	let mx = 0, my = 0, rx = 0, ry = 0; // left x/y (move), right x (turn), right y (vertical)
+	// Holding the origin gizmo: the controllers rotate the scene, not you.
+	if (vrGizmoGrab) return;
 	for (const source of session.inputSources) {
 		const gp = source.gamepad;
 		if (!gp || !gp.axes) continue;
+		// That hand's stick is scrolling a VR window (stickScrollVrWindow).
+		if (_stickOwnedByWindow[source.handedness]) continue;
 		const axes = gp.axes;
 		const ax = axes.length >= 4 ? axes[2] : (axes[0] || 0);
 		const ay = axes.length >= 4 ? axes[3] : (axes[1] || 0);
@@ -6375,13 +6388,9 @@ const TWIN_STICKS_STORAGE_KEY = 'gs.twinSticks';
 let twinSticksEnabled = true;
 try { twinSticksEnabled = localStorage.getItem(TWIN_STICKS_STORAGE_KEY) !== 'off'; } catch { /* storage blocked */ }
 const twinSticks = createTwinSticks({
-	layout: () => {
-		// Sit just above the bottom dock (the VR / version buttons).
-		const dock = document.getElementById('gs-dock');
-		// (offsetParent is always null for a position:fixed element, so check display)
-		const r = dock && getComputedStyle(dock).display !== 'none' ? dock.getBoundingClientRect() : null;
-		return { bottom: r && r.height ? Math.max(0, window.innerHeight - r.top) + 8 : 0 };
-	}
+	// Nothing sits at the bottom of the page any more (the VR / version
+	// buttons moved to the top of the window), so the sticks use the bottom edge.
+	layout: () => ({ bottom: 0 })
 });
 const dchatTwinSticksToggle = document.getElementById('dchat-twin-sticks');
 if (dchatTwinSticksToggle) {
@@ -7279,7 +7288,7 @@ const DRAG_TOUCH_SLOP = 6;      // px a finger may wobble before a press becomes
 		if (drag) return;
 		if (!e.isPrimary) return;
 		if (e.pointerType === 'mouse' && e.button !== 0) return;
-		if (e.target.closest('#desktop-chat-header-buttons')) return;
+		if (e.target.closest('#desktop-chat-header-buttons, #gs-dock')) return;
 		if (desktopChat.classList.contains('expanded')) return;
 		if (desktopChat.classList.contains('html-in-canvas-source')) return;
 		if (typeof _kbChat !== 'undefined' && _kbChat) return;
@@ -7745,7 +7754,7 @@ function applySceneEnvironmentHdri(data) {
 }
 
 // ============================================================================
-// GS version badge + picker (bottom of screen)
+// GS version badge + picker (top bar of the window, next to Enter VR)
 // ============================================================================
 function initGsVersionPicker() {
 	const btn = document.getElementById('gs-version-btn');
@@ -8035,6 +8044,7 @@ renderer.xr.addEventListener('sessionstart', () => {
 });
 
 renderer.xr.addEventListener('sessionend', () => {
+	endVrGizmoGrab();
 	resetPanelAnchor();
 	isVRMode = true;
 	applyEnvironmentMode();
@@ -8509,21 +8519,91 @@ const _tmpHitNormal = new THREE.Vector3();
 const _noHits = [];
 const VR_RETICLE_COLOR = 0xfacc15; // same amber as the .gs-ray-hover ring
 
-// Thumbstick scroll (locomotion off) of the window under that hand's ray.
-function stickScrollVrWindow(hand, dy) {
-	if (!vrWindows || !dy) return;
+// The controller (three's target-ray group) for a handedness, or null.
+function xrControllerForHand(hand) {
 	for (let i = 0; i < 2; i++) {
 		const c = renderer.xr.getController(i);
-		if (!c || c.userData.handedness !== hand) continue;
-		_rayTempMatrix.identity().extractRotation(c.matrixWorld);
-		_rayOrigin.setFromMatrixPosition(c.matrixWorld);
-		_rayDir.set(0, 0, -1).applyMatrix4(_rayTempMatrix);
-		_hitRaycaster.set(_rayOrigin, _rayDir);
-		const hit = _hitRaycaster.intersectObjects(visibleVrWindowMeshes(_selectTargets), false).find((h) => h.uv);
-		const win = hit && vrWindows.byMesh(hit.object);
-		if (win) win.scrollAt(hit.uv, dy);
+		if (c && c.userData.handedness === hand) return { controller: c, index: i };
 	}
+	return null;
 }
+
+// The VR window (and texture uv) under that hand's ray, or null.
+function vrWindowUnderRay(hand) {
+	if (!vrWindows) return null;
+	const found = xrControllerForHand(hand);
+	if (!found) return null;
+	const c = found.controller;
+	_rayTempMatrix.identity().extractRotation(c.matrixWorld);
+	_rayOrigin.setFromMatrixPosition(c.matrixWorld);
+	_rayDir.set(0, 0, -1).applyMatrix4(_rayTempMatrix);
+	_hitRaycaster.set(_rayOrigin, _rayDir);
+	const hit = _hitRaycaster.intersectObjects(visibleVrWindowMeshes(_selectTargets), false).find((h) => h.uv);
+	const win = hit && vrWindows.byMesh(hit.object);
+	return win ? { win, uv: hit.uv, index: found.index } : null;
+}
+
+// Thumbstick scroll: either stick scrolls whatever scrolls vertically under
+// that hand's ray (the Code tab, chat log, lists). While the ray is on such a
+// box that hand's stick belongs to the window, so it does not also move or
+// turn you (see _stickOwnedByWindow / updateLocomotion). With locomotion off
+// it is the only thing the sticks do. Returns true when the stick was used.
+const _stickOwnedByWindow = { left: false, right: false };
+function stickScrollVrWindow(hand, dy) {
+	const under = vrWindowUnderRay(hand);
+	if (!under || !under.win.verticalScrollerAt(under.uv)) return false;
+	if (dy) under.win.scrollAt(under.uv, dy);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// VR: grab the origin-rotation gizmo (Environment tab) with a controller.
+// Point the ray at the gizmo and hold the grip (squeeze) button: the scene's
+// origin rotation follows the controller's own rotation from that moment
+// (delta = now * inverse(start), applied on top of the rotation at grab
+// time), live, like dragging the 2D gizmo. Release the grip to let go.
+// Either controller. Hand tracking has no grip button, so it never grabs.
+// While grabbing, the sticks do not move you and the right grip does not
+// cycle locomotion.
+// ---------------------------------------------------------------------------
+let vrGizmoGrab = null; // { hand, startQ: Quaternion, base: Quaternion }
+const _gizmoGrabQ = new THREE.Quaternion();
+const _gizmoGrabDelta = new THREE.Quaternion();
+function originGizmoUnderRay(hand) {
+	const under = vrWindowUnderRay(hand);
+	if (!under || under.win !== vrMainWindow) return false;
+	const el = under.win.elementAtUV(under.uv);
+	return !!(el && el.closest && el.closest('#dchat-origin-gizmo'));
+}
+function beginVrGizmoGrab(hand) {
+	if (vrGizmoGrab || !originRotation || !originGizmoUnderRay(hand)) return false;
+	const found = xrControllerForHand(hand);
+	if (!found) return false;
+	found.controller.updateMatrixWorld(true);
+	vrGizmoGrab = { hand, startQ: found.controller.getWorldQuaternion(new THREE.Quaternion()), base: originRotation.beginGrab() };
+	return true;
+}
+function updateVrGizmoGrab() {
+	if (!vrGizmoGrab) return;
+	const found = xrControllerForHand(vrGizmoGrab.hand);
+	if (!found) { endVrGizmoGrab(); return; }
+	found.controller.getWorldQuaternion(_gizmoGrabQ);
+	_gizmoGrabDelta.copy(vrGizmoGrab.startQ).invert().premultiply(_gizmoGrabQ); // now * inverse(start)
+	originRotation.grabRotate(vrGizmoGrab.base, _gizmoGrabDelta);
+}
+function endVrGizmoGrab() {
+	if (!vrGizmoGrab) return;
+	vrGizmoGrab = null;
+	originRotation.endGrab();
+}
+// Read-only test / debug hook (test-harness/vr-input).
+window.gsVrInput = {
+	get locomotionMode() { return locomotionMode; },
+	get gizmoGrab() { return vrGizmoGrab ? { hand: vrGizmoGrab.hand } : null; },
+	get stickOwnedByWindow() { return { ..._stickOwnedByWindow }; },
+	playerPosition() { return player ? player.position.clone() : null; },
+	playerQuaternion() { return player ? player.quaternion.clone() : null; }
+};
 
 renderer.setAnimationLoop((time) => {
 	// Frame delta (seconds), clamped so a paused/backgrounded tab doesn't jump.
@@ -8609,26 +8689,34 @@ renderer.setAnimationLoop((time) => {
 					const b3 = !!(gp.buttons[3] && gp.buttons[3].pressed);
 					if (b3 && !prev[3]) toggleUi();
 					prev[3] = b3;
-					// Grip / squeeze (index 1), right hand: cycle locomotion mode
-					// (off → planar → free-roam).
-					if (hand === 'right') {
-						const b1 = !!(gp.buttons[1] && gp.buttons[1].pressed);
-						if (b1 && !prev[1]) cycleLocomotionMode();
-						prev[1] = b1;
+					// Grip / squeeze (index 1), either hand: with the ray on the
+					// origin gizmo, grab it (rotate the scene with the controller)
+					// until released. Otherwise the right grip cycles locomotion
+					// mode (off → planar → free-roam).
+					const b1 = !!(gp.buttons[1] && gp.buttons[1].pressed);
+					if (b1 && !prev[1]) {
+						if (!beginVrGizmoGrab(hand) && hand === 'right') cycleLocomotionMode();
 					}
+					if (!b1 && prev[1] && vrGizmoGrab && vrGizmoGrab.hand === hand) endVrGizmoGrab();
+					prev[1] = b1;
 				}
 
-				// Thumbsticks scroll only while locomotion is off; otherwise they
-				// drive movement/turning (handled by updateLocomotion below).
-				// Either stick scrolls whatever scrolls under that hand's ray.
-				if (locomotionMode === 'off') {
-					const axes = gp ? gp.axes : null;
-					if (!axes) continue;
-					const thumbY = axes.length >= 4 ? axes[3] : (axes.length >= 2 ? axes[1] : 0);
-					if (Math.abs(thumbY) > THUMBSTICK_DEADZONE) stickScrollVrWindow(hand, thumbY * STICK_SCROLL_PX_PER_S * dt);
-
+				// Thumbsticks: over something that scrolls, that hand's stick
+				// scrolls it (and does not move you); elsewhere they drive
+				// movement/turning (updateLocomotion below), or nothing with
+				// locomotion off.
+				_stickOwnedByWindow[hand] = false;
+				const axes = gp ? gp.axes : null;
+				if (!axes || (hand !== 'left' && hand !== 'right')) continue;
+				const thumbX = axes.length >= 4 ? axes[2] : (axes[0] || 0);
+				const thumbY = axes.length >= 4 ? axes[3] : (axes.length >= 2 ? axes[1] : 0);
+				if (Math.abs(thumbY) > THUMBSTICK_DEADZONE || Math.abs(thumbX) > THUMBSTICK_DEADZONE) {
+					const dy = Math.abs(thumbY) > THUMBSTICK_DEADZONE ? thumbY * STICK_SCROLL_PX_PER_S * dt : 0;
+					_stickOwnedByWindow[hand] = stickScrollVrWindow(hand, dy);
 				}
 			}
+			if (vrGizmoGrab && !session.inputSources.length) endVrGizmoGrab();
+			updateVrGizmoGrab();
 
 			// Locomotion: left stick moves, right stick turns.
 			updateLocomotion(dt, session);
