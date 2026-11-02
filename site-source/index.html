@@ -2554,8 +2554,18 @@
 			#gs-xr-mode { height: 44px; }
 			#gs-xr-mode button { height: 38px; min-width: 44px; font-size: 12px; }
 		}
-		@container gs-chat-header (max-width: 345px) {
+		/* The toggle takes ~70px of the top bar: go compact (no icons, smaller
+		   text) earlier, and only take a row of its own at the narrowest. */
+		@container gs-chat-header (max-width: 440px) {
+			html:not(.gs-phone) #gs-dock:has(> #gs-xr-mode:not([hidden])) { gap: 4px; margin: -4px 4px; }
+			html:not(.gs-phone) #gs-dock:has(> #gs-xr-mode:not([hidden])) #XRButton,
+			html:not(.gs-phone) #gs-dock:has(> #gs-xr-mode:not([hidden])) .gs-dock-btn:not(#gs-exit-vr-btn) { padding: 0 7px !important; font-size: 11px !important; gap: 3px !important; }
+			html:not(.gs-phone) #gs-dock:has(> #gs-xr-mode:not([hidden])) #XRButton::before,
+			html:not(.gs-phone) #gs-dock:has(> #gs-xr-mode:not([hidden])) .gs-dock-btn:not(#gs-exit-vr-btn)::before { display: none; }
 			html:not(.gs-phone) #gs-xr-mode button { min-width: 28px; padding: 0 6px; }
+		}
+		@container gs-chat-header (max-width: 300px) {
+			#gs-dock:has(> #gs-xr-mode:not([hidden])) { order: 3; flex: 1 0 100%; margin: 0 !important; justify-content: flex-start; flex-wrap: wrap; }
 		}
 	</style>
 </head>
