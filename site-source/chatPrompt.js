@@ -7,6 +7,8 @@
 // (chatPromptRequired), so scene code keeps running. Fix-code and Theme
 // prompts are shown read-only: their exact output formats are machine-parsed.
 
+import { gsConfirm } from './gsDialog.js';
+
 export const STORAGE_KEY = 'gs.customChatPrompt.v1';
 export const FALLBACK_MAX_CHARS = 40000;
 
@@ -71,9 +73,9 @@ export function effectivePrompt() {
 // DOM view (Chat → Prompt). Elements live in index.html.
 
 // In a headset the same DOM view is painted into the VR menu window
-// (vrWindows.js) and edited with the VR keyboard; window.confirm() is not
-// usable there, so Reset asks for a second press instead.
-export function initPromptEditor({ onOpenPrompt, onStatus, inHeadset } = {}) {
+// (vrWindows.js) and edited with the VR keyboard; Reset's question is an
+// in-app dialog (gsDialog.js), which also shows in VR.
+export function initPromptEditor({ onOpenPrompt, onStatus } = {}) {
 	const $ = (id) => document.getElementById(id);
 	const editor = $('dchat-prompt-editor');
 	if (!editor) return null;
@@ -140,27 +142,12 @@ export function initPromptEditor({ onOpenPrompt, onStatus, inHeadset } = {}) {
 		return true;
 	}
 	function revert() { fill(true); say('Unsaved changes discarded.'); refresh(); }
-	const resetLabel = resetBtn?.textContent || 'Reset to default';
-	let resetArmedUntil = 0;
-	let resetArmTimer = 0;
-	function disarmReset() {
-		resetArmedUntil = 0;
-		clearTimeout(resetArmTimer);
-		if (resetBtn) resetBtn.textContent = resetLabel;
-	}
-	function reset() {
+	// Reset asks first with the in-app dialog (gsDialog.js), which shows on
+	// the page and, in a headset, as a VR window in front of you.
+	async function reset() {
 		if (isCustom()) {
-			if (inHeadset?.()) {
-				if (performance.now() >= resetArmedUntil) {
-					resetArmedUntil = performance.now() + 4000;
-					if (resetBtn) resetBtn.textContent = 'Press again to reset';
-					say('Press Reset again to delete your custom prompt.');
-					clearTimeout(resetArmTimer);
-					resetArmTimer = setTimeout(disarmReset, 4000);
-					return false;
-				}
-				disarmReset();
-			} else if (!window.confirm('Reset the Scene chat prompt to the default? Your custom prompt will be deleted.')) return false;
+			const ok = await gsConfirm('Reset the Scene chat prompt to the default? Your custom prompt will be deleted.', { title: 'Reset prompt', okLabel: 'Reset to default', danger: true });
+			if (!ok) return false;
 		}
 		clearCustom();
 		fill(true);

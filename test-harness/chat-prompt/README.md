@@ -26,9 +26,9 @@ request bodies) and runs `worker/index.js` in Node with a mocked `fetch`.
 - `/api/chat` carries `systemPrompt` only while a custom prompt is active; it
   survives a reload and reaches a second tab; over 40,000 characters can't be
   saved; saving the default text counts as the default.
-- Reset to default asks first (Cancel keeps it, OK resets).
+- Reset to default asks first with the in-app confirm (gsDialog.js; Cancel keeps it, OK resets; no native dialog).
 - Headset (since 0.981 the VR menu window paints this same DOM view): an edit
-  saves, Reset takes two presses and opens no confirm() dialog, menu actions
+  saves, Reset asks with the same in-app confirm, menu actions
   switch the DOM sections.
 - The lighting recipe the prompt describes runs as a vr-exec block
   (RoomEnvironment dynamic import, PCFSoft shadows, ACES, named default lights).
