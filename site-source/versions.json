@@ -1,9 +1,22 @@
 {
   "versions": [
     {
-      "id": "0.989",
-      "label": "GS 0.989 (this build)",
+      "id": "0.990",
+      "label": "GS 0.990 (this build)",
       "url": null,
+      "date": "2026-11-02",
+      "changes": [
+        "Exit VR: in VR, a big red Exit VR button sits at the top of the menu on every tab. Point and click (or pinch) once to leave VR and get the normal 2D page back.",
+        "Enter VR and the GS version button now sit side by side at the top of the window, in the chat window's header, instead of at the bottom of the page. The version button still opens the version picker.",
+        "On phones the top bar has large tap targets; on narrow windows the labels go compact. VR NOT SUPPORTED is hidden when Cardboard VR is offered.",
+        "The Code window scrolls in VR: push the thumbstick up / down while pointing at it (the player doesn't move while you scroll a window), or trigger-drag / pinch-drag it. The code highlighting follows and a scrollbar is drawn. The chat log and other scrolling boxes scroll the same way.",
+        "Origin gizmo in VR (Env tab): point at it and hold grip on either controller, then turn your hand; the gizmo and the scene's default orientation rotate with the controller. Let go of grip to stop. Grip elsewhere still switches locomotion."
+      ]
+    },
+    {
+      "id": "0.989",
+      "label": "GS 0.989",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-02",
       "changes": [
         "The 🎤 mic button now says what it is doing, right under the button (and in the VR menu and the VR HUD): downloading the speech model with a percentage (first time only), Listening, Transcribing, Sent, or why it can't listen.",

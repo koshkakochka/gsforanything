@@ -1,0 +1,10 @@
+{
+  "name": "gs-vr-input-test",
+  "private": true,
+  "type": "module",
+  "description": "Headless checks for the window top bar (Enter VR + version), the in-VR Exit VR button, Code tab scrolling in VR and grabbing the origin gizmo with a controller (IWER-emulated Meta Quest 3).",
+  "dependencies": {
+    "iwer": "^2.6.0",
+    "puppeteer-core": "24.43.1"
+  }
+}
