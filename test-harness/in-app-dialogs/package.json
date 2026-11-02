@@ -1,0 +1,10 @@
+{
+  "name": "gs-in-app-dialogs-test",
+  "private": true,
+  "type": "module",
+  "description": "In-app pop-ups (gsDialog.js) replace every native alert/confirm/prompt: desktop, phone and an IWER-emulated Quest 3 VR session.",
+  "dependencies": {
+    "iwer": "^2.6.0",
+    "puppeteer-core": "24.43.1"
+  }
+}

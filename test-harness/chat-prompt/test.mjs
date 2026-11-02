@@ -150,17 +150,20 @@ const CUSTOM_LINE = '\n\n## House style\nAlways add a small brass plaque that re
   s = await st(p);
   ok(`${H} saving the default text clears the custom prompt`, s.stored === null && s.badge === 'Default prompt' && !s.pill);
   await p.evaluate((c) => { const e = document.getElementById('dchat-prompt-editor'); e.value = c; e.dispatchEvent(new Event('input')); document.getElementById('dchat-prompt-save').click(); }, CUSTOM);
-  // reset: cancel keeps it, accept resets
-  let dialogs = 0;
-  const onDlg = (accept) => async (d) => { dialogs++; accept ? await d.accept() : await d.dismiss(); };
-  let h = onDlg(false); p.once('dialog', h);
-  await click(p, '#dchat-prompt-reset'); await sleep(300);
+  // reset: asks with the in-app dialog (gsDialog.js, no native confirm); Cancel keeps it, OK resets
+  let natives = 0; const onNative = (d) => { natives++; d.dismiss(); }; p.on('dialog', onNative);
+  const dlg = () => p.evaluate(() => { const d = window.gsDialogs?.current(); return d ? { kind: d.kind, mode: d.mode, ok: d.ok?.textContent } : null; });
+  const answer = (sel) => p.evaluate((sel) => document.querySelector(`#gs-dialog [data-gs-dialog=${sel}]`).click(), sel);
+  await click(p, '#dchat-prompt-reset'); await sleep(200);
+  let d = await dlg();
+  ok(`${H} Reset to default asks with the in-app confirm`, d?.kind === 'confirm' && d.mode === 'page' && d.ok === 'Reset to default', JSON.stringify(d));
+  await answer('cancel'); await sleep(200);
   s = await st(p);
-  ok(`${H} Reset to default asks first; Cancel keeps the custom prompt`, dialogs === 1 && s.stored === CUSTOM);
-  h = onDlg(true); p.once('dialog', h);
-  await click(p, '#dchat-prompt-reset'); await sleep(300);
+  ok(`${H} Cancel keeps the custom prompt`, s.stored === CUSTOM && !(await dlg()));
+  await click(p, '#dchat-prompt-reset'); await sleep(200);
+  await answer('ok'); await sleep(300);
   s = await st(p);
-  ok(`${H} Reset to default (OK) restores the default`, dialogs === 2 && s.stored === null && s.value === defaults.systemPrompt && s.badge === 'Default prompt' && !s.pill && !s.dot);
+  ok(`${H} Reset to default (OK) restores the default`, s.stored === null && s.value === defaults.systemPrompt && s.badge === 'Default prompt' && !s.pill && !s.dot);
   req = await sendChat(p, 'after reset');
   ok(`${H} after reset no systemPrompt is sent`, !!req && !('systemPrompt' in req));
   // another tab sees saves (storage event)
@@ -170,20 +173,22 @@ const CUSTOM_LINE = '\n\n## House style\nAlways add a small brass plaque that re
   ok(`${H} a second tab picks up the saved prompt`, s2.value === CUSTOM && s2.badge === 'Custom prompt active');
   await p2.close();
   // headset: since 0.981 the VR menu window paints this same DOM view (vrWindows.js),
-  // so the editor is the one under test; only Reset differs (no confirm() in XR).
+  // so the editor is the one under test.
   await click(p, '[data-chat-section="prompt"]'); await sleep(200);
   await p.evaluate(() => { window.gsChatPanel.simulateHeadset = true; });
   await p.evaluate(() => { const e = document.getElementById('dchat-prompt-editor'); e.value += '\n\nPrefer warm evening light.'; e.dispatchEvent(new Event('input', { bubbles: true })); });
   await click(p, '#dchat-prompt-save'); await sleep(200);
   s = await st(p);
   ok(`${H} headset: an edit typed into the editor saves`, s.stored === CUSTOM + '\n\nPrefer warm evening light.' && s.value === s.stored);
-  let confirms = 0; const onXrDlg = (d) => { confirms++; d.dismiss(); }; p.on("dialog", onXrDlg);
-  await click(p, '#dchat-prompt-reset'); await sleep(100);
-  ok(`${H} headset Reset needs a second press (no confirm dialog)`, (await st(p)).stored !== null && confirms === 0 && await p.$eval('#dchat-prompt-reset', b => b.textContent) === 'Press again to reset');
-  await click(p, '#dchat-prompt-reset'); await sleep(100);
+  // Reset asks with the same in-app confirm in a headset (shown as a VR window in XR; see in-app-dialogs)
+  await click(p, '#dchat-prompt-reset'); await sleep(200);
+  d = await dlg();
+  ok(`${H} headset Reset asks with the in-app confirm`, d?.kind === 'confirm' && (await st(p)).stored !== null, JSON.stringify(d));
+  await answer('ok'); await sleep(300);
   s = await st(p);
-  ok(`${H} headset Reset (second press) restores the default`, s.stored === null && s.badge === 'Default prompt' && confirms === 0 && await p.$eval('#dchat-prompt-reset', b => b.textContent) === 'Reset to default');
-  p.off("dialog", onXrDlg);
+  ok(`${H} headset Reset (OK) restores the default`, s.stored === null && s.badge === 'Default prompt');
+  p.off('dialog', onNative);
+  ok(`${H} no native dialog fired`, natives === 0);
   await p.evaluate(() => { window.gsChatPanel.simulateHeadset = false; });
   await p.evaluate(() => window.gsChatPanel.action('chatSection:scene'));
   ok(`${H} menu action back to Scene`, await p.evaluate(() => window.gsChatPanel.section === 'scene' && document.getElementById('dchat-chat-section-scene').classList.contains('active')));
@@ -252,10 +257,13 @@ for (const vp of [{ name: '390x844', width: 390, height: 844 }, { name: '844x390
   const req = await sendChat(p, 'hi from phone');
   ok(`${H} phone send carries the custom prompt`, req?.systemPrompt === defaults.systemPrompt + ' Keep it cosy.');
   await tapSel('#dchat-custom-prompt-pill');
-  p.once('dialog', d => d.accept());
-  await tapSel('#dchat-prompt-reset');
+  let phoneNatives = 0; const onPhoneNative = (d) => { phoneNatives++; d.dismiss(); }; p.on('dialog', onPhoneNative);
+  await tapSel('#dchat-prompt-reset'); await sleep(200);
+  const pdlg = await p.evaluate(() => window.gsDialogs?.current()?.kind);
+  await tapSel('#gs-dialog [data-gs-dialog=ok]'); await sleep(300);
+  p.off('dialog', onPhoneNative);
   s = await st(p);
-  ok(`${H} Reset to default on phone`, s.stored === null && s.badge === 'Default prompt');
+  ok(`${H} Reset to default on phone (in-app confirm, tap OK)`, pdlg === 'confirm' && phoneNatives === 0 && s.stored === null && s.badge === 'Default prompt', pdlg);
   ok(`${H} no console errors`, p._errs.length === 0, p._errs.join(' | '));
   await p.close();
 }

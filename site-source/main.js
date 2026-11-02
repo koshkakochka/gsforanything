@@ -15,6 +15,7 @@ import * as GSContext from './creationContext.js';
 import * as GSMerge from './communityMerge.js';
 import { normalizeEnvironmentHdri, environmentHdriLoadUrl, environmentHdriSignature, hdriFormatFromName, HDRI_FILE_MAX_BYTES } from './sceneHdri.js';
 import * as ChatPrompt from './chatPrompt.js';
+import { gsConfirm, gsPrompt, configureDialogs, dialogCard, refreshDialogMode, installDialogGlobals } from './gsDialog.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { initSceneExport } from './exporter.js';
@@ -581,6 +582,7 @@ let vrWindows = null;
 let vrMainWindow = null;
 let vrKeyboardWindow = null;
 let vrHudWindow = null;
+let vrDialogWindow = null;   // in-app dialog (gsDialog.js) as a VR window
 let vrKeyboardOpen = false;   // keyboard window shown (a text field was pointed at)
 let vrKeyboardTarget = null;  // the <input>/<textarea> the VR keyboard types into
 let rayVisible = true;        // controller ray lines shown (cursor always shows)
@@ -885,6 +887,7 @@ function isArUiTouchTarget(target) {
 		target.closest('#export-modal') ||
 		target.closest('#share-modal') ||
 		target.closest('#rename-modal') ||
+		target.closest('#gs-dialog-root') ||
 		target.closest('#XRButton') ||
 		target.closest('#gs-dock') ||
 		target.closest('.mobile-xr-btn')
@@ -2077,14 +2080,15 @@ function clearUserObjects() {
 /** Clear scene = start a new blank scene: every user-placed object, the
  *  loaded scene and its chat history go. Files library and Community uploads
  *  are not affected. */
-function clearSceneContent() {
+async function clearSceneContent() {
 	if (!activeScene && userContentRoots().length === 0 && executedCodeBlocks.length === 0 && messages.length === 0) {
 		recenterOrbitPivot();
 		updateStatus('Scene is already empty', '');
 		return;
 	}
-	if (!window.confirm(
-		'Clear the scene? All objects and this scene\'s chat history are removed. Files library and Community uploads are not affected.'
+	if (!await gsConfirm(
+		'Clear the scene? All objects and this scene\'s chat history are removed. Files library and Community uploads are not affected.',
+		{ title: 'Clear scene', okLabel: 'Clear scene', danger: true }
 	)) return;
 
 	setActiveScene(null);
@@ -2975,9 +2979,9 @@ function setChatSection(section) {
 	renderDomChat();
 }
 
-function uploadCurrentThemeToCommunity() {
+async function uploadCurrentThemeToCommunity() {
 	if (displayOnlyMode) return;
-	const name = window.prompt('Theme name?', currentTheme?.name || 'My Theme');
+	const name = await gsPrompt('Theme name?', currentTheme?.name || 'My Theme', { title: 'Upload theme', okLabel: 'Upload' });
 	if (name == null) return;
 	const theme = snapshotCurrentTheme(name.trim() || 'My Theme');
 	updateStatus('Uploading theme...', 'connecting');
@@ -3406,7 +3410,10 @@ const _selectTargets = [];
 function visibleVrWindowMeshes(out) {
 	out.length = 0;
 	if (!vrWindows) return out;
+	// An open in-app dialog is modal: only it (and the keyboard) take the ray.
+	const modal = vrDialogWindow && vrDialogWindow.visible;
 	for (const w of vrWindows.windows) {
+		if (modal && w !== vrDialogWindow && w !== vrKeyboardWindow) continue;
 		let shown = true;
 		for (let o = w.mesh; o; o = o.parent) {
 			if (!o.visible) { shown = false; break; }
@@ -4120,7 +4127,7 @@ async function removeLibraryFile(id) {
 
 async function clearContextLibrary() {
 	if (!contextLibrary.length) return;
-	if (!window.confirm(`Remove all ${contextLibrary.length} files from the library?`)) return;
+	if (!await gsConfirm(`Remove all ${contextLibrary.length} files from the library?`, { title: 'Clear Files library', okLabel: 'Remove all', danger: true })) return;
 	try {
 		await idbClearFiles();
 		contextLibrary = [];
@@ -6884,7 +6891,7 @@ document.querySelectorAll('#dchat-chat-subtabs .dchat-subtab').forEach(btn => {
 // Chat → Prompt editor (chatPrompt.js). In VR the same DOM view is painted
 // into the menu window, so there is nothing extra to redraw here.
 window.GSChatPrompt = ChatPrompt; // console / test access
-// Console / test access (simulateHeadset: the two-press Reset without a session).
+// Console / test access.
 window.gsChatPanel = {
 	get section() { return chatSection; },
 	action: (a) => handleMenuAction(a),
@@ -6892,8 +6899,7 @@ window.gsChatPanel = {
 };
 ChatPrompt.initPromptEditor({
 	onOpenPrompt: () => setChatSection('prompt'),
-	onStatus: (t) => updateStatus(t, 'connected'),
-	inHeadset: () => !!(renderer && renderer.xr && renderer.xr.isPresenting) || window.gsChatPanel.simulateHeadset
+	onStatus: (t) => updateStatus(t, 'connected')
 });
 
 syncRememberThemeCheckboxes();
@@ -7674,6 +7680,107 @@ function initVrWindows() {
 	window.__gsVrWindows = vrWindows;
 }
 
+
+// ============================================================================
+// In-app dialogs (gsDialog.js) in VR
+// ============================================================================
+// gsAlert / gsConfirm / gsPrompt show an HTML modal on the page. While an XR
+// session is presenting, the same card is a VR window placed in front of the
+// user's head (yaw only, re-placed each time a dialog opens) and is modal:
+// visibleVrWindowMeshes() hands the controller rays only the dialog and the
+// keyboard. A prompt's text field opens the VR keyboard right under the card.
+let _vrDialogPlaceNext = false;
+const VR_DIALOG_DISTANCE = 1.2;
+const VR_DIALOG_DROP = 0.12;      // card centre this far below eye level
+const VR_DIALOG_KB_GAP = 0.03;
+const vrDialogAnchor = new THREE.Group();
+vrDialogAnchor.name = 'gsDialogAnchor';
+scene.add(vrDialogAnchor);
+const _dlgHead = new THREE.Vector3();
+const _dlgDir = new THREE.Vector3();
+
+function placeVrDialog() {
+	const cam = renderer.xr.getCamera();
+	cam.getWorldPosition(_dlgHead);
+	cam.getWorldDirection(_dlgDir);
+	_dlgDir.y = 0;
+	if (_dlgDir.lengthSq() < 1e-4) _dlgDir.set(0, 0, -1);
+	_dlgDir.normalize();
+	vrDialogAnchor.position.set(_dlgHead.x + _dlgDir.x * VR_DIALOG_DISTANCE, _dlgHead.y - VR_DIALOG_DROP, _dlgHead.z + _dlgDir.z * VR_DIALOG_DISTANCE);
+	vrDialogAnchor.rotation.set(0, Math.atan2(-_dlgDir.x, -_dlgDir.z), 0);
+	vrDialogAnchor.updateMatrixWorld(true);
+}
+
+function vrDialogTyping() {
+	return !!(vrDialogWindow && vrDialogWindow.visible && vrKeyboardOpen && vrKeyboardTarget && vrDialogWindow.source.contains(vrKeyboardTarget));
+}
+
+// Keyboard under the dialog while typing into it, back under the menu after.
+function layoutVrDialogKeyboard() {
+	if (!vrKeyboardWindow) return;
+	const kb = vrKeyboardWindow.mesh;
+	if (vrDialogTyping()) {
+		if (kb.parent !== vrDialogAnchor) vrDialogAnchor.add(kb);
+		vrKeyboardWindow.setVisible(true);
+		kb.position.set(0, -vrDialogWindow.heightM / 2 - VR_DIALOG_KB_GAP - vrKeyboardWindow.heightM / 2, 0.02);
+	} else if (kb.parent === vrDialogAnchor) {
+		panelAnchor.add(kb);
+		layoutVrWindows();
+	}
+}
+
+// Per XR frame (from the render loop): place a newly shown dialog, face the
+// camera, keep the keyboard with it.
+function tickVrDialog(cameraWorldPos) {
+	if (!vrDialogWindow || !vrDialogWindow.visible) {
+		if (vrKeyboardWindow && vrKeyboardWindow.mesh.parent === vrDialogAnchor) layoutVrDialogKeyboard();
+		return;
+	}
+	if (_vrDialogPlaceNext) { _vrDialogPlaceNext = false; placeVrDialog(); }
+	vrDialogWindow.mesh.lookAt(cameraWorldPos);
+	layoutVrDialogKeyboard();
+}
+
+function initVrDialogWindow() {
+	if (!vrWindows) return;
+	vrDialogWindow = vrWindows.createWindow({ name: 'dialog', source: dialogCard(), parent: vrDialogAnchor, distance: VR_DIALOG_DISTANCE });
+	registerMenuRoot(vrDialogWindow.mesh);
+	// Each question has its own height, so this window's canvas changes size.
+	// three.js allocates a texture's GPU storage once (texStorage2D) and does not
+	// notice a resized canvas, which would leave the previous question showing;
+	// dispose so the next upload allocates at the new size.
+	const paintDialog = vrDialogWindow.tick;
+	vrDialogWindow.tick = (...args) => {
+		const { canvas, texture } = vrDialogWindow;
+		const w = canvas.width, h = canvas.height;
+		const painted = paintDialog(...args);
+		if (canvas.width !== w || canvas.height !== h) texture.dispose();
+		return painted;
+	};
+	configureDialogs({
+		isImmersive: () => xrSessionActive(),
+		onShow: (card, d) => {
+			_vrDialogPlaceNext = true;
+			if (xrSessionActive()) placeVrDialog();
+			vrDialogWindow.setVisible(true);
+			if (d && d.input) openVrKeyboard(d.input);
+			layoutVrDialogKeyboard();
+		},
+		onHide: (card) => {
+			if (vrKeyboardTarget && card.contains(vrKeyboardTarget)) closeVrKeyboard();
+			vrDialogWindow.setVisible(false);
+			for (let i = 0; i < 2; i++) vrDialogWindow.setHover(i, null);
+			layoutVrDialogKeyboard();
+		}
+	});
+	renderer.xr.addEventListener('sessionstart', refreshDialogMode);
+	renderer.xr.addEventListener('sessionend', refreshDialogMode);
+}
+
+// The page's own alert / confirm / prompt (AI-written scene code, p5 helpers,
+// anything else) open these dialogs too; see installDialogGlobals.
+installDialogGlobals(window);
+
 function dispatchKeyToDomField(el, key) {
 	const write = (text) => {
 		const start = el.selectionStart == null ? el.value.length : el.selectionStart;
@@ -7733,6 +7840,7 @@ function dispatchKeyToDomField(el, key) {
 migrateLayDownState();
 // The menu and keyboard windows ride on panelAnchor (identity in Fixed mode).
 initVrWindows();
+initVrDialogWindow();
 renderDomEnv();
 renderDomSceneList();
 {
@@ -7826,6 +7934,7 @@ renderer.setAnimationLoop((time) => {
 		// World windows face the camera while staying upright.
 		vrMainWindow.mesh.lookAt(cameraWorldPos);
 		vrKeyboardWindow.mesh.lookAt(cameraWorldPos);
+		tickVrDialog(cameraWorldPos);
 
 		// Ray targets: the VR windows that are showing.
 		visibleVrWindowMeshes(_hitTargets);

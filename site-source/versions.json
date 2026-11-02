@@ -1,9 +1,22 @@
 {
   "versions": [
     {
-      "id": "0.987",
-      "label": "GS 0.987 (this build)",
+      "id": "0.988",
+      "label": "GS 0.988 (this build)",
       "url": null,
+      "date": "2026-11-02",
+      "changes": [
+        "GS's own pop-ups replace the browser's alert / confirm / prompt boxes: Clear scene, Files → Clear all, the Community theme name and Chat → Prompt → Reset now ask with an in-app pop-up.",
+        "In VR the pop-up opens inside the headset view, in front of where you are looking, and you answer it with the controller ray; the menu behind it waits until you answer. Text questions bring up the VR keyboard right under the pop-up.",
+        "On desktop and phones the same pop-up shows as a centred window: Escape cancels, Enter confirms, destructive actions focus Cancel first, and buttons are large enough to tap.",
+        "Scene code that calls alert / confirm / prompt gets the in-app pop-up too, and the scene AI is told to use gsAlert / gsConfirm / gsPrompt.",
+        "Still the browser's own: the file pickers for uploads and imports (the system file chooser can't be replaced)."
+      ]
+    },
+    {
+      "id": "0.987",
+      "label": "GS 0.987",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-02",
       "changes": [
         "One active scene at a time: loading a scene from Community, a share link, a scene file, Load Saved or a merge now replaces the scene in the world instead of layering it on top, and the old objects and textures are cleaned up.",

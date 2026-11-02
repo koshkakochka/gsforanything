@@ -246,8 +246,12 @@ for (const [hostName, base] of HOSTS) {
 
   // ---------- Clear scene = blank scene + fresh chat ----------
   await send(v, 'make deltaBox please');
-  await v.evaluate(() => { window.confirm = () => true; });
   await v.evaluate(() => document.querySelector('#dchat-scenes-buttons [data-action="scenes:clear"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+  await sleep(300);
+  // Clear asks with GS's in-app confirm (gsDialog.js, 0.988), not window.confirm.
+  const clearAsk = await v.evaluate(() => window.gsDialogs?.current()?.message || '');
+  ok(`${H} Clear scene asks with the in-app confirm (says chat history goes too)`, /chat history/.test(clearAsk) && !/stay in the list/.test(clearAsk), clearAsk);
+  await v.evaluate(() => document.querySelector('#gs-dialog [data-gs-dialog=ok]')?.click());
   await sleep(600);
   o = await objs(v, ['fileTorus', 'deltaBox']); c = await chat(v); s = await state(v);
   ok(`${H} Clear scene empties the world, chat and card`, !o.fileTorus && !o.deltaBox && c.length === 1 && /Empty scene/.test(s.card) && !s.code.trim(), JSON.stringify({ o, c: c.length, card: s.card }));
