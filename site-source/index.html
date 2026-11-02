@@ -161,6 +161,8 @@
 			font-size: 11px !important;
 		}
 		#gs-dock #XRButton[data-xr-state="unavailable"]::before { display: none; }
+		/* Cardboard VR offered (no WebXR): the "not supported" pill adds nothing. */
+		#gs-dock:has(> #cardboard-btn:not([hidden])) #XRButton[data-xr-state="unavailable"] { display: none !important; }
 		/* A narrow window (desktop min width, small tablets): the top bar gets
 		   its own row at the top of the window instead of overflowing. */
 		#desktop-chat-header { container: gs-chat-header / inline-size; flex-wrap: wrap; row-gap: 6px; }
@@ -2352,6 +2354,15 @@
 		   its own row under it. Landscape (wider window) keeps one row. */
 		@container gs-chat-header (max-width: 380px) {
 			html.gs-phone #gs-dock { order: 3; flex: 1 0 100%; margin: 0; justify-content: center; flex-wrap: wrap; }
+		}
+		/* Landscape phones (one row): compact labels so the header keeps a
+		   bare stretch to drag the window by between Hide UI and the bar. */
+		@container gs-chat-header (min-width: 381px) {
+			html.gs-phone #gs-dock { gap: 4px; }
+			html.gs-phone #gs-dock #XRButton,
+			html.gs-phone #gs-dock .gs-dock-btn:not(#gs-exit-vr-btn) { padding: 0 10px !important; font-size: 12px !important; gap: 3px !important; }
+			html.gs-phone #gs-dock #XRButton::before,
+			html.gs-phone #gs-dock .gs-dock-btn:not(#gs-exit-vr-btn)::before { display: none; }
 		}
 		html.gs-phone #gs-dock #XRButton[data-xr-state="unavailable"] { display: none !important; }
 
