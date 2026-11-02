@@ -2278,6 +2278,19 @@
 		/* Embed view (/embed/:id, embedExport.js): display-only plus, unless
 		   ?vr=0, the Enter VR button alone in the dock. */
 		body.display-only.gs-embed-vr #gs-dock { display: flex !important; }
+		body.gs-embed #gs-dock {
+			position: fixed;
+			left: 50%;
+			transform: translateX(-50%);
+			bottom: max(10px, calc(env(safe-area-inset-bottom, 0px) + 6px));
+			z-index: 998;
+			margin: 0;
+			padding: 5px;
+			border-radius: 14px;
+			background: rgba(22, 22, 32, 0.72);
+			border: 1px solid rgba(255, 255, 255, 0.10);
+			box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+		}
 		body.gs-embed #gs-dock > :not(#XRButton),
 		body.gs-embed #gs-dock a#XRButton,
 		body.gs-embed #gs-version-modal { display: none !important; }

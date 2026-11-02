@@ -3783,6 +3783,9 @@ async function bootEmbedScene(route) {
 	document.body.classList.toggle('gs-embed-vr', !!embedRoute.vr);
 	if (embedRoute.vr && xrEntryButton) {
 		xrEntryButton.style.display = '';
+		// Since 0.990 the dock lives in the editor window's top bar, which an
+		// embed hides; float it on the page instead (CSS: body.gs-embed #gs-dock).
+		if (gsDock && gsDock.parentElement !== document.body) document.body.appendChild(gsDock);
 		// Only an Enter VR button: no "VR not supported" notice on a page that isn't ours.
 		const xr = navigator.xr;
 		Promise.resolve(xr ? xr.isSessionSupported('immersive-vr') : false).catch(() => false)
