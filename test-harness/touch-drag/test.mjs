@@ -44,11 +44,17 @@ const vbox = p => p.evaluate(() => { const vv = visualViewport; return { w: vv.w
 const headerGrab = p => p.evaluate(() => {
   const h = document.getElementById('desktop-chat-header'); const r = h.getBoundingClientRect();
   const btns = document.getElementById('desktop-chat-header-buttons').getBoundingClientRect();
-  const y = Math.round(r.top + r.height / 2);
-  for (let x = Math.round(btns.left - 12); x > r.left + 4; x -= 8) {
+  // The top bar (#gs-dock: Enter VR + version) sits in the header; it is
+  // controls, not a drag handle, so grab the header's own row (title row).
+  const y = Math.round(Math.min(r.top + r.height / 2, btns.top + btns.height / 2));
+  // Middle of the widest stretch of bare header on that row.
+  let best = null, run = null;
+  for (let x = Math.round(r.left + 8); x <= r.right - 8; x += 4) {
     const e = document.elementFromPoint(x, y);
-    if (e && h.contains(e) && !e.closest('#desktop-chat-header-buttons')) return { x, y, h: r.height };
+    const free = e && h.contains(e) && !e.closest('#desktop-chat-header-buttons, #gs-dock');
+    if (free) { run = run || { a: x, b: x }; run.b = x; if (!best || run.b - run.a > best.b - best.a) best = { ...run }; } else run = null;
   }
+  if (best) return { x: Math.round((best.a + best.b) / 2), y, h: r.height };
   return { x: Math.round(r.left + 60), y, h: r.height, covered: true };
 });
 
