@@ -21,6 +21,7 @@ import { initSceneExport } from './exporter.js';
 import { createTwinSticks } from './twinSticks.js';
 import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, ORBIT_TARGET, isTextEntry } from './cameraControls.js';
 import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
+import { createSceneFit, DOME_MARGIN, FAR_MARGIN } from './sceneFit.js';
 // p5.js sketch import (paste / file / zip / URL -> panel in the scene). Self-contained;
 // it only uses the window.gs* hooks set up next to gsCreateP5Surface below.
 import './p5Import.js';
@@ -4949,8 +4950,40 @@ const CAMERA_CONTROL_STORAGE_KEY = 'gs.cameraControlMode';
 // Near stays RENDER_NEAR everywhere.
 // Scene code may still set camera.far / camera.near itself (e.g. a huge
 // landscape). The new value then becomes the shared base for desktop and VR.
+//
+// On top of that the far plane always reaches the whole scene (sceneFit.js):
+// far = max(the value above, distance from the camera to the far side of all
+// scene content and every sky / HDRI dome × FAR_MARGIN), so nothing is clipped
+// by render distance. The fit value moves in ~9% steps so a moving headset does
+// not call XRSession.updateRenderState every frame (three.js copies
+// camera.near/far into depthNear/depthFar whenever they change). Very large
+// scenes raise near a little (far / 100000, at most 0.5 m) to keep depth
+// precision; scenes under 10 km keep near 0.1.
 let renderFarBase = RENDER_FAR;
 let renderFarApplied = RENDER_FAR;
+let renderNearBase = RENDER_NEAR;
+let renderNearApplied = RENDER_NEAR;
+const RENDER_NEAR_MAX = 0.5;
+const RENDER_DEPTH_RATIO = 100000;
+const _fitViewer = new THREE.Vector3();
+const sceneFit = createSceneFit({
+	scene,
+	getRoots: () => userContentRoots(),
+	exclude: (obj) => obj === arPlacementMarker || systemObjectIds.has(obj.uuid) || menuPriorityRoots.includes(obj),
+	extraDomes: () => (vrSkybox ? [vrSkybox] : [])
+});
+/** Viewer position for the fit: the headset in VR, else the windowed camera. */
+function sceneFitViewer() {
+	if (renderer.xr.isPresenting) renderer.xr.getCamera().getWorldPosition(_fitViewer);
+	else camera.getWorldPosition(_fitViewer);
+	return _fitViewer;
+}
+function quantizeFar(d) {
+	return d > 0 ? Math.pow(2, Math.ceil(Math.log2(d) * 8) / 8) : 0;
+}
+function sceneFitFar() {
+	return quantizeFar(sceneFit.requiredFar(sceneFitViewer()));
+}
 const _renderEye = new THREE.Vector3();
 const _renderCamPos = new THREE.Vector3();
 function desktopRenderFarOffset() {
@@ -4963,19 +4996,43 @@ function desktopRenderFarOffset() {
 }
 function syncRenderDistance() {
 	if (camera.far !== renderFarApplied) renderFarBase = camera.far; // changed by scene code
-	const far = renderFarBase + desktopRenderFarOffset();
-	if (far !== camera.far) {
+	if (camera.near !== renderNearApplied) renderNearBase = camera.near;
+	const far = Math.max(renderFarBase + desktopRenderFarOffset(), sceneFitFar());
+	const near = Math.max(renderNearBase, Math.min(RENDER_NEAR_MAX, far / RENDER_DEPTH_RATIO));
+	if (far !== camera.far || near !== camera.near) {
 		camera.far = far;
+		camera.near = near;
 		camera.updateProjectionMatrix();
 	}
 	renderFarApplied = far;
+	renderNearApplied = near;
 }
+/**
+ * Fit sky / HDRI domes and the render distance to the scene now (it also runs
+ * by itself a few times a second). Scene code calls this after building a
+ * scene; returns the content bounds and the fitted domes.
+ */
+function fitSceneNow() {
+	const info = sceneFit.update(sceneFitViewer());
+	sceneFit.fogFarFor(_fitViewer);
+	syncRenderDistance();
+	return { ...info, far: camera.far, near: camera.near };
+}
+window.gsFitScene = fitSceneNow;
+window.gsSceneFit = {
+	fit: fitSceneNow,
+	info: () => ({ ...sceneFit.info(), far: camera.far, near: camera.near, requiredFar: sceneFit.requiredFar(sceneFitViewer()) }),
+	domeMargin: DOME_MARGIN,
+	farMargin: FAR_MARGIN
+};
 window.gsRenderDistance = {
 	get near() { return camera.near; },
 	/** Far distance from the viewer in VR (and the desktop base). */
 	get far() { return renderFarBase; },
 	/** Far plane the windowed camera uses right now (base + offset from the VR eye). */
 	get desktopFar() { return renderFarBase + desktopRenderFarOffset(); },
+	/** Far distance that reaches all scene content and domes from the viewer (sceneFit.js). */
+	get sceneFar() { return sceneFitFar(); },
 	defaults: { near: RENDER_NEAR, far: RENDER_FAR }
 };
 
@@ -8082,7 +8139,11 @@ renderer.setAnimationLoop((time) => {
 	// frame (and any material swapped onto a panel) still render on layer 1.
 	applyMenuLayerPriority();
 
-	// Match the VR render distance (see syncRenderDistance) before any render.
+	// Domes and fog follow the scene bounds (sceneFit.js; ~2.5 times a second),
+	// then match the VR render distance and reach the whole scene (see
+	// syncRenderDistance) before any render.
+	sceneFit.tick(time, sceneFitViewer());
+	sceneFit.fogFarFor(sceneFitViewer());
 	syncRenderDistance();
 
 	// An HDRI with "Use as background" on stays the background (see keepHdriBackground).

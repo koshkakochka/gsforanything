@@ -23,6 +23,7 @@
           "site-source/cameraControls.js",
           "site-source/chatPrompt.js",
           "site-source/originGizmo.js",
+          "site-source/sceneFit.js",
           "site-source/threejsAddons/**",
           "site-source/vendor_modules/**"
         ],
