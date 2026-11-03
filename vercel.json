@@ -28,6 +28,7 @@
           "site-source/sceneFit.js",
           "site-source/gsDialog.js",
           "site-source/photoCapture.js",
+          "site-source/passthroughTexture.js",
           "site-source/threejsAddons/**",
           "site-source/vendor_modules/**"
         ],

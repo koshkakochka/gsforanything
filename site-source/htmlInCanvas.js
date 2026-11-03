@@ -417,8 +417,13 @@ function paintNode(ctx, el, ox, oy, clip) {
 		}
 		drawFormValue(ctx, el, style, ox, oy);
 		// Canvas widgets in the menu (the Env tab's origin gizmo) are copied as pixels.
+		// object-fit: contain is honoured (the 📷 preview canvas, sized to the camera).
 		if (el instanceof HTMLCanvasElement && el.width > 0 && el.height > 0 && box.width > 0 && box.height > 0) {
-			ctx.drawImage(el, box.left - ox, box.top - oy, box.width, box.height);
+			if (style.objectFit === 'contain') {
+				const k = Math.min(box.width / el.width, box.height / el.height);
+				const w = el.width * k, h = el.height * k;
+				ctx.drawImage(el, box.left - ox + (box.width - w) / 2, box.top - oy + (box.height - h) / 2, w, h);
+			} else ctx.drawImage(el, box.left - ox, box.top - oy, box.width, box.height);
 		}
 		// A playing <video> (the 📷 camera preview) is copied as one frame,
 		// object-fit: contain. In VR vrWindows.js also draws it live on top.

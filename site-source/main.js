@@ -26,6 +26,7 @@ import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, O
 import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
 import { createSceneFit, DOME_MARGIN, FAR_MARGIN, isDomeObject } from './sceneFit.js';
 import { createPhotoCapture, askCameraBeforeXr } from './photoCapture.js';
+import * as gsCamPipeline from './passthroughTexture.js';
 // p5.js sketch import (paste / file / zip / URL -> panel in the scene). Self-contained;
 // it only uses the window.gs* hooks set up next to gsCreateP5Surface below.
 import './p5Import.js';
@@ -2753,6 +2754,8 @@ function clearUserObjects() {
 		disposeRecursive(child);
 	}
 	window._vrAnimations = [];
+	// Scene code's gsPassthroughTexture() no longer holds the camera (the chat preview may).
+	gsCamPipeline.resetScene();
 	const overlay = document.getElementById('overlay-root');
 	for (let i = overlay.children.length - 1; i >= 0; i--) {
 		const child = overlay.children[i];
@@ -4167,6 +4170,7 @@ function setupXRControllers() {
 	for (let i = 0; i < 2; i++) {
 		const controller = renderer.xr.getController(i);
 		controller.addEventListener('selectstart', onXRSelectStart);
+		controller.addEventListener('selectstart', gsCamPipeline.kick); // retry a refused camera video play() on a trigger pull
 		controller.addEventListener('selectend', onXRSelectEnd);
 		controller.addEventListener('connected', (e) => { controller.userData.handedness = e.data && e.data.handedness; });
 		controller.addEventListener('disconnected', () => { controller.userData.handedness = null; });
@@ -6956,6 +6960,10 @@ photoCapture = createPhotoCapture({
 	onLayout: () => { if (vrMainWindow) vrMainWindow.markDirty(); }
 });
 window.gsPhotoCapture = photoCapture;
+// Passthrough / camera feed as a THREE.VideoTexture for scene code (shares the
+// chat preview's hidden <video> and stream; passthroughTexture.js).
+window.gsPassthroughTexture = gsCamPipeline.gsPassthroughTexture;
+window.gsCamPipeline = gsCamPipeline; // tests / debugging
 // A short chat window grows (within the viewport) while the camera is open, so
 // the preview fits between the messages and the buttons; it goes back on close.
 (() => {
@@ -8903,6 +8911,9 @@ renderer.setAnimationLoop((time) => {
 	// window.requestAnimationFrame, which is paused during immersive sessions) so
 	// transcription segmentation works in MR as well as the windowed view.
 	pumpVad();
+	// Camera frames -> chat preview canvas / gsPassthroughTexture (here, not rAF
+	// or requestVideoFrameCallback, which stop inside an immersive session).
+	gsCamPipeline.tick();
 
 
 	// Billboard effect: panels face the camera while staying upright

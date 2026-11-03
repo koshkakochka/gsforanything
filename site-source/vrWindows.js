@@ -166,8 +166,8 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			}
 		};
 
-		// Live media (the 📷 camera preview): a <video> inside the window is
-		// shown as its own VideoTexture quad on top of the painted window, at
+		// Live media (the 📷 camera preview): a <video> or preview <canvas> inside
+		// the window is shown as its own Video/CanvasTexture quad on top of the painted window, at
 		// the element's box, so the picture moves at camera frame rate while
 		// the rest of the window keeps its dirty-driven repaints. The quad is
 		// a child of the window mesh (not raycast: hits use the window mesh
@@ -206,10 +206,11 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			const src = source.getBoundingClientRect();
 			let r = el.isConnected && source.contains(el) && !el.closest('[hidden]') ? el.getBoundingClientRect() : null;
 			if (r && (r.width < 2 || r.height < 2 || src.width < 2 || src.height < 2)) r = null;
-			if (r && el instanceof HTMLVideoElement) {
-				// object-fit: contain
-				const vw = el.videoWidth, vh = el.videoHeight;
-				if (!vw || !vh || el.readyState < 2) r = null;
+			const isVideo = el instanceof HTMLVideoElement;
+			if (r && (isVideo || el instanceof HTMLCanvasElement)) {
+				// object-fit: contain (a preview canvas is sized to the video it shows)
+				const vw = isVideo ? el.videoWidth : el.width, vh = isVideo ? el.videoHeight : el.height;
+				if (!vw || !vh || (isVideo ? el.readyState < 2 : !el._gsFrame)) r = null;
 				else {
 					const k = Math.min(r.width / vw, r.height / vh);
 					const w = vw * k, h = vh * k;
@@ -223,6 +224,10 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 				if (right - left < 2 || bottom - top < 2) r = null;
 			}
 			if (!r) { quad.visible = false; return false; }
+			// A canvas preview (photoCapture.js draws the hidden camera video into
+			// it from the render loop): upload each new frame. Not tied to the
+			// page's rAF / requestVideoFrameCallback, which stop inside XR.
+			if (!isVideo && el._gsFrame !== live.frame) { live.frame = el._gsFrame; live.texture.needsUpdate = true; }
 			const cx = r.left + r.width / 2 - src.left, cy = r.top + r.height / 2 - src.top;
 			quad.position.set(cx / src.width - 0.5, 0.5 - cy / src.height, 0.002);
 			const mirror = el.classList && el.classList.contains('gs-cam-mirror') ? -1 : 1;
