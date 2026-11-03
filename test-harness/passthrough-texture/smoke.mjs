@@ -47,9 +47,8 @@ check('[2D] preview canvas is drawn from the video', st.canvasFrame > 5, st.canv
 const l2 = await lit('#gs-camera-panel .gs-cam-canvas');
 check('[2D] preview canvas has non-black pixels', l2 > 0.2, l2);
 check('[2D] status line reads camera / size / playing', /^camera: Quest passthrough \(left\) 1280×960 · playing/.test(st.cam.status), st.cam.status);
-await p.evaluate(() => gsPhotoCapture.showDetails(true)); await sleep(500);
-const diag = await p.evaluate(() => document.querySelector('#gs-camera-panel .gs-cam-diag-text').textContent);
-check('[2D] Details: Quest Browser version, permission state, camera list, env request result', /Browser: Quest Browser \d+/.test(diag) && /permissions\.query\(camera\): \w+/.test(diag) && /camera 1, facing back/.test(diag) && /exact: 'environment'/.test(diag), diag);
+const diag = await p.evaluate(() => gsPhotoCapture.diagnostics());
+check('[2D] diagnostics (🛠 Technical): Quest Browser version, permission state, camera list, env request result', /Browser: Quest Browser \d+/.test(diag) && /permissions\.query\(camera\): \w+/.test(diag) && /camera 1, facing back/.test(diag) && /exact: 'environment'/.test(diag), diag);
 await p.screenshot({ path: `${SHOT_DIR}/01-2d-preview-status-details.png` });
 
 // 2. gsPassthroughTexture shares the stream / video
@@ -110,10 +109,10 @@ check('[page] no page errors / native dialogs', errors.length === 0, errors.slic
 	await sleep(1200);
 	await q.click('#desktop-camera-button');
 	await q.evaluate(() => gsPhotoCapture.ready); await sleep(1500);
-	const r = await q.evaluate(() => ({ s: gsPhotoCapture.state(), diagShown: !document.querySelector('#gs-camera-panel .gs-cam-diag').hidden, diag: document.querySelector('#gs-camera-panel .gs-cam-diag-text').textContent }));
-	check('[avatar only] hint points to Quest Settings › Privacy & safety › Browser › Headset cameras', /Privacy & safety › Browser › Headset cameras/.test(r.s.hint), r.s.hint);
-	check('[avatar only] details open on their own with the exact passthrough request error', r.diagShown && /OverconstrainedError: Cannot satisfy constraints/.test(r.diag) && /Cameras listed \(1\)/.test(r.diag), r.diag);
-	await q.screenshot({ path: `${SHOT_DIR}/04-avatar-only-hint-details.png` });
+	const r = await q.evaluate(async () => ({ s: gsPhotoCapture.state(), diag: await gsPhotoCapture.diagnostics() }));
+	check('[avatar only] short hint points to Technical mode (no ADB talk off)', /turn on Technical mode/.test(r.s.hint), r.s.hint);
+	check('[avatar only] diagnostics carry the exact passthrough request error', /OverconstrainedError: Cannot satisfy constraints/.test(r.diag) && /Cameras listed \(1\)/.test(r.diag), r.diag);
+	await q.screenshot({ path: `${SHOT_DIR}/04-avatar-only-hint.png` });
 	await q.close();
 }
 await b.close();

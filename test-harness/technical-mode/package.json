@@ -1,0 +1,3 @@
+{ "name": "gs-technical-mode-smoke", "private": true, "type": "module",
+  "description": "Quick headless smoke check: Technical mode toggle persists, 🛠 Technical tab in the 2D + VR menu, Quest passthrough (ADB) item Copy + Check again, off-mode camera hint.",
+  "dependencies": { "iwer": "^2.7.0", "puppeteer-core": "24.43.1" } }

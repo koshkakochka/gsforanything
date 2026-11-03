@@ -24,6 +24,7 @@
  */
 import * as THREE from 'three';
 import { gsAlert } from './gsDialog.js';
+import { isTechnicalMode } from './technicalMode.js';
 import { QUEST_PASSTHROUGH_HELP, isQuestBrowser, isPassthroughCamera, cameraLabel } from './photoCapture.js';
 
 const STORE_KEY = 'gs.cameraDevice', STORE_KEY_XR = 'gs.cameraDeviceXr';
@@ -195,7 +196,7 @@ function showHint(err) {
 	if (hintShown) return;
 	hintShown = true;
 	const blocked = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
-	if (isQuestBrowser() || blocked) gsAlert(isQuestBrowser() ? QUEST_PASSTHROUGH_HELP : 'Camera access is blocked. Allow the camera for this site in your browser’s site settings (the icon next to the address), then try again.', { title: isQuestBrowser() ? 'Use the Quest passthrough camera' : 'Camera blocked' });
+	if (isQuestBrowser() || blocked) gsAlert(isQuestBrowser() ? QUEST_PASSTHROUGH_HELP + (isTechnicalMode() ? '\n\nStill only the avatar camera? See 🛠 Technical › Quest passthrough camera (ADB).' : '') : 'Camera access is blocked. Allow the camera for this site in your browser’s site settings (the icon next to the address), then try again.', { title: isQuestBrowser() ? 'Use the Quest passthrough camera' : 'Camera blocked' });
 }
 
 /**
