@@ -1,9 +1,20 @@
 {
   "versions": [
     {
-      "id": "0.994",
-      "label": "GS 0.994 (this build)",
+      "id": "0.995",
+      "label": "GS 0.995 (this build)",
       "url": null,
+      "date": "2026-11-02",
+      "changes": [
+        "New Technical mode (Controls tab › Technical mode, off by default, remembered in this browser): for advanced setup such as permissions outside normal browser use and developer tools. It asks before turning on and works from the headset menu too.",
+        "With Technical mode on, a new 🛠 Technical tab lists advanced items. The first is “Quest passthrough camera (ADB)”: the steps and the adb command (with a Copy button) that let Quest Browser use the passthrough cameras when it only offers the avatar camera and the request fails with “OverconstrainedError”, a Check again button, and the camera details.",
+        "The 📷 camera details and help moved into that item. With Technical mode off the camera works as before with whatever cameras are listed, and on a Quest with only the avatar camera it just says: Passthrough camera needs extra setup: turn on Technical mode in Settings."
+      ]
+    },
+    {
+      "id": "0.994",
+      "label": "GS 0.994",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-02",
       "changes": [
         "The 📷 camera preview in the chat window was rebuilt: the camera now plays in one hidden video and GS draws every frame into the preview itself, in the normal window and inside VR / AR (where the old preview could stay blank).",
