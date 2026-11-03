@@ -141,9 +141,10 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 		</div>
 		<div class="gs-cam-statusrow"><span class="gs-cam-status" aria-live="off">camera: off</span></div>
 		<div class="gs-cam-hint" role="note" hidden>
-			<span class="gs-cam-hint-text"></span>
-			<button type="button" class="gs-cam-hint-help" hidden>Open Technical</button>
-			<button type="button" class="gs-cam-hint-retry" hidden>Try again</button>
+			<span class="gs-cam-hint-text gs-technical-off">Passthrough camera needs extra setup: turn on Technical mode in the 🛠 Technical tab.</span>
+			<span class="gs-cam-hint-tech" data-gs-technical>Only the avatar camera is available. See 🛠 Technical › Quest passthrough camera (ADB).</span>
+			<button type="button" class="gs-cam-hint-help" data-gs-technical>Open Technical</button>
+			<button type="button" class="gs-cam-hint-retry" data-gs-technical>Try again</button>
 		</div>
 		<div class="gs-cam-controls">
 			<select class="gs-cam-select" aria-label="Camera" title="Choose a camera"></select>
@@ -247,16 +248,8 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 	/** Quest with only the avatar camera listed: a short line (Technical mode: a pointer to the fix). */
 	function updateHint() {
 		const show = open && quest() && !hasPassthrough() && (!!stream || !!panel.dataset.error);
-		const tech = isTechnicalMode();
 		hintEl.hidden = !show;
-		hintHelp.hidden = !tech;
-		hintRetry.hidden = !tech;
 		panel.dataset.passthroughMissing = String(show);
-		if (show) {
-			hintText.textContent = tech
-				? 'Only the avatar camera is available. See 🛠 Technical › Quest passthrough camera (ADB).'
-				: 'Passthrough camera needs extra setup: turn on Technical mode in Settings (🎮 Controls › Technical mode).';
-		}
 		onLayout();
 	}
 	onTechnicalModeChange(() => updateHint());
@@ -503,7 +496,7 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 				label: track ? track.label : '',
 				devices: devices.map((d, i) => ({ id: d.deviceId, label: cameraLabel(d, i), raw: d.label, passthrough: isPassthroughCamera(d) })),
 				passthroughProbe: ptProbe, passthroughProbeMessage: ptProbeMsg, lastError: lastErr,
-				hint: hintEl.hidden ? '' : hintText.textContent,
+				hint: hintEl.hidden ? '' : (isTechnicalMode() ? panel.querySelector('.gs-cam-hint-tech').textContent : hintText.textContent),
 				message: msgEl.hidden ? '' : msgEl.textContent,
 				error: panel.dataset.error || '',
 				tracksLive: stream ? stream.getTracks().filter((t) => t.readyState === 'live').length : 0,

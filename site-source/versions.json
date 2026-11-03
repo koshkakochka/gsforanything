@@ -1,9 +1,20 @@
 {
   "versions": [
     {
-      "id": "0.995",
-      "label": "GS 0.995 (this build)",
+      "id": "0.996",
+      "label": "GS 0.996 (this build)",
       "url": null,
+      "date": "2026-11-02",
+      "changes": [
+        "Technical mode now has a checkbox at the top of the 🛠 Technical tab, which is always in the menu (also in the headset). It replaces the Off/On button in Controls, still asks before turning on, and keeps your earlier choice.",
+        "Technical features are hidden until Technical mode is checked, then show with a green outline so you can tell them apart, in the normal window and in VR / AR.",
+        "The Technical mode checkbox has a green border, so it is easy to see on the dark menu even when unchecked."
+      ]
+    },
+    {
+      "id": "0.995",
+      "label": "GS 0.995",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-02",
       "changes": [
         "New Technical mode (Controls tab › Technical mode, off by default, remembered in this browser): for advanced setup such as permissions outside normal browser use and developer tools. It asks before turning on and works from the headset menu too.",

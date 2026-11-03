@@ -1,10 +1,17 @@
 /**
  * Technical mode: an opt-in setting (off by default, saved per browser) for
  * advanced setup — permissions outside normal browser operation, developer
- * tools, items outside ordinary tasks. Turning it on (Controls tab ›
- * Technical mode, also in the VR / AR menu window, which paints the same DOM)
- * asks once with a gsDialog and shows the 🛠 Technical tab: a list of
- * registered advanced items.
+ * tools, items outside ordinary tasks. The 🛠 Technical tab is always in the
+ * menu (2D and the VR / AR menu window, which paints the same DOM); at its top
+ * a "Technical mode" checkbox turns the mode on (asks once with a gsDialog).
+ *
+ * One marker for every technical feature: the data-gs-technical attribute
+ * (TECHNICAL_ATTR). Marked elements are hidden unless Technical mode is on
+ * (html.gs-technical); then they get the green accent (--gs-technical-accent:
+ * outline + tint) so they stand out in the 2D and VR menus. Registered items
+ * get the marker automatically; put it on any other technical UI by hand,
+ * e.g. <button data-gs-technical>…</button>. The opposite, shown only while
+ * the mode is off, is the .gs-technical-off class.
  *
  * Adding an item (any module, any time; order sorts the list):
  *
@@ -23,12 +30,13 @@
  */
 import { gsConfirm } from './gsDialog.js';
 
-const KEY = 'gs.technicalMode';
+const KEY = 'gs.technicalMode'; // same key as 0.995: users keep their choice
+export const TECHNICAL_ATTR = 'data-gs-technical';
 export const TECHNICAL_NOTE = 'Technical mode is for advanced setup, such as permissions outside normal browser operation and developer tools (for example ADB on Meta Quest).';
 
 const items = [];       // { id, title, order, render, el, api }
 const listeners = new Set();
-let ui = null;          // { tab, panel, list, toggle, onLayout }
+let ui = null;          // { tab, panel, list, checkbox, onLayout }
 
 const store = {
 	get() { try { return localStorage.getItem(KEY) === '1'; } catch { return false; } },
@@ -43,11 +51,8 @@ function apply() {
 	const on = isTechnicalMode();
 	document.documentElement.classList.toggle('gs-technical', on);
 	if (ui) {
-		ui.tab.hidden = !on;
-		ui.toggle.setAttribute('aria-checked', String(on));
-		ui.toggle.dataset.on = String(on);
-		ui.toggle.textContent = on ? 'Technical mode: On' : 'Technical mode: Off';
-		if (!on && ui.tab.classList.contains('active')) document.querySelector('.dchat-tab[data-tab="chat"]')?.click();
+		ui.checkbox.checked = on;
+		if (on) refreshTechnicalItems();
 		ui.onLayout();
 	}
 	for (const fn of listeners) { try { fn(on); } catch (e) { console.error(e); } }
@@ -58,8 +63,8 @@ export async function setTechnicalMode(on, { confirm = true } = {}) {
 	on = !!on;
 	if (on === isTechnicalMode()) return on;
 	if (on && confirm) {
-		const ok = await gsConfirm(`${TECHNICAL_NOTE}\n\nIt adds a 🛠 Technical tab to the menu. You can turn it off again in Controls.`, { title: 'Turn on Technical mode?', okLabel: 'Turn on', cancelLabel: 'Cancel' });
-		if (!ok) return false;
+		const ok = await gsConfirm(`${TECHNICAL_NOTE}\n\nTechnical features show up with a green outline. You can turn it off again with the checkbox in the 🛠 Technical tab.`, { title: 'Turn on Technical mode?', okLabel: 'Turn on', cancelLabel: 'Cancel' });
+		if (!ok) { apply(); return false; }
 	}
 	store.set(on);
 	apply();
@@ -70,6 +75,7 @@ function mountItem(it) {
 	if (!ui || it.el) return;
 	const el = document.createElement('section');
 	el.className = 'gs-tech-item';
+	el.setAttribute(TECHNICAL_ATTR, '');
 	el.dataset.techItem = it.id;
 	el.innerHTML = `<div class="dchat-section-label gs-tech-item-title"></div><div class="gs-tech-item-body"></div>`;
 	el.querySelector('.gs-tech-item-title').textContent = it.title;
@@ -96,8 +102,8 @@ export function refreshTechnicalItems() {
 
 /** Open the 🛠 Technical tab (turning the mode on first if needed, with the confirm). */
 export async function openTechnicalTab(itemId = null) {
-	if (!isTechnicalMode() && !(await setTechnicalMode(true))) return false;
 	ui?.tab.click();
+	if (!isTechnicalMode() && !(await setTechnicalMode(true))) return false;
 	if (itemId) items.find((o) => o.id === itemId)?.el?.scrollIntoView({ block: 'nearest' });
 	return true;
 }
@@ -113,12 +119,17 @@ export async function copyText(text, selectEl = null) {
 	return false;
 }
 
-/** main.js: wire the tab button, its panel and the Controls toggle. */
-export function initTechnicalMode({ tab, panel, toggle, onLayout = () => {} }) {
+/** main.js: wire the tab button, its panel and the "Technical mode" checkbox at the top of it. */
+export function initTechnicalMode({ tab, panel, checkbox, onLayout = () => {} }) {
 	const list = panel.querySelector('.gs-tech-list') || panel;
-	ui = { tab, panel, list, toggle, onLayout };
-	toggle.setAttribute('role', 'switch');
-	toggle.addEventListener('click', (e) => { e.preventDefault(); setTechnicalMode(!isTechnicalMode()); });
+	ui = { tab, panel, list, checkbox, onLayout };
+	// Mouse, keyboard and the VR ray (vrWindows flips .checked + fires change)
+	// all land here; enabling goes through the confirm, which sets it back if cancelled.
+	checkbox.addEventListener('change', () => {
+		const want = checkbox.checked;
+		checkbox.checked = isTechnicalMode();
+		setTechnicalMode(want);
+	});
 	tab.addEventListener('click', () => { refreshTechnicalItems(); onLayout(); });
 	for (const it of items) mountItem(it);
 	apply();

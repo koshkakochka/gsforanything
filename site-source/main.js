@@ -6965,14 +6965,14 @@ window.gsPhotoCapture = photoCapture;
 // chat preview's hidden <video> and stream; passthroughTexture.js).
 window.gsPassthroughTexture = gsCamPipeline.gsPassthroughTexture;
 window.gsCamPipeline = gsCamPipeline; // tests / debugging
-// 🛠 Technical mode (technicalMode.js): toggle in Controls, tab of advanced
-// items. Items register with registerTechnicalItem(); the first is the Quest
+// 🛠 Technical mode (technicalMode.js): checkbox at the top of the always-
+// visible 🛠 Technical tab; technical UI is marked data-gs-technical. Items register with registerTechnicalItem(); the first is the Quest
 // passthrough camera ADB fix.
 registerQuestPassthroughItem(photoCapture);
 gsTechnicalMode.initTechnicalMode({
 	tab: document.getElementById('dchat-tab-technical'),
 	panel: document.getElementById('dchat-panel-technical'),
-	toggle: document.getElementById('dchat-technical-toggle'),
+	checkbox: document.getElementById('dchat-technical-checkbox'),
 	onLayout: () => { if (vrMainWindow) vrMainWindow.markDirty(); }
 });
 window.gsTechnicalMode = gsTechnicalMode;
