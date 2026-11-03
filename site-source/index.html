@@ -2525,6 +2525,19 @@
 		#gs-camera-panel .gs-cam-msg[data-kind="error"] { background: rgba(153, 27, 27, 0.92); top: 50%; bottom: auto; transform: translateY(-50%); }
 		#gs-camera-panel .gs-cam-msg[data-kind="ok"] { background: rgba(21, 94, 60, 0.9); }
 		#gs-camera-panel .gs-cam-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+		/* Quest: only the avatar camera listed → how to allow Headset cameras. */
+		#gs-camera-panel .gs-cam-hint {
+			display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; flex-shrink: 0;
+			padding: 6px 8px; border-radius: 9px; font-size: 12px; line-height: 1.35; color: #fde68a;
+			background: rgba(120, 53, 15, 0.55); border: 1px solid rgba(253, 230, 138, 0.35);
+		}
+		#gs-camera-panel .gs-cam-hint[hidden] { display: none; }
+		#gs-camera-panel .gs-cam-hint-text { flex: 1 1 220px; min-width: 0; }
+		#gs-camera-panel .gs-cam-hint button {
+			border: none; border-radius: 8px; color: #fff; cursor: pointer; font-size: 12px;
+			padding: 6px 10px; background: #4f46e5; flex-shrink: 0;
+		}
+		#gs-camera-panel .gs-cam-hint button.gs-cam-hint-retry { background: #3a3c4e; }
 		#gs-camera-panel .gs-cam-flash.on { animation: gs-cam-flash 0.35s ease-out; }
 		@keyframes gs-cam-flash { from { opacity: 0.85; } to { opacity: 0; } }
 		#gs-camera-panel .gs-cam-controls { display: flex; gap: 8px; align-items: center; min-width: 0; }

@@ -9,23 +9,47 @@
  * same path an uploaded photo takes (addAttachments in main.js), so a captured
  * photo is a normal 🖼️ attachment chip on the next message.
  *
- * Meta Quest 3 (Quest Browser 40.1+, Horizon OS v74+): the headset's
- * passthrough cameras are ordinary getUserMedia cameras ("camera 2 1, facing
- * back" = left, "camera 2 2, facing back" = right; "facing front" is the
- * avatar / virtual camera, which never sees the room). Browser needs the
- * "Headset cameras" permission. Inside a VR / AR session the picker prefers a
- * passthrough camera, and the preview is shown on the VR menu window
- * (vrWindows.js draws the <video> on top of the painted window every frame).
+ * Meta Quest 3 / 3S (Quest Browser 40.1+, "Support for passthrough camera"):
+ * the headset's passthrough cameras are ordinary getUserMedia cameras
+ * ("camera 2 1, facing back" / "camera 1, facing back" = left, "… 2, facing
+ * back" = right; "facing front" is the avatar / virtual camera, which never
+ * sees the room). They are only listed once the site has the "Headset cameras"
+ * permission; before that enumerateDevices() shows just the avatar camera and
+ * facingMode {exact: 'environment'} fails with OverconstrainedError. So on
+ * Quest the first request asks for {facingMode: {exact: 'environment'}} (the
+ * request that asks for Headset cameras), falls back to the avatar camera when
+ * that fails, re-lists the cameras after the grant / on devicechange (and a
+ * few times shortly after, the list can update late), switches to a
+ * passthrough camera as soon as one shows up, and otherwise shows an inline
+ * hint with a "How to turn it on" dialog (gsDialog, works in VR too).
+ * Inside a VR / AR session the picker prefers a passthrough camera, and the
+ * preview is shown on the VR menu window (vrWindows.js draws the <video> on
+ * top of the painted window every frame).
  *
  * Errors (blocked, no camera, busy) are shown inside the panel, never with a
  * native dialog. Closing the panel stops every track.
  */
+
+import { gsAlert } from './gsDialog.js';
 
 const STORE_KEY = 'gs.cameraDevice';      // last camera picked on this device (outside XR)
 const STORE_KEY_XR = 'gs.cameraDeviceXr'; // last camera picked inside a headset session
 const USED_KEY = 'gs.cameraUsed';         // set after the first photo: Enter VR asks up front
 const MAX_PHOTO_SIDE = 2048;              // longest side of a captured photo, px
 const JPEG_QUALITY = 0.9;
+const RELIST_DELAYS_MS = [400, 1200, 3000]; // Quest can list the passthrough cameras a moment after the grant
+
+/** Steps shown by "How to turn it on" (from Meta's Quest Help pages, see the PR). */
+export const QUEST_PASSTHROUGH_HELP = [
+	'Quest Browser only gives a website the passthrough cameras (the real room) after you allow its "Headset cameras" permission. Until then only the avatar (virtual) camera is listed. It needs Quest 3 or 3S and an up-to-date Browser.',
+	'',
+	'1. Exit VR / AR first (the permission prompt appears in the normal Browser window).',
+	'2. Tap 📷 again and choose Allow when Quest asks about headset cameras.',
+	'3. No prompt? Select the lock icon to the left of the address bar, set "Headset cameras" to Allow, then reload the page.',
+	'4. Still missing? Quest menu › Settings › Privacy and safety › Permissions history › Browser, and check that the headset camera permission isn\u2019t revoked.',
+	'',
+	'Only one app or website can use the headset cameras at a time, so close other tabs or apps that use them.'
+].join('\n');
 
 const store = {
 	get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -65,9 +89,9 @@ export function cameraLabel(device, index) {
 	if (isQuestBrowser() || /^camera\s*\d+(\s+\d+)?,\s*facing (back|front)$/i.test(raw)) {
 		const m = raw.match(/camera\s*(\d+)(?:\s+(\d+))?,\s*facing (back|front)/i);
 		if (m && isQuestBrowser()) {
-			if (m[3].toLowerCase() === 'front') return 'Avatar camera (virtual)';
+			if (m[3].toLowerCase() === 'front') return 'Avatar camera (virtual, no room view)';
 			const n = Number(m[2] != null ? m[2] : m[1]);
-			return n === 1 ? 'Left passthrough camera' : n === 2 ? 'Right passthrough camera' : `Passthrough camera ${n}`;
+			return n === 1 ? 'Quest passthrough (left)' : n === 2 ? 'Quest passthrough (right)' : `Quest passthrough ${n}`;
 		}
 		if (m) return m[3].toLowerCase() === 'back' ? `Back camera${index ? ' ' + (index + 1) : ''}` : `Front camera${index ? ' ' + (index + 1) : ''}`;
 	}
@@ -77,12 +101,12 @@ export function cameraLabel(device, index) {
 function errorMessage(err, { xr }) {
 	const name = err && err.name;
 	if (name === 'NotAllowedError' || name === 'SecurityError') {
-		if (isQuestBrowser() || xr) return 'Camera access is blocked. On Quest: Settings › Privacy & safety › App permissions › Headset cameras, allow Browser. Then allow the camera for this site and try again.';
+		if (isQuestBrowser() || xr) return 'Camera access is blocked. On Quest: select the lock icon left of the address bar and set Headset cameras to Allow, then reload. (Help: “How to turn it on”.)';
 		return 'Camera access is blocked. Allow the camera for this site in your browser’s site settings (the icon next to the address), then try again.';
 	}
 	if (name === 'NotFoundError' || name === 'OverconstrainedError' || name === 'DevicesNotFoundError') {
 		return xr && isQuestBrowser()
-			? 'No passthrough camera was found. It needs Quest 3 / 3S with a recent Browser and the Headset cameras permission.'
+			? 'No passthrough camera was found. It needs Quest 3 / 3S, Browser 40.1 or newer and the Headset cameras permission.'
 			: 'No camera was found on this device.';
 	}
 	if (name === 'NotReadableError' || name === 'AbortError' || name === 'TrackStartError') {
@@ -109,6 +133,11 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 			<div class="gs-cam-msg" role="status" aria-live="polite" hidden></div>
 			<div class="gs-cam-flash"></div>
 		</div>
+		<div class="gs-cam-hint" role="note" hidden>
+			<span class="gs-cam-hint-text"></span>
+			<button type="button" class="gs-cam-hint-help">How to turn it on</button>
+			<button type="button" class="gs-cam-hint-retry">Try again</button>
+		</div>
 		<div class="gs-cam-controls">
 			<select class="gs-cam-select" aria-label="Camera" title="Choose a camera"></select>
 			<button type="button" class="gs-cam-shutter" aria-label="Take photo" title="Take photo">📸 Take photo</button>
@@ -123,6 +152,10 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 	const select = panel.querySelector('.gs-cam-select');
 	const shutter = panel.querySelector('.gs-cam-shutter');
 	const closeBtn = panel.querySelector('.gs-cam-close');
+	const hintEl = panel.querySelector('.gs-cam-hint');
+	const hintText = panel.querySelector('.gs-cam-hint-text');
+	const hintHelp = panel.querySelector('.gs-cam-hint-help');
+	const hintRetry = panel.querySelector('.gs-cam-hint-retry');
 
 	let stream = null;
 	let devices = [];
@@ -131,6 +164,13 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 	let startSeq = 0;
 	let photos = 0;
 	let currentId = '';
+	let ptProbe = '';        // Quest: result of the {exact: 'environment'} request ('ok' | error name)
+	let relistTimers = [];
+	let starting_now = false; // a start() is in flight (relist must not start another)
+	const quest = () => isQuestBrowser();
+	const hasPassthrough = (list = devices) => list.some(isPassthroughCamera);
+	// The user picked a non-passthrough camera on purpose (don't switch away from it).
+	const pickedOnPurpose = () => { const id = store.get(storeKey()); return !!id && devices.some((d) => d.deviceId === id && !isPassthroughCamera(d)); };
 
 	const xr = () => { try { return !!isImmersive(); } catch { return false; } };
 	const storeKey = () => (xr() ? STORE_KEY_XR : STORE_KEY);
@@ -141,6 +181,35 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 		msgEl.dataset.kind = kind;
 		panel.dataset.state = kind === 'error' ? 'error' : (stream ? 'live' : 'idle');
 		onLayout();
+	}
+
+	/** Quest with only the avatar camera listed: explain, offer help + retry. */
+	function updateHint() {
+		const show = open && quest() && !hasPassthrough() && (!!stream || !!panel.dataset.error);
+		hintEl.hidden = !show;
+		panel.dataset.passthroughMissing = String(show);
+		if (show) {
+			hintText.textContent = xr()
+				? 'Only the avatar camera is available. To see the real room, exit VR / AR and allow Headset cameras for this site.'
+				: 'Only the avatar camera is available. Allow Headset cameras for this site to use the passthrough (real room) camera.';
+		}
+		onLayout();
+	}
+
+	function clearRelist() { for (const t of relistTimers) clearTimeout(t); relistTimers = []; }
+
+	/** List the cameras again; on Quest switch to a passthrough camera that just appeared. */
+	async function relist() {
+		const list = await listCameras();
+		const had = hasPassthrough();
+		devices = list;
+		renderSelect();
+		if (open && quest() && !had && hasPassthrough() && !isPassthroughCamera(devices.find((d) => d.deviceId === currentId)) && !pickedOnPurpose() && !starting_now) {
+			clearRelist();
+			await start(devices.filter(isPassthroughCamera)[0].deviceId);
+			return;
+		}
+		updateHint();
 	}
 
 	function stopTracks() {
@@ -169,6 +238,7 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 		});
 		if (currentId && devices.some((d) => d.deviceId === currentId)) select.value = currentId;
 		select.disabled = devices.length < 2;
+		select.dataset.passthroughCount = String(devices.filter(isPassthroughCamera).length);
 		select.hidden = devices.length === 0;
 	}
 
@@ -189,6 +259,11 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 		return '';
 	}
 
+	// Quest: ask for a world-facing camera outright. This is the request that
+	// gets the Headset cameras permission (an {ideal} facingMode quietly gives
+	// the avatar camera). Quest's passthrough cameras are 1280x960.
+	const passthroughConstraints = () => ({ audio: false, video: { facingMode: { exact: 'environment' }, width: { ideal: 1280 }, height: { ideal: 960 } } });
+
 	function constraintsFor(deviceId) {
 		const video = { width: { ideal: 1920 }, height: { ideal: 1080 } };
 		if (deviceId) video.deviceId = { exact: deviceId };
@@ -203,12 +278,21 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 			return false;
 		}
 		const seq = ++startSeq;
+		starting_now = true;
+		clearRelist();
 		stopTracks();
 		setMsg(xr() && isQuestBrowser() ? 'Starting the passthrough camera… (Quest may ask for Headset cameras access)' : 'Starting the camera…');
 		if (devices.length === 0) devices = await listCameras();
 		const want = deviceId != null ? deviceId : preferredDevice(devices);
 		let s = null;
-		try {
+		// Quest, no passthrough camera known yet (none listed, or only the
+		// avatar one): ask for the world-facing camera first.
+		if (quest() && deviceId == null && !hasPassthrough() && !(want && pickedOnPurpose())) {
+			try { s = await md.getUserMedia(passthroughConstraints()); ptProbe = 'ok'; }
+			catch (e) { ptProbe = (e && e.name) || 'Error'; console.info('Quest passthrough camera not available:', ptProbe); }
+			if (seq !== startSeq || !open) { if (s) for (const t of s.getTracks()) t.stop(); starting_now = false; return false; }
+		}
+		if (!s) try {
 			s = await md.getUserMedia(constraintsFor(want));
 		} catch (err) {
 			// A saved camera that's gone (unplugged webcam): fall back to the default once.
@@ -216,16 +300,18 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 				try { s = await md.getUserMedia(constraintsFor('')); } catch (err2) { err = err2; }
 			}
 			if (!s) {
-				if (seq !== startSeq || !open) return false;
+				if (seq !== startSeq || !open) { starting_now = false; return false; }
 				console.warn('Camera error:', err && err.name, err && err.message);
 				devices = await listCameras();
 				renderSelect();
-				setMsg(errorMessage(err, { xr: xr() }), 'error');
 				panel.dataset.error = (err && err.name) || 'Error';
+				setMsg(errorMessage(err, { xr: xr() }), 'error');
+				starting_now = false;
+				updateHint();
 				return false;
 			}
 		}
-		if (seq !== startSeq || !open) { for (const t of s.getTracks()) t.stop(); return false; }
+		if (seq !== startSeq || !open) { for (const t of s.getTracks()) t.stop(); starting_now = false; return false; }
 		stream = s;
 		panel.dataset.error = '';
 		const track = s.getVideoTracks()[0];
@@ -251,6 +337,11 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 		if (track) track.addEventListener('ended', () => { if (stream === s) { stopTracks(); setMsg('The camera stopped. Pick a camera or close and reopen.', 'error'); } });
 		setMsg(photos ? `${photos} photo${photos === 1 ? '' : 's'} attached.` : '');
 		onLiveChange(video);
+		starting_now = false;
+		updateHint();
+		// Quest lists the passthrough cameras once Headset cameras is allowed,
+		// sometimes a moment later: look again a few times.
+		if (quest() && !hasPassthrough()) relistTimers = RELIST_DELAYS_MS.map((ms) => setTimeout(() => { if (open && stream === s) relist(); }, ms));
 		onLayout();
 		return true;
 	}
@@ -271,7 +362,10 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 		if (!open) return;
 		open = false;
 		startSeq++;
+		starting_now = false;
+		clearRelist();
 		stopTracks();
+		hintEl.hidden = true;
 		panel.hidden = true;
 		setMsg('');
 		button.setAttribute('aria-pressed', 'false');
@@ -313,7 +407,9 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 		store.set(storeKey(), id || null);
 		if (open) start(id);
 	});
-	if (md && md.addEventListener) md.addEventListener('devicechange', async () => { devices = await listCameras(); renderSelect(); });
+	if (md && md.addEventListener) md.addEventListener('devicechange', () => { relist(); });
+	hintHelp.addEventListener('click', (e) => { e.preventDefault(); gsAlert(QUEST_PASSTHROUGH_HELP, { title: 'Use the Quest passthrough camera' }); });
+	hintRetry.addEventListener('click', (e) => { e.preventDefault(); if (open) start(null); });
 	// Hidden tab: release the camera (the light goes off).
 	document.addEventListener('visibilitychange', () => { if (document.hidden && open) closePanel(); });
 	if (!supported) {
@@ -336,6 +432,8 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 				open, live: !!stream, photos, deviceId: currentId,
 				label: track ? track.label : '',
 				devices: devices.map((d, i) => ({ id: d.deviceId, label: cameraLabel(d, i), raw: d.label, passthrough: isPassthroughCamera(d) })),
+				passthroughProbe: ptProbe,
+				hint: hintEl.hidden ? '' : hintText.textContent,
 				message: msgEl.hidden ? '' : msgEl.textContent,
 				error: panel.dataset.error || '',
 				tracksLive: stream ? stream.getTracks().filter((t) => t.readyState === 'live').length : 0,
@@ -359,10 +457,20 @@ export async function askCameraBeforeXr() {
 	if (!md || !md.getUserMedia) return false;
 	let state = 'prompt';
 	try { state = (await navigator.permissions.query({ name: 'camera' })).state; } catch { /* no Permissions API for camera */ }
-	if (state !== 'prompt') return false;
+	if (state === 'denied') return false;
+	if (state !== 'prompt') {
+		// Quest: "granted" can mean only the avatar camera. If no passthrough
+		// camera is listed yet, ask for Headset cameras now, outside the session.
+		if (!isQuestBrowser()) return false;
+		try { if ((await md.enumerateDevices()).some((d) => d.kind === 'videoinput' && isPassthroughCamera(d))) return false; } catch { return false; }
+	}
+	const stop = (s) => { for (const t of s.getTracks()) t.stop(); };
+	if (isQuestBrowser()) {
+		try { stop(await md.getUserMedia({ video: { facingMode: { exact: 'environment' } }, audio: false })); return true; }
+		catch { if (state !== 'prompt') return false; }
+	}
 	try {
-		const s = await md.getUserMedia({ video: isQuestBrowser() ? { facingMode: { ideal: 'environment' } } : true, audio: false });
-		for (const t of s.getTracks()) t.stop();
+		stop(await md.getUserMedia({ video: true, audio: false }));
 		return true;
 	} catch { return false; }
 }

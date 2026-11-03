@@ -368,7 +368,9 @@ const rayClick = async (p, sel, win = 'menu') => {
 	}) });
 	await enterVr(p); await sleep(800);
 	const gum = await p.evaluate(() => ({ n: __camT.gum.length, live: __camT.liveVideo() }));
-	check('[vr hook] Used the camera before + "prompt": asked once on Enter VR, probe released', gum.n === 1 && gum.live === 0, gum);
+	// IWER's Quest 3 sets an OculusBrowser user agent: the Quest path asks for the
+	// world-facing camera first, then (Chrome's fake camera has no facing) plain video.
+	check('[vr hook] Used the camera before + "prompt": asked on Enter VR (Quest: exact environment, then plain), probe released', gum.n >= 1 && gum.n <= 2 && gum.live === 0, gum);
 	check('[vr hook] No page errors', errors.length === 0, errors.slice(0, 3));
 	await b.close();
 }
@@ -376,6 +378,166 @@ const rayClick = async (p, sel, win = 'menu') => {
 	const { b, p } = await open({ iwer: true });
 	await enterVr(p); await sleep(500);
 	check('[vr hook] Never used the camera: Enter VR does not ask for it', (await p.evaluate(() => __camT.gum.length)) === 0);
+	await b.close();
+}
+
+
+// ───────────── 8. Quest Browser permission behaviour (mocked mediaDevices) ─────────────
+// Like a real Quest 3: before Headset cameras is allowed only the avatar camera
+// is listed and facingMode {exact: 'environment'} is OverconstrainedError; after
+// the grant the two passthrough cameras are listed too (optionally late, with or
+// without a devicechange event).
+const mockQuest = ({ grantOnExact = true, listDelay = 0, fireDeviceChange = true, granted = false, permState = null } = {}) => (p) => p.evaluateOnNewDocument((o) => {
+	const md = navigator.mediaDevices;
+	const realGum = md.getUserMedia.bind(md);
+	const Q = (window.__q = { granted: o.granted, listed: o.granted, asked: [] });
+	const LABELS = { cam0: 'camera 0, facing front', cam1: 'camera 1, facing back', cam2: 'camera 2, facing back' };
+	const dev = (id) => ({ kind: 'videoinput', deviceId: id, groupId: 'g' + id, label: LABELS[id], toJSON() { return this; } });
+	md.enumerateDevices = async () => (Q.listed ? [dev('cam0'), dev('cam1'), dev('cam2')] : [dev('cam0')]);
+	Q.grant = () => {
+		Q.granted = true;
+		const list = () => { Q.listed = true; if (o.fireDeviceChange) md.dispatchEvent(new Event('devicechange')); };
+		if (o.listDelay) setTimeout(list, o.listDelay); else list();
+	};
+	md.getUserMedia = async (c) => {
+		const v = (c && c.video) || {};
+		const fm = v.facingMode && v.facingMode.exact;
+		const want = v.deviceId ? (v.deviceId.exact || v.deviceId) : '';
+		Q.asked.push(fm ? 'exact:' + fm : want || 'default');
+		let id = 'cam0';
+		if (fm === 'environment') {
+			if (!Q.granted && o.grantOnExact) Q.grant();
+			if (!Q.granted) throw new DOMException('mock: no environment camera', 'OverconstrainedError');
+			id = 'cam1';
+		} else if (want === 'cam1' || want === 'cam2') {
+			if (!Q.granted) throw new DOMException('mock: not allowed', 'OverconstrainedError');
+			id = want;
+		}
+		const s = await realGum({ video: true });
+		const t = s.getVideoTracks()[0];
+		const gs = t.getSettings.bind(t);
+		t.getSettings = () => ({ ...gs(), deviceId: id, facingMode: id === 'cam0' ? 'user' : 'environment' });
+		Object.defineProperty(t, 'label', { value: LABELS[id] });
+		return s;
+	};
+	if (o.permState) {
+		const q = navigator.permissions.query.bind(navigator.permissions);
+		navigator.permissions.query = async (d) => (d && d.name === 'camera' ? { state: o.permState, onchange: null, addEventListener() {}, removeEventListener() {} } : q(d));
+	}
+}, { grantOnExact, listDelay, fireDeviceChange, granted, permState });
+const optionTexts = (p) => p.evaluate(() => [...document.querySelectorAll('#gs-camera-panel .gs-cam-select option')].map((o) => o.textContent));
+const hintVisible = (p) => p.evaluate(() => { const h = document.querySelector('#gs-camera-panel .gs-cam-hint'); if (!h || h.hidden) return null; const r = h.getBoundingClientRect(); return r.width > 0 && r.height > 0 ? h.textContent : null; });
+
+// A: Headset cameras gets allowed on the first request.
+{
+	const { b, p, errors, until } = await open({ ua: QUEST_UA, before: mockQuest({ grantOnExact: true }) });
+	await p.click('#desktop-camera-button');
+	const s = await until((s) => s.live && s.devices.length === 3);
+	const asked = await p.evaluate(() => __q.asked);
+	check('[quest grant] First request asks for facingMode exact environment (the Headset cameras request)', asked[0] === 'exact:environment', asked);
+	check('[quest grant] Opens a passthrough camera, not the avatar camera', s.devices.find((d) => d.id === s.deviceId)?.passthrough === true && s.passthroughProbe === 'ok', { id: s.deviceId, probe: s.passthroughProbe });
+	const t = await optionTexts(p);
+	check('[quest grant] Dropdown lists Quest passthrough (left) / (right) and the avatar camera', t.includes('Quest passthrough (left)') && t.includes('Quest passthrough (right)') && t.some((x) => /^Avatar camera/.test(x)), t);
+	check('[quest grant] No "only avatar camera" hint', (await hintVisible(p)) === null);
+	await shot(p, '20-quest-passthrough');
+	await p.click('#gs-camera-panel .gs-cam-shutter');
+	const s2 = await until((s) => s.photos === 1, 5000);
+	check('[quest grant] Take photo works on the passthrough camera', s2.photos === 1 && /camera-.*\.jpg/.test(s2.chips), s2.chips);
+	check('[quest grant] No page errors / native dialogs', errors.length === 0, errors.slice(0, 3));
+	await b.close();
+}
+
+// B: allowed, but Quest lists the passthrough cameras late and fires no devicechange.
+{
+	const { b, p, errors, until } = await open({ ua: QUEST_UA, before: mockQuest({ grantOnExact: true, listDelay: 800, fireDeviceChange: false }) });
+	await p.click('#desktop-camera-button');
+	const s = await until((s) => s.live && s.devices.length === 3, 8000);
+	check('[quest late list] Re-lists after the grant: passthrough cameras appear without devicechange', s.devices.filter((d) => d.passthrough).length === 2, s.devices);
+	check('[quest late list] Stays on / ends on a passthrough camera', s.devices.find((d) => d.id === s.deviceId)?.passthrough === true, s.deviceId);
+	check('[quest late list] Hint gone once passthrough is listed', (await hintVisible(p)) === null);
+	check('[quest late list] No page errors', errors.length === 0, errors.slice(0, 3));
+	await b.close();
+}
+
+// C: Headset cameras not allowed → avatar camera + hint + help dialog; granting later switches over.
+{
+	const { b, p, errors, until } = await open({ ua: QUEST_UA, before: mockQuest({ grantOnExact: false }) });
+	await p.click('#desktop-camera-button');
+	const s = await until((s) => s.live && !!s.hint, 8000);
+	check('[quest no grant] Falls back to the avatar camera (still live)', s.live && s.deviceId === 'cam0' && s.passthroughProbe === 'OverconstrainedError', { id: s.deviceId, probe: s.passthroughProbe });
+	const h = await hintVisible(p);
+	check('[quest no grant] Inline hint explains only the avatar camera is available', !!h && /avatar camera/i.test(h) && /Headset cameras/.test(h), h);
+	await shot(p, '21-quest-avatar-only-hint');
+	await p.click('#gs-camera-panel .gs-cam-hint-help');
+	await sleep(500);
+	const dlg = await p.evaluate(() => { const c = document.getElementById('gs-dialog'); return c && c.offsetParent !== null ? c.textContent : null; });
+	check('[quest no grant] "How to turn it on" opens an in-app dialog with the verified steps', !!dlg && /lock icon/.test(dlg) && /Headset cameras/.test(dlg) && /Permissions history/.test(dlg), dlg && dlg.slice(0, 160));
+	await shot(p, '22-quest-help-dialog');
+	await p.keyboard.press('Escape'); await sleep(300);
+	await p.evaluate(() => __q.grant());
+	const s2 = await until((s) => s.live && s.devices.find((d) => d.id === s.deviceId)?.passthrough === true, 8000);
+	check('[quest no grant] Granting later (devicechange) switches to the passthrough camera', s2.devices.find((d) => d.id === s2.deviceId)?.passthrough === true, { id: s2.deviceId });
+	check('[quest no grant] Hint hidden after the switch', (await hintVisible(p)) === null);
+	check('[quest no grant] No page errors / native dialogs', errors.length === 0, errors.slice(0, 3));
+	await b.close();
+}
+
+// D: picking the avatar camera on purpose is respected.
+{
+	const { b, p, errors, until } = await open({ ua: QUEST_UA, before: mockQuest({ grantOnExact: true }) });
+	await p.click('#desktop-camera-button');
+	await until((s) => s.live && s.devices.length === 3);
+	await p.select('#gs-camera-panel .gs-cam-select', 'cam0');
+	await until((s) => s.live && s.deviceId === 'cam0');
+	await p.click('#gs-camera-panel .gs-cam-close'); await until((s) => !s.open);
+	await p.click('#desktop-camera-button');
+	const s = await until((s) => s.live);
+	await sleep(1500);
+	const s2 = await until((s) => s.live);
+	check('[quest pick avatar] A chosen avatar camera is kept (no auto-switch)', s.deviceId === 'cam0' && s2.deviceId === 'cam0', { a: s.deviceId, b: s2.deviceId });
+	check('[quest pick avatar] No hint when passthrough is available', (await hintVisible(p)) === null);
+	check('[quest pick avatar] No page errors', errors.length === 0, errors.slice(0, 3));
+	await b.close();
+}
+
+// E: in VR (IWER Quest 3 + Quest UA): avatar-only → hint drawn on the VR menu; grant → passthrough preview quad.
+{
+	const { b, p, errors, until } = await open({ iwer: true, ua: QUEST_UA, before: mockQuest({ grantOnExact: false }) });
+	check('[quest vr] Entered immersive VR', await enterVr(p));
+	await rayClick(p, '#desktop-camera-button');
+	const s = await until((s) => s.live && !!s.hint, 8000);
+	check('[quest vr] Avatar-only in VR: hint says to exit VR / AR and allow Headset cameras', /exit VR/i.test(s.hint || ''), s.hint);
+	await sleep(800);
+	const inMenu = await p.evaluate(() => { const w = __t.win('menu'); const h = document.querySelector('#gs-camera-panel .gs-cam-hint'); const sr = w.source.getBoundingClientRect(), r = h.getBoundingClientRect(); return w.mesh.visible && !h.hidden && r.top >= sr.top - 1 && r.bottom <= sr.bottom + 1 && r.height > 4; });
+	check('[quest vr] Hint is inside the VR menu window (painted into the VR canvas)', inMenu);
+	await shot(p, '23-quest-vr-hint');
+	await p.evaluate(() => __q.grant());
+	const s2 = await until((s) => s.live && s.devices.find((d) => d.id === s.deviceId)?.passthrough === true, 8000);
+	check('[quest vr] After the grant it switches to the passthrough camera in VR', s2.devices.find((d) => d.id === s2.deviceId)?.passthrough === true, s2.deviceId);
+	await sleep(1000);
+	const quad = await p.evaluate(() => { const w = __t.win('menu'); const l = w._live; return l ? { visible: l.mesh.visible, parentIsMenu: l.mesh.parent === w.mesh, sx: l.mesh.scale.x, sy: l.mesh.scale.y } : null; });
+	check('[quest vr] Passthrough preview quad is shown on the VR menu window', quad && quad.visible && quad.parentIsMenu && Math.abs(quad.sx) > 0.05 && quad.sy > 0.02, quad);
+	await shot(p, '24-quest-vr-passthrough');
+	await rayClick(p, '#gs-camera-panel .gs-cam-shutter');
+	const s3 = await until((s) => s.photos === 1, 5000);
+	check('[quest vr] Ray-clicking Take photo attaches a passthrough photo', s3.photos === 1, s3.photos);
+	check('[quest vr] No page errors', errors.length === 0, errors.slice(0, 3));
+	await b.close();
+}
+
+// F: Enter VR on Quest when camera is "granted" (avatar only) and the camera was used before: ask for Headset cameras first.
+{
+	const { b, p, errors } = await open({ iwer: true, ua: QUEST_UA, before: async (p) => { await p.evaluateOnNewDocument(() => localStorage.setItem('gs.cameraUsed', '1')); await mockQuest({ grantOnExact: true, permState: 'granted' })(p); } });
+	await enterVr(p); await sleep(800);
+	const q = await p.evaluate(() => ({ asked: __q.asked, live: __camT.liveVideo() }));
+	check('[quest vr hook] "granted" but no passthrough listed: Enter VR asks exact environment once, probe released', q.asked.length === 1 && q.asked[0] === 'exact:environment' && q.live === 0, q);
+	check('[quest vr hook] No page errors', errors.length === 0, errors.slice(0, 3));
+	await b.close();
+}
+{
+	const { b, p } = await open({ iwer: true, ua: QUEST_UA, before: async (p) => { await p.evaluateOnNewDocument(() => localStorage.setItem('gs.cameraUsed', '1')); await mockQuest({ granted: true, permState: 'granted' })(p); } });
+	await enterVr(p); await sleep(800);
+	check('[quest vr hook] Passthrough already listed: Enter VR does not ask', (await p.evaluate(() => __q.asked.length)) === 0);
 	await b.close();
 }
 
