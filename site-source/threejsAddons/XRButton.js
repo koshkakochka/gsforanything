@@ -12,6 +12,10 @@
  *   onSupport({ vr, ar }): called once both isSessionSupported() answers are in.
  *   onSessionMode(mode): called with the mode right before renderer.xr.setSession.
  * button.gsRefreshMode() re-reads getMode() and updates the label.
+ * button.gsSwitchTo(mode) ends the running session (if any) and requests
+ *   `mode` right away, in the same user gesture (an XR controller select
+ *   counts as one). Resolves once the new session is set; rejects with the
+ *   requestSession error so the caller can fall back (one more tap).
  */
 class XRButton {
 
@@ -40,6 +44,11 @@ class XRButton {
 		};
 		const enterLabel = () => ( wantedMode() === 'immersive-ar' ? 'ENTER AR' : 'ENTER VR' );
 		button.gsRefreshMode = function () {};
+		button.gsSwitchTo = function () {
+
+			return Promise.reject( new DOMException( 'WebXR is not available', 'NotSupportedError' ) );
+
+		};
 
 		function showEnterXR() {
 
@@ -136,24 +145,60 @@ class XRButton {
 
 			};
 
+			function startSession( mode ) {
+
+				currentMode = mode;
+				return navigator.xr.requestSession( mode, mode === 'immersive-ar' ? arOptions : vrOptions ).then( onSessionStarted ).catch( function ( err ) {
+
+					currentMode = null;
+					console.warn( 'XR session request failed (' + mode + '):', err );
+					throw err;
+
+				} );
+
+			}
+
 			button.onclick = function () {
 
 				if ( currentSession === null ) {
 
-					const mode = wantedMode();
-					currentMode = mode;
-					navigator.xr.requestSession( mode, mode === 'immersive-ar' ? arOptions : vrOptions ).then( onSessionStarted ).catch( function ( err ) {
-
-						currentMode = null;
-						console.warn( 'XR session request failed (' + mode + '):', err );
-
-					} );
+					startSession( wantedMode() ).catch( function () {} );
 
 				} else {
 
 					currentSession.end();
 
 				}
+
+			};
+
+			// Only one immersive session may run at a time and its mode is fixed
+			// when it starts, so a VR -> AR switch is end() then requestSession().
+			// requestSession is called as soon as end() resolves, still inside
+			// the controller click's user activation.
+			button.gsSwitchTo = async function ( mode ) {
+
+				if ( mode === 'immersive-ar' ? ! support.ar : ! support.vr ) {
+
+					throw new DOMException( mode + ' is not supported', 'NotSupportedError' );
+
+				}
+				const s = currentSession;
+				if ( s ) {
+
+					if ( currentMode === mode ) return s;
+					// Wait for the 'end' event itself: onSessionEnded and three.js's
+					// own handler (registered earlier) have run by then.
+					await new Promise( function ( resolve ) {
+
+						s.addEventListener( 'end', resolve, { once: true } );
+						s.end().catch( resolve );
+
+					} );
+
+				}
+				await startSession( mode );
+				return currentSession;
 
 			};
 

@@ -2558,14 +2558,21 @@
 
 		/* AR / VR toggle: in the window top bar (#gs-dock), right before Enter
 		   VR / Enter AR, the same 32px (44px on touch) height. Inside a session
-		   the Env tab's AR / VR buttons take over (the top bar shows Exit VR). */
+		   it stays (next to Exit VR) and shows what you see now. */
 		#gs-xr-mode {
 			display: inline-flex; align-items: center; gap: 2px; padding: 2px;
 			box-sizing: border-box; height: 32px;
 			border-radius: 10px; background: rgba(255, 255, 255, 0.06);
 			border: 1px solid rgba(255, 255, 255, 0.14); flex-shrink: 0;
 		}
-		#gs-xr-mode[hidden], body.gs-xr-presenting #gs-xr-mode { display: none !important; }
+		#gs-xr-mode[hidden] { display: none !important; }
+		/* In a headset session the toggle stays in the top bar (the top of the
+		   VR menu), next to Exit VR: AR / VR switch from there (main.js
+		   chooseXrMode). A bit bigger there so it's an easy ray target. */
+		body.gs-xr-presenting #gs-dock #gs-xr-mode { height: 36px; }
+		body.gs-xr-presenting #gs-dock #gs-xr-mode button { height: 30px; min-width: 44px; font-size: 13px; }
+		#gs-xr-mode button.gs-ray-hover:not(:disabled) { outline-offset: -1px !important; }
+		#gs-xr-mode.gs-xr-switching button { opacity: 0.55; cursor: progress; }
 		#gs-xr-mode button {
 			height: 26px; min-width: 34px; padding: 0 8px; border: none; border-radius: 8px;
 			background: transparent; color: rgba(255, 255, 255, 0.82); cursor: pointer;
