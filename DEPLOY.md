@@ -26,7 +26,7 @@ Local HTTPS test serve (box): often `/workspace/gs-serve-gh` on `https://localho
 ## Vercel
 
 1. Ask user for version → update `version.js` + `versions.json`.
-2. Ensure `vercel.json` `includeFiles` lists every client module the browser imports (`main.js`, `syntaxHighlight.js`, `version.js`, `versions.json`, `htmlInCanvas.js`, `menuSystem.js`, `vrWindows.js`, `exporter.js`, `creationContext.js`, `p5Import.js`, `communityMerge.js`, `twinSticks.js`, `cameraControls.js`, `chatPrompt.js`, `originGizmo.js`, `sceneFit.js`, `embedExport.js`, `sceneExportPolicy.js` (also imported by `server.js`), `gsDialog.js`, `photoCapture.js`, `threejsAddons/**`, `vendor_modules/**`, etc.).
+2. Ensure `vercel.json` `includeFiles` lists every client module the browser imports (`main.js`, `syntaxHighlight.js`, `version.js`, `versions.json`, `htmlInCanvas.js`, `menuSystem.js`, `vrWindows.js`, `exporter.js`, `creationContext.js`, `p5Import.js`, `communityMerge.js`, `twinSticks.js`, `cameraControls.js`, `chatPrompt.js`, `originGizmo.js`, `sceneFit.js`, `embedExport.js`, `sceneExportPolicy.js` (also imported by `server.js`), `gsDialog.js`, `photoCapture.js`, `passthroughTexture.js`, `threejsAddons/**`, `vendor_modules/**`, etc.).
 3. Commit only the intended files; push `origin/main`.
 4. **GitHub auto-deploy** usually ships Production for `vrclaudeinterface` / `carljr`. If the PC is online and logged into Vercel CLI: `npx vercel --prod --yes` from the repo root.
 5. Verify (below).

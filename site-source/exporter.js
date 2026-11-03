@@ -159,6 +159,16 @@ function buildExportGroup(roots, { lights = false } = {}) {
 			}
 		});
 	}
+	// Live camera textures (gsPassthroughTexture, tagged gsNoExport) never go
+	// into a file: the copy gets its own material without that map.
+	const TEX_SLOTS = ['map', 'emissiveMap', 'alphaMap', 'aoMap', 'lightMap', 'bumpMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'specularMap', 'envMap', 'displacementMap'];
+	const strip = (m) => {
+		if (!m || !TEX_SLOTS.some((k) => m[k] && m[k].userData && m[k].userData.gsNoExport)) return m;
+		const c = m.clone();
+		for (const k of TEX_SLOTS) if (c[k] && c[k].userData && c[k].userData.gsNoExport) c[k] = null;
+		return c;
+	};
+	group.traverse((o) => { if (o.material) o.material = Array.isArray(o.material) ? o.material.map(strip) : strip(o.material); });
 	let meshCount = 0;
 	group.traverse((o) => { if (o.isMesh) meshCount++; });
 	return { group, animations, meshCount, ...stats };
