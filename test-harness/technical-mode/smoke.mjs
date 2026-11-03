@@ -1,11 +1,11 @@
 // Quick smoke check (not a full suite) for Technical mode on a mocked Quest 3
 // that only lists the avatar camera ({exact:'environment'} → OverconstrainedError,
 // the Quest Browser 150 bug). /api/* stubbed.
-// BASE=https://localhost:3531 SHOT_DIR=/workspace/gs-techmode-shots node smoke.mjs
+// BASE=https://localhost:3531 SHOT_DIR=/workspace/gs-techcheck-shots node smoke.mjs
 import fs from 'fs';
 import puppeteer from 'puppeteer-core';
 const BASE = process.env.BASE || 'https://localhost:3531';
-const SHOT_DIR = process.env.SHOT_DIR || '/workspace/gs-techmode-shots';
+const SHOT_DIR = process.env.SHOT_DIR || '/workspace/gs-techcheck-shots';
 fs.mkdirSync(SHOT_DIR, { recursive: true });
 const IWER = fs.readFileSync(new URL('./node_modules/iwer/build/iwer.min.js', import.meta.url), 'utf8');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -33,98 +33,98 @@ await p.evaluateOnNewDocument(() => {
 	md.getUserMedia = async (c) => { const fm = c && c.video && c.video.facingMode; if (fm && fm.exact === 'environment') { window.__envAsks++; throw new DOMException('Cannot satisfy constraints', 'OverconstrainedError'); } const s = await realGum({ video: { width: 1280, height: 960 } }); const t = s.getVideoTracks()[0]; Object.defineProperty(t, 'label', { value: 'camera 0, facing front' }); const gs = t.getSettings.bind(t); t.getSettings = () => ({ ...gs(), deviceId: 'cam0' }); return s; };
 });
 const load = async () => { await p.goto(BASE + '/', { waitUntil: 'networkidle2', timeout: 90000 }); await sleep(1200); };
-const ui = () => p.evaluate(() => ({
-	on: gsTechnicalMode.isTechnicalMode(), stored: localStorage.getItem('gs.technicalMode'),
-	tabShown: !document.getElementById('dchat-tab-technical').hidden && getComputedStyle(document.getElementById('dchat-tab-technical')).display !== 'none',
-	toggle: document.getElementById('dchat-technical-toggle').textContent
-}));
+const ui = () => p.evaluate(() => {
+	const marked = [...document.querySelectorAll('[data-gs-technical]')];
+	const vis = (el) => getComputedStyle(el).display !== 'none' && !!el.offsetParent;
+	const item = document.querySelector('[data-tech-item="quest-passthrough-adb"]');
+	const cs = item ? getComputedStyle(item) : null;
+	return {
+		on: gsTechnicalMode.isTechnicalMode(), stored: localStorage.getItem('gs.technicalMode'),
+		tabShown: getComputedStyle(document.getElementById('dchat-tab-technical')).display !== 'none',
+		checked: document.getElementById('dchat-technical-checkbox').checked,
+		controlsButton: !!document.getElementById('dchat-technical-toggle'),
+		marked: marked.length, markedHiddenByCss: marked.filter((el) => getComputedStyle(el).display === 'none').length,
+		itemMarked: !!item && item.hasAttribute('data-gs-technical'),
+		itemVisible: !!item && vis(item),
+		outline: cs ? `${cs.outlineWidth} ${cs.outlineStyle} ${cs.outlineColor}` : '',
+		accent: getComputedStyle(document.documentElement).getPropertyValue('--gs-technical-accent').trim(),
+		panelText: document.getElementById('dchat-panel-technical').innerText.trim()
+	};
+});
+const GREEN = '2px solid rgb(34, 197, 94)';
+const dialogUp = () => p.evaluate(() => { const m = document.getElementById('gs-dialog-message'); return m && m.offsetParent !== null ? m.textContent : null; });
 await load();
 
-// 1. Off by default; camera works with the avatar camera; short hint, no ADB.
+// 1. Unchecked (default): tab always visible, only checkbox + one line, marked UI hidden.
 let u = await ui();
-check('[off] Technical mode off by default, tab hidden, toggle reads Off', !u.on && !u.stored && !u.tabShown && /Off/.test(u.toggle), u);
-await p.click('#desktop-camera-button');
-await p.evaluate(() => gsPhotoCapture.ready); await sleep(1500);
-let cam = await p.evaluate(() => { const pn = document.getElementById('gs-camera-panel'); return { s: gsPhotoCapture.state(), text: pn.innerText, help: pn.querySelector('.gs-cam-hint-help').hidden, retry: pn.querySelector('.gs-cam-hint-retry').hidden, hintShown: !pn.querySelector('.gs-cam-hint').hidden }; });
-check('[off] camera still opens the avatar camera and plays', /Avatar camera/.test(cam.s.status) && /playing/.test(cam.s.status), cam.s.status);
-check('[off] hint: "Passthrough camera needs extra setup: turn on Technical mode in Settings"', cam.hintShown && /^Passthrough camera needs extra setup: turn on Technical mode in Settings/.test(cam.s.hint), cam.s.hint);
-check('[off] camera panel has no ADB / Details talk and no extra buttons', !/adb|Details/i.test(cam.text) && cam.help && cam.retry, cam.text);
-const tx = await p.evaluate(async () => { const t = gsPassthroughTexture(); return { ok: await t.userData.ready, status: t.userData.status && t.userData.status() }; });
-check('[off] gsPassthroughTexture() falls back to the available camera', tx.ok === true, tx);
-await p.screenshot({ path: `${SHOT_DIR}/01-off-mode-camera-hint.png` });
-
-// 2. Turn on from Controls (gsDialog confirm with the note), persists over reload.
-await p.click('.dchat-tab[data-tab="controls"]'); await sleep(200);
-await p.evaluate(() => document.getElementById('dchat-technical-toggle').scrollIntoView({ block: 'center' }));
-await p.click('#dchat-technical-toggle'); await sleep(400);
-const dlg = await p.evaluate(() => { const m = document.getElementById('gs-dialog-message'); return m && m.offsetParent !== null ? { title: document.getElementById('gs-dialog-title').textContent, msg: m.textContent } : null; });
-check('[on] gsDialog confirm with the one-line advanced-setup note', dlg && /advanced setup, such as permissions outside normal browser operation and developer tools/.test(dlg.msg), dlg);
-await p.screenshot({ path: `${SHOT_DIR}/02-controls-confirm-dialog.png` });
-await p.click('[data-gs-dialog="ok"]'); await sleep(400);
+check('[off] 🛠 Technical tab visible by default, Controls Off/On button gone', u.tabShown && !u.controlsButton, u);
+await p.click('#dchat-tab-technical'); await sleep(400);
 u = await ui();
-check('[on] toggle On, saved, 🛠 Technical tab shown', u.on && u.stored === '1' && u.tabShown && /On/.test(u.toggle), u);
-await p.screenshot({ path: `${SHOT_DIR}/03-controls-toggle-on.png` });
+check('[off] checkbox unchecked, every data-gs-technical element hidden (incl. the ADB item)', !u.checked && !u.on && u.marked >= 4 && u.markedHiddenByCss === u.marked && u.itemMarked && !u.itemVisible, u);
+check('[off] tab shows only the checkbox + one-line description', /^Technical mode\s+Shows advanced setup/.test(u.panelText) && !/adb|Quest passthrough/i.test(u.panelText), u.panelText);
+await p.screenshot({ path: `${SHOT_DIR}/01-2d-tab-unchecked.png` });
+await p.click('.dchat-tab[data-tab="chat"]');
+await p.click('#desktop-camera-button'); await p.evaluate(() => gsPhotoCapture.ready); await sleep(1500);
+let cam = await p.evaluate(() => { const pn = document.getElementById('gs-camera-panel'); return { s: gsPhotoCapture.state(), text: pn.innerText }; });
+check('[off] camera works with the avatar camera; short hint, no ADB / technical buttons', /Avatar camera/.test(cam.s.status) && /^Passthrough camera needs extra setup: turn on Technical mode/.test(cam.s.hint) && !/adb|Open Technical|Try again/i.test(cam.text), { status: cam.s.status, hint: cam.s.hint, text: cam.text });
+await p.screenshot({ path: `${SHOT_DIR}/02-2d-camera-hint-off.png` });
+
+// 2. Check it: gsConfirm; Cancel keeps it off, OK turns it on + saves.
+await p.click('#dchat-tab-technical'); await sleep(300);
+await p.click('#dchat-technical-checkbox'); await sleep(400);
+let msg = await dialogUp();
+check('[on] checking asks with the gsDialog note', !!msg && /advanced setup, such as permissions outside normal browser operation and developer tools/.test(msg), msg);
+await p.click('[data-gs-dialog="cancel"]'); await sleep(300);
+u = await ui();
+check('[on] Cancel leaves it unchecked and off', !u.checked && !u.on && !u.stored, u);
+await p.click('#dchat-technical-checkbox'); await sleep(400);
+await p.screenshot({ path: `${SHOT_DIR}/03-2d-confirm-dialog.png` });
+await p.click('[data-gs-dialog="ok"]'); await sleep(500);
+u = await ui();
+check('[on] OK: checked, saved under gs.technicalMode, marked items shown', u.checked && u.on && u.stored === '1' && u.markedHiddenByCss === 0 && u.itemVisible, u);
+check('[on] marked items get the green accent outline (--gs-technical-accent)', u.outline === GREEN && u.accent === '#22c55e', { outline: u.outline, accent: u.accent });
+await p.click('[data-tech-item="quest-passthrough-adb"] .gs-tech-copy'); await sleep(200);
+check('[on] Copy puts the ADB command on the clipboard', (await p.evaluate(() => navigator.clipboard.readText())) === CMD);
+await p.screenshot({ path: `${SHOT_DIR}/04-2d-tab-checked-green.png` });
+
+// 3. Persists over reload; camera's technical hint/buttons shown + outlined.
 await load();
 u = await ui();
-check('[on] still on after reload (saved per browser)', u.on && u.tabShown, u);
+check('[on] still checked after reload', u.checked && u.on, u);
+await p.click('#desktop-camera-button'); await p.evaluate(() => gsPhotoCapture.ready); await sleep(1500);
+cam = await p.evaluate(() => { const pn = document.getElementById('gs-camera-panel'); const b = pn.querySelector('.gs-cam-hint-help'); const cs = getComputedStyle(b); return { hint: gsPhotoCapture.state().hint, btn: cs.display !== 'none', outline: `${cs.outlineWidth} ${cs.outlineStyle} ${cs.outlineColor}`, offLine: getComputedStyle(pn.querySelector('.gs-cam-hint-text')).display }; });
+check('[on] camera hint: technical line + Open Technical button, green-outlined; off line hidden', /See 🛠 Technical/.test(cam.hint) && cam.btn && cam.outline === GREEN && cam.offLine === 'none', cam);
+await p.screenshot({ path: `${SHOT_DIR}/05-2d-camera-hint-on.png` });
 
-// 3. Technical tab (2D): ADB item, Copy, Check again, diagnostics.
-await p.click('#dchat-tab-technical'); await sleep(800);
-const item = await p.evaluate(() => { const el = document.querySelector('[data-tech-item="quest-passthrough-adb"]'); return el ? { title: el.querySelector('.gs-tech-item-title').textContent, cmd: el.querySelector('.gs-tech-adb-cmd').textContent, text: el.innerText, diag: el.querySelector('.gs-tech-diag').textContent, active: document.getElementById('dchat-panel-technical').classList.contains('active') } : null; });
-check('[2D] Technical tab lists "Quest passthrough camera (ADB)" with steps + command', item && item.active && item.title === 'Quest passthrough camera (ADB)' && item.cmd === CMD && /Developer mode/.test(item.text) && /USB debugging/.test(item.text) && /reopen Quest Browser/.test(item.text), item && item.title);
-check('[2D] live diagnostics shown (Browser, permission, camera list)', item && /Cameras listed \(1\)/.test(item.diag) && /permissions\.query\(camera\)/.test(item.diag) && /Browser: Quest Browser/.test(item.diag), item && item.diag);
-await p.click('[data-tech-item="quest-passthrough-adb"] .gs-tech-copy'); await sleep(200);
-const copied = await p.evaluate(async () => ({ clip: await navigator.clipboard.readText(), btn: document.querySelector('.gs-tech-copy').textContent }));
-check('[2D] Copy puts the ADB command on the clipboard', copied.clip === CMD && copied.btn === 'Copied', copied);
-const asks0 = await p.evaluate(() => __envAsks);
-await p.click('[data-tech-item="quest-passthrough-adb"] .gs-tech-check');
-await p.waitForFunction(() => !document.querySelector('.gs-tech-check').disabled && /Still|available|failed/.test(document.querySelector('.gs-tech-result').textContent), { timeout: 15000 }).catch(() => {});
-const chk = await p.evaluate(() => ({ result: document.querySelector('.gs-tech-result').textContent, diag: document.querySelector('.gs-tech-diag').textContent, asks: __envAsks }));
-check('[2D] Check again re-requests the passthrough camera and re-lists', chk.asks > asks0 && /Still only the avatar camera \(OverconstrainedError: Cannot satisfy constraints\)/.test(chk.result), chk.result);
-check('[2D] diagnostics updated with the request error', /exact: 'environment'\}\}: OverconstrainedError: Cannot satisfy constraints/.test(chk.diag), chk.diag);
-await p.screenshot({ path: `${SHOT_DIR}/04-2d-technical-tab.png` });
-await p.click('.dchat-tab[data-tab="chat"]'); await sleep(300);
-if (!(await p.evaluate(() => gsPhotoCapture.isOpen))) { await p.click('#desktop-camera-button'); await p.evaluate(() => gsPhotoCapture.ready); await sleep(1200); }
-const hintOn = await p.evaluate(() => ({ hint: gsPhotoCapture.state().hint, help: !document.querySelector('#gs-camera-panel .gs-cam-hint-help').hidden }));
-check('[on] camera hint points to 🛠 Technical with an Open Technical button', /See 🛠 Technical › Quest passthrough camera \(ADB\)/.test(hintOn.hint) && hintOn.help, hintOn);
-await p.screenshot({ path: `${SHOT_DIR}/04b-on-mode-camera-hint.png` });
-
-// 4. VR menu window: Technical tab painted and ray-clickable.
+// 4. VR: ray clicks the checkbox (off, then on through the confirm).
 await p.evaluate(() => { const d = window.__xrDevice; d.position.set(0, 1.6, 0); d.quaternion.set(0, 0, 0, 1); window.gsXrMode.set('vr'); });
 await p.click('#XRButton').catch(() => {});
 for (let i = 0; i < 40 && !(await p.evaluate(() => renderer.xr.isPresenting)); i++) await sleep(250);
 await sleep(2000);
 const uvOf = (sel) => p.evaluate((sel) => { const w = __gsVrWindows.byName('menu'); const src = w.source || document.getElementById('desktop-chat'); const el = document.querySelector(sel); if (!el) return null; const r = el.getBoundingClientRect(), s = src.getBoundingClientRect(); return { x: (r.left + r.width / 2 - s.left) / s.width, y: 1 - (r.top + r.height / 2 - s.top) / s.height }; }, sel);
-const rayClick = async (sel) => p.evaluate(async (uv) => { const w = __gsVrWindows.byName('menu'); const el = w.click(uv); return el ? (el.id || el.className || el.tagName) : null; }, await uvOf(sel));
-const xrOk = await p.evaluate(() => renderer.xr.isPresenting);
-check('[VR] in an IWER Quest 3 VR session', xrOk);
-const hitTab = await rayClick('#dchat-tab-technical'); await sleep(600);
-const vrState = await p.evaluate(() => ({ active: document.getElementById('dchat-panel-technical').classList.contains('active') }));
-check('[VR] ray click on 🛠 Technical opens the tab in the menu window', vrState.active, { hitTab, vrState });
-const asks1 = await p.evaluate(() => __envAsks);
-await p.evaluate(() => document.querySelector('.gs-tech-check').scrollIntoView({ block: 'center' })); await sleep(200);
-const hitCheck = await rayClick('[data-tech-item="quest-passthrough-adb"] .gs-tech-check');
-await p.waitForFunction((a) => __envAsks > a && !document.querySelector('.gs-tech-check').disabled, { timeout: 15000 }, asks1).catch(() => {});
-check('[VR] ray click on Check again runs the check', (await p.evaluate(() => __envAsks)) > asks1, hitCheck);
-await p.evaluate(() => document.querySelector('[data-tech-item="quest-passthrough-adb"]').scrollIntoView({ block: 'start' })); await sleep(300);
-await p.evaluate(() => { const w = __gsVrWindows.byName('menu'); w.tick(true); });
-const win = await p.evaluate(() => { const w = __gsVrWindows.byName('menu'); const src = w.mesh.material.map.image; const c = document.createElement('canvas'); c.width = src.width; c.height = src.height; const g = c.getContext('2d'); g.drawImage(src, 0, 0); const d = g.getImageData(0, 0, c.width, c.height).data; let n = 0, k = 0; for (let i = 0; i < d.length; i += 4 * 101) { k++; if (d[i] + d[i + 1] + d[i + 2] > 60) n++; } return { png: c.toDataURL('image/png'), lit: n / k }; });
-check('[VR] menu window canvas painted (has content)', win.lit > 0.02, win.lit);
-fs.writeFileSync(`${SHOT_DIR}/05-vr-menu-window-technical.png`, Buffer.from(win.png.split(',')[1], 'base64'));
-// Toggle lives in Controls in VR too: ray-click Off.
-await rayClick('.dchat-tab[data-tab="controls"]'); await sleep(300);
-await p.evaluate(() => document.getElementById('dchat-technical-toggle').scrollIntoView({ block: 'center' })); await sleep(200);
-await p.evaluate(() => { const w = __gsVrWindows.byName('menu'); w.tick(true); });
-const winC = await p.evaluate(() => __gsVrWindows.byName('menu').mesh.material.map.image.toDataURL ? __gsVrWindows.byName('menu').mesh.material.map.image.toDataURL('image/png') : null);
-if (winC) fs.writeFileSync(`${SHOT_DIR}/06-vr-menu-window-controls-toggle.png`, Buffer.from(winC.split(',')[1], 'base64'));
-await rayClick('#dchat-technical-toggle'); await sleep(400);
+const rayClick = async (sel) => p.evaluate((uv) => { const el = __gsVrWindows.byName('menu').click(uv); return el ? (el.id || el.className || el.tagName) : null; }, await uvOf(sel));
+const winShot = async (name) => { await p.evaluate(() => __gsVrWindows.byName('menu').tick(true)); const png = await p.evaluate(() => { const src = __gsVrWindows.byName('menu').mesh.material.map.image; const c = document.createElement('canvas'); c.width = src.width; c.height = src.height; c.getContext('2d').drawImage(src, 0, 0); return c.toDataURL('image/png'); }); fs.writeFileSync(`${SHOT_DIR}/${name}`, Buffer.from(png.split(',')[1], 'base64')); };
+check('[VR] in an IWER Quest 3 VR session', await p.evaluate(() => renderer.xr.isPresenting));
+await rayClick('#dchat-tab-technical'); await sleep(500);
+check('[VR] ray click opens the 🛠 Technical tab', await p.evaluate(() => document.getElementById('dchat-panel-technical').classList.contains('active')));
+await winShot('06-vr-menu-checked-green.png');
+const hit1 = await rayClick('#dchat-technical-checkbox'); await sleep(400);
 u = await ui();
-check('[VR] ray click on the Controls toggle turns Technical mode off (no confirm)', !u.on && !u.stored && !u.tabShown, u);
+check('[VR] ray click on the checkbox unchecks it: off, marked items hidden', !u.checked && !u.on && !u.stored && u.markedHiddenByCss === u.marked, { hit1, u });
+await winShot('07-vr-menu-unchecked.png');
+const hit2 = await rayClick('.gs-tech-mode span'); await sleep(500);
+msg = await dialogUp();
+check('[VR] ray click on the label asks with the gsDialog', !!msg, { hit2, msg });
+await p.evaluate(() => document.querySelector('[data-gs-dialog="ok"]').click()); await sleep(500); // VR dialog card's OK (its own window)
+await winShot('08-vr-menu-rechecked-green.png');
+u = await ui();
+check('[VR] confirmed: checked again, items shown with the green outline', u.checked && u.on && u.itemVisible && u.outline === GREEN, u);
 
-// 5. Off persists over reload; hint back to the short line.
+// 5. Uncheck persists over reload.
+await rayClick('#dchat-technical-checkbox'); await sleep(300); // uncheck from VR, then reload
 await load();
 u = await ui();
-check('[off] still off after reload', !u.on && !u.tabShown && /Off/.test(u.toggle), u);
+check('[off] unchecked state persists after reload', !u.checked && !u.on && !u.stored, u);
 check('[page] no page errors / native dialogs', errors.length === 0, errors.slice(0, 3));
 await b.close();
 console.log(`\ntechnical-mode smoke: ${pass} passed, ${fail} failed`);
