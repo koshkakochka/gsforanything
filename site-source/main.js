@@ -288,7 +288,8 @@ const dchatHdriStatus = document.getElementById('dchat-hdri-status');
 // ============================================================================
 // AR / VR: which immersive session Enter starts (see "AR / VR mode" below).
 // Inside an AR session they switch live between passthrough and the colour
-// skybox; inside a VR session AR applies from the next Enter.
+// skybox; inside a VR session AR restarts the session as immersive-ar
+// (chooseXrMode). The top-bar AR | VR toggle does the same.
 const ENV_MODE_BUTTONS = [
 	{ id: 'ar', label: 'AR (passthrough)', action: 'env:ar' },
 	{ id: 'vr', label: 'VR (color)', action: 'env:vr' }
@@ -320,23 +321,11 @@ const THEME_BUTTONS = [
 function handleMenuAction(action) {
 	switch (action) {
 		case 'env:vr':
-			setXrModePref('vr');
-			isVRMode = true;
-			applyEnvironmentMode();
-			renderDomEnv();
+			chooseXrMode('vr');
 			break;
-		case 'env:ar': {
-			const presenting = renderer.xr.isPresenting;
-			setXrModePref('ar');
-			if (presenting && xrSessionMode === 'immersive-ar') {
-				isVRMode = false; // back to the room
-			} else if (presenting) {
-				updateStatus('AR starts next time: Exit VR, then Enter AR', '');
-			}
-			applyEnvironmentMode();
-			renderDomEnv();
+		case 'env:ar':
+			chooseXrMode('ar');
 			break;
-		}
 		case 'env:exit':
 			exitXrToDesktop();
 			break;
@@ -612,6 +601,28 @@ let vrKeyboardOpen = false;   // keyboard window shown (a text field was pointed
 let vrKeyboardTarget = null;  // the <input>/<textarea> the VR keyboard types into
 let rayVisible = true;        // controller ray lines shown (cursor always shows)
 let uiCollapsed = false;      // all main panels hidden for an unobstructed scene
+
+// Menu light: a point light just above the VR menu window (a child of
+// panelAnchor, so it follows the menu in Fixed and Follow modes) that lights
+// the menu's surroundings and the user's immediate area in dark scenes. The
+// windows themselves are unlit (MeshBasicMaterial, toneMapped: false, fog:
+// false), so they read the same in any lighting; the light is for the space
+// around them. No shadows (Quest). Added on sessionstart, removed on
+// sessionend; while the menu is hidden in XR its intensity is 0 instead of
+// toggling visibility, because changing the number of lights recompiles
+// every lit material (a hitch on Quest). Lives under panelAnchor, a system
+// object, so Clear scene / exports / saved scenes never see it; also tagged
+// gsNoExport for the 3D exporters.
+const VR_MENU_LIGHT_INTENSITY = 1.6; // candela (physically based lights, three r180)
+const VR_MENU_LIGHT_DISTANCE = 4;    // metres: menu, floor and the user, not the whole scene
+const VR_MENU_LIGHT_ABOVE = 0.18;    // metres above the menu's top edge
+const VR_MENU_LIGHT_FORWARD = 0.3;   // metres toward the user, so it lights the menu's front side
+const vrMenuLight = new THREE.PointLight(0xfff4e0, VR_MENU_LIGHT_INTENSITY, VR_MENU_LIGHT_DISTANCE, 2);
+vrMenuLight.name = 'gsMenuLight';
+vrMenuLight.castShadow = false;
+vrMenuLight.userData.gsNoExport = true;
+vrMenuLight.userData.gsSystem = true;
+
 let player = null;            // rig holding the camera + controllers (locomotion)
 let viewOffset = null;        // child of player holding camera + controllers (identity transform)
 let locomotionMode = 'free';  // 'off' (thumbsticks scroll) | 'planar' (First Person) | 'free' (WASD) - see dchat-nav-type
@@ -784,6 +795,7 @@ let xrModePref = 'vr';
 try { if (localStorage.getItem(XR_MODE_KEY) === 'ar') xrModePref = 'ar'; } catch { /* storage blocked */ }
 const xrModeSupport = { vr: null, ar: null }; // null = still asking
 let xrSessionMode = null; // 'immersive-vr' | 'immersive-ar' while presenting
+let _xrSwitching = false; // a VR -> AR session switch is in flight (chooseXrMode)
 const xrEntryButton = XRButton.createButton(renderer, {
 	optionalFeatures: ['hit-test', 'dom-overlay'],
 	domOverlay: { root: overlayRoot },
@@ -815,7 +827,7 @@ for (const [id, text, title] of [['ar', 'AR', 'Augmented reality: your room (pas
 	b.setAttribute('role', 'radio');
 	b.textContent = text;
 	b.title = title;
-	b.addEventListener('click', (e) => { e.preventDefault(); setXrModePref(id); });
+	b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); chooseXrMode(id); });
 	xrModeToggle.appendChild(b);
 }
 xrEntryButton.parentNode.insertBefore(xrModeToggle, xrEntryButton);
@@ -826,10 +838,21 @@ function effectiveXrMode() {
 	if (xrModePref === 'ar') return ar === false && vr ? 'vr' : 'ar';
 	return vr === false && ar ? 'ar' : 'vr';
 }
+// What the toggle shows as selected: inside a session, what you see now (an
+// AR session shows the room, or the colour sky after "VR"); otherwise the
+// mode Enter will start.
+function currentXrModeShown() {
+	if (renderer && renderer.xr && renderer.xr.isPresenting && xrSessionMode) {
+		return xrSessionMode === 'immersive-ar' && !isVRMode ? 'ar' : 'vr';
+	}
+	return effectiveXrMode();
+}
 function renderXrModeToggle() {
 	const known = xrModeSupport.vr !== null;
 	xrModeToggle.hidden = !known || (!xrModeSupport.vr && !xrModeSupport.ar);
-	const eff = effectiveXrMode();
+	const eff = currentXrModeShown();
+	xrModeToggle.dataset.active = eff;
+	xrModeToggle.classList.toggle('gs-xr-switching', _xrSwitching);
 	for (const b of xrModeToggle.querySelectorAll('button')) {
 		const id = b.dataset.xrMode;
 		const ok = !!xrModeSupport[id];
@@ -851,6 +874,73 @@ function setXrModePref(mode) {
 	renderXrModeToggle();
 	renderDomEnv();
 }
+// AR | VR choice from the top-bar toggle or the Env tab (desktop, phone and
+// the VR menu, which is the same DOM painted into the headset).
+//  - Not in a session: remember it; Enter starts that mode.
+//  - In an immersive-ar session: switch live. "VR" covers the room with the
+//    colour sky, "AR" shows the room again. No new session, so no headset
+//    fade, no permission prompt, nothing to go wrong.
+//  - In an immersive-vr session, "AR": a VR session can't show passthrough
+//    and the mode is fixed at requestSession, so end it and start
+//    immersive-ar straight away (the controller click is the user gesture).
+//    If the browser refuses (no gesture left, permission, not supported), the
+//    choice is kept and an in-app dialog offers one tap to enter it.
+function chooseXrMode(mode) {
+	if (mode !== 'ar' && mode !== 'vr') return;
+	const session = renderer && renderer.xr && renderer.xr.isPresenting ? xrSessionMode : null;
+	if (!session) { setXrModePref(mode); return; }
+	if (_xrSwitching) return;
+	if (xrModeSupport[mode] === false) {
+		gsAlert(mode === 'ar'
+			? 'AR (passthrough) isn’t supported on this headset or browser, so GS stays in VR.'
+			: 'VR isn’t supported on this headset or browser.', { title: 'Can’t switch mode' });
+		return;
+	}
+	setXrModePref(mode);
+	if (session === 'immersive-ar') {
+		isVRMode = mode === 'vr';
+		updateStatus(mode === 'vr' ? 'VR: colour sky' : 'AR: passthrough', 'connected');
+		applyEnvironmentMode();
+		renderDomEnv();
+		renderXrModeToggle();
+		return;
+	}
+	if (mode === 'vr') { renderXrModeToggle(); return; } // already in VR
+	switchXrSession('immersive-ar');
+}
+async function switchXrSession(mode) {
+	const name = mode === 'immersive-ar' ? 'AR' : 'VR';
+	_xrSwitching = true;
+	renderXrModeToggle();
+	updateStatus(`Switching to ${name}…`, '');
+	try {
+		await xrEntryButton.gsSwitchTo(mode);
+		updateStatus(`${name} started`, 'connected');
+	} catch (err) {
+		console.warn(`Switch to ${name} failed:`, err);
+		const unsupported = err && err.name === 'NotSupportedError';
+		if (unsupported) {
+			if (mode === 'immersive-ar') xrModeSupport.ar = false;
+			setXrModePref(mode === 'immersive-ar' ? 'vr' : 'ar');
+		}
+		_xrSwitching = false;
+		renderXrModeToggle();
+		renderDomEnv();
+		const back = effectiveXrMode() === 'ar' ? 'AR' : 'VR';
+		const presentingNow = renderer.xr.isPresenting;
+		if (presentingNow) { updateStatus(`Couldn’t switch to ${name}`, 'error'); return; }
+		// The old session has ended, so this is the normal page dialog; its
+		// button is a real tap, which requestSession accepts.
+		const ok = await gsConfirm(unsupported
+			? `This headset or browser couldn’t start ${name}${err.message ? ` (${err.message})` : ''}. Go back into ${back}?`
+			: `Switching to ${name} needs one more tap: the browser didn’t let GS start it straight away. ${name} is selected, so Enter ${name} starts it.`,
+			{ title: `Switch to ${name}`, okLabel: `Enter ${back}`, cancelLabel: 'Not now' });
+		if (ok && !renderer.xr.isPresenting) xrEntryButton.click();
+	} finally {
+		_xrSwitching = false;
+		renderXrModeToggle();
+	}
+}
 renderXrModeToggle();
 window.gsXrMode = {
 	get preferred() { return xrModePref; },
@@ -858,7 +948,9 @@ window.gsXrMode = {
 	get support() { return { ...xrModeSupport }; },
 	get session() { return xrSessionMode; },
 	get passthrough() { return arPassthroughActive(); },
-	set: setXrModePref
+	get switching() { return _xrSwitching; },
+	set: setXrModePref,
+	choose: chooseXrMode
 };
 
 // Exit VR: shown only inside a VR session, in the same top bar, which is the
@@ -8144,6 +8236,7 @@ function applyXrPanelVisibility(immersive = xrSessionActive()) {
 	if (vrKeyboardWindow) vrKeyboardWindow.setVisible(show && vrKeyboardOpen);
 	if (vrHudWindow) vrHudWindow.setVisible(immersive && !displayOnlyMode);
 	if (!immersive && vrKeyboardOpen) closeVrKeyboard({ apply: false });
+	syncVrMenuLight();
 
 	if (desktopChat) {
 		const hideDom = displayOnlyMode || (immersive ? !show : uiCollapsed);
@@ -8216,6 +8309,7 @@ renderer.xr.addEventListener('sessionstart', () => {
 	document.body.classList.toggle('gs-xr-ar', xrSessionMode === 'immersive-ar');
 	applyEnvironmentMode();
 	renderDomEnv();
+	renderXrModeToggle();
 	// An open camera preview switches to the headset (passthrough) camera.
 	photoCapture?.restartForMode();
 });
@@ -8228,6 +8322,7 @@ renderer.xr.addEventListener('sessionend', () => {
 	isVRMode = true;
 	applyEnvironmentMode();
 	renderDomEnv();
+	renderXrModeToggle();
 	setImmersiveUiMode(false);
 	resetCameraView(); // back to the default desktop view (not the headset pose)
 	photoCapture?.restartForMode();
@@ -8450,6 +8545,20 @@ function onVrWindowActivate(win, el, field) {
 
 // Menu centred at VR_MENU_Y, keyboard right under it, HUD at the top right
 // of the view. Every window uses the same CSS px -> metre scale.
+function placeVrMenuLight() {
+	if (!vrMainWindow) return;
+	const m = vrMainWindow.mesh.position;
+	vrMenuLight.position.set(m.x, m.y + vrMainWindow.heightM / 2 + VR_MENU_LIGHT_ABOVE, m.z + VR_MENU_LIGHT_FORWARD);
+}
+function syncVrMenuLight() {
+	const inXr = !!(renderer && renderer.xr && renderer.xr.isPresenting);
+	if (!inXr || displayOnlyMode) { if (vrMenuLight.parent) vrMenuLight.parent.remove(vrMenuLight); return; }
+	if (vrMenuLight.parent !== panelAnchor) panelAnchor.add(vrMenuLight);
+	placeVrMenuLight();
+	vrMenuLight.intensity = vrMainWindow && vrMainWindow.mesh.visible ? VR_MENU_LIGHT_INTENSITY : 0;
+}
+window.gsMenuLight = vrMenuLight; // tests / debugging
+
 function layoutVrWindows() {
 	if (!vrWindows) return;
 	const z = -VR_WINDOW_DISTANCE;
@@ -8802,6 +8911,7 @@ renderer.setAnimationLoop((time) => {
 		const cameraWorldPos = _cameraWorldPos;
 		xrCamera.getWorldPosition(cameraWorldPos);
 		updatePanelAnchor(dt, xrCamera);
+		if (vrMenuLight.parent) placeVrMenuLight(); // menu height follows its content
 
 		// World windows face the camera while staying upright.
 		vrMainWindow.mesh.lookAt(cameraWorldPos);

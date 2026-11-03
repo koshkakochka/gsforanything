@@ -1,0 +1,10 @@
+{
+  "name": "gs-xr-menu-mode-test",
+  "private": true,
+  "type": "module",
+  "description": "Headless checks for the AR | VR toggle inside the headset menu (IWER Meta Quest 3): visible next to Exit VR, ray-clickable, VR -> AR session switch, live AR -> VR colour sky, one-tap fallback dialog, unsupported AR.",
+  "dependencies": {
+    "iwer": "^2.7.0",
+    "puppeteer-core": "24.43.1"
+  }
+}

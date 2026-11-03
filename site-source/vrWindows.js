@@ -95,7 +95,10 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			depthWrite: depthTest,
 			// Exact CSS colours: no tone mapping on UI (it lifted the darks and
 			// cut the contrast of the old panels).
-			toneMapped: false
+			toneMapped: false,
+			// Unlit, and no scene fog either: a dark, foggy scene must not dim
+			// or tint the windows.
+			fog: false
 		});
 		const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
 		mesh.name = 'vrWindow:' + name;
@@ -185,7 +188,7 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			tex.minFilter = THREE.LinearFilter;
 			tex.magFilter = THREE.LinearFilter;
 			const quad = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({
-				map: tex, side: THREE.DoubleSide, depthTest, depthWrite: false, toneMapped: false
+				map: tex, side: THREE.DoubleSide, depthTest, depthWrite: false, toneMapped: false, fog: false
 			}));
 			quad.name = 'vrWindowLive:' + name;
 			quad.visible = false;

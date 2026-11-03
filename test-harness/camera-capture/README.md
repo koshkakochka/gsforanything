@@ -30,6 +30,17 @@ cd test-harness/camera-capture && npm i   # or symlink node_modules (puppeteer-c
 BASE=https://localhost:3521 SHOT_DIR=/tmp/cam-shots node test.mjs
 ```
 
+- Quest Browser permission behaviour (mocked `mediaDevices`, like a real
+  Quest 3: only `camera 0, facing front` and OverconstrainedError for
+  `facingMode: {exact: 'environment'}` until Headset cameras is allowed; then
+  `camera 1/2, facing back`): first request asks for the environment camera;
+  "Quest passthrough (left/right)" labels; a late list with no devicechange is
+  picked up; avatar-only shows the inline hint + "How to turn it on" gsDialog
+  and switches to passthrough once it's allowed; a chosen avatar camera is
+  kept; in VR the hint and the passthrough preview quad are on the VR menu;
+  Enter VR asks for Headset cameras first when "granted" lists only the avatar
+  camera.
+
 Not covered (needs a real Quest 3): the real passthrough camera frames, the
 Headset cameras permission prompt, and whether Quest Browser keeps the camera
 running inside an immersive session.
