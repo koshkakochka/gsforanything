@@ -246,7 +246,7 @@ function drawFormValue(ctx, el, style, ox, oy) {
 		const bx = x + (rect.width - box) / 2;
 		const by = y + (rect.height - box) / 2;
 		ctx.strokeStyle = style.borderTopColor && !isTransparent(style.borderTopColor) ? style.borderTopColor : style.color;
-		ctx.lineWidth = 1.5;
+		ctx.lineWidth = Math.max(1.5, Math.min(3, parseFloat(style.borderTopWidth) || 0));
 		ctx.strokeRect(bx, by, box, box);
 		if (el.checked) {
 			ctx.fillStyle = style.accentColor || style.color || '#fff';

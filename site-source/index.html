@@ -2540,7 +2540,11 @@
 		html.gs-technical .gs-technical-off { display: none !important; }
 		html.gs-technical [data-gs-technical] { outline: 2px solid var(--gs-technical-accent); outline-offset: 1px; background-color: var(--gs-technical-tint); border-radius: 6px; }
 		.gs-tech-mode { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; background: #2a2c3a; font-size: 14px; font-weight: 600; color: #fff; cursor: pointer; }
-		.gs-tech-mode input[type="checkbox"] { width: 20px; height: 20px; margin: 0; accent-color: var(--gs-technical-accent); cursor: pointer; }
+		/* Own checkbox look so the unchecked box reads on dark menus (2D + the VR painter, which strokes border-top-color). */
+		.gs-tech-mode input[type="checkbox"] { -webkit-appearance: none; appearance: none; flex: 0 0 auto; width: 20px; height: 20px; margin: 0; border: 2px solid var(--gs-technical-accent); border-radius: 4px; background: #11121a; accent-color: var(--gs-technical-accent); color: var(--gs-technical-accent); cursor: pointer; display: inline-grid; place-content: center; }
+		.gs-tech-mode input[type="checkbox"]:checked { background: var(--gs-technical-accent); }
+		.gs-tech-mode input[type="checkbox"]:checked::after { content: ''; width: 5px; height: 10px; margin-top: -2px; border: solid #0b1a10; border-width: 0 2.5px 2.5px 0; transform: rotate(45deg); }
+		.gs-tech-mode input[type="checkbox"]:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 		.gs-tech-mode-desc { margin-top: -4px; }
 		#dchat-technical { display: flex; flex-direction: column; gap: 12px; padding: 10px 12px; overflow: auto; }
 		.gs-tech-item { border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
