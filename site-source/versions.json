@@ -1,9 +1,22 @@
 {
   "versions": [
     {
-      "id": "0.992",
-      "label": "GS 0.992 (this build)",
+      "id": "0.993",
+      "label": "GS 0.993 (this build)",
       "url": null,
+      "date": "2026-11-02",
+      "changes": [
+        "The AR / VR toggle is now in the menu inside the headset too, at the top next to Exit VR, and you can click it with the controller ray. It shows the mode you're in and uses the same setting as the desktop toggle.",
+        "In VR, picking AR switches straight into AR (passthrough). If the headset doesn't allow the instant switch, a pop-up asks for one more tap to enter AR.",
+        "In AR, picking VR covers your room with the colour sky right away, and picking AR shows the room again, without leaving the session.",
+        "A soft light now sits just above the menu in VR / AR, so the menu and the space around you are visible in dark, shadowy scenes. It follows the menu, turns off while the menu is hidden, and is never saved or exported with your scene. The menu itself now ignores scene fog, so it always stays readable.",
+        "On Meta Quest 3, the chat window's 📷 camera list now includes the passthrough camera, the same view of your room you see in AR, not just the avatar camera. GS asks for the Headset cameras permission, then lists and switches to the passthrough camera; if only the avatar camera shows up, a hint explains how to allow it."
+      ]
+    },
+    {
+      "id": "0.992",
+      "label": "GS 0.992",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-02",
       "changes": [
         "Take photos with your camera: a new 📷 button sits next to the 📎 upload button in the chat window (under More on phones). It opens a live camera preview between the messages and the buttons.",
