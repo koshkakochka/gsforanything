@@ -25,7 +25,8 @@ import { createTwinSticks } from './twinSticks.js';
 import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, ORBIT_TARGET, isTextEntry } from './cameraControls.js';
 import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
 import { createSceneFit, DOME_MARGIN, FAR_MARGIN, isDomeObject } from './sceneFit.js';
-import { createPhotoCapture, askCameraBeforeXr } from './photoCapture.js';
+import { createPhotoCapture, askCameraBeforeXr, registerQuestPassthroughItem } from './photoCapture.js';
+import * as gsTechnicalMode from './technicalMode.js';
 import * as gsCamPipeline from './passthroughTexture.js';
 // p5.js sketch import (paste / file / zip / URL -> panel in the scene). Self-contained;
 // it only uses the window.gs* hooks set up next to gsCreateP5Surface below.
@@ -6964,6 +6965,17 @@ window.gsPhotoCapture = photoCapture;
 // chat preview's hidden <video> and stream; passthroughTexture.js).
 window.gsPassthroughTexture = gsCamPipeline.gsPassthroughTexture;
 window.gsCamPipeline = gsCamPipeline; // tests / debugging
+// 🛠 Technical mode (technicalMode.js): toggle in Controls, tab of advanced
+// items. Items register with registerTechnicalItem(); the first is the Quest
+// passthrough camera ADB fix.
+registerQuestPassthroughItem(photoCapture);
+gsTechnicalMode.initTechnicalMode({
+	tab: document.getElementById('dchat-tab-technical'),
+	panel: document.getElementById('dchat-panel-technical'),
+	toggle: document.getElementById('dchat-technical-toggle'),
+	onLayout: () => { if (vrMainWindow) vrMainWindow.markDirty(); }
+});
+window.gsTechnicalMode = gsTechnicalMode;
 // A short chat window grows (within the viewport) while the camera is open, so
 // the preview fits between the messages and the buttons; it goes back on close.
 (() => {

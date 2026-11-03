@@ -29,6 +29,7 @@
           "site-source/gsDialog.js",
           "site-source/photoCapture.js",
           "site-source/passthroughTexture.js",
+        "site-source/technicalMode.js",
           "site-source/threejsAddons/**",
           "site-source/vendor_modules/**"
         ],

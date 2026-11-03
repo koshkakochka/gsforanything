@@ -2533,6 +2533,20 @@
 		#gs-camera-panel .gs-cam-diag[hidden] { display: none; }
 		#gs-camera-panel .gs-cam-diag-text { flex: 1 1 auto; min-width: 0; margin: 0; max-height: 160px; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; color: #d6d8e6; user-select: text; }
 		body.gs-xr-presenting #gs-camera-panel .gs-cam-diag-text { max-height: none; }
+		.dchat-tab[hidden], #gs-camera-panel [hidden] { display: none !important; }
+		#dchat-technical-toggle[data-on="true"] { background: #4f46e5; }
+		#dchat-technical { display: flex; flex-direction: column; gap: 12px; padding: 10px 12px; overflow: auto; }
+		.gs-tech-item { border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+		.gs-tech-step { font-size: 13px; line-height: 1.45; color: rgba(255,255,255,0.88); padding-left: 16px; text-indent: -16px; }
+		.gs-tech-item ol { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.45; color: rgba(255,255,255,0.88); }
+		.gs-tech-item p { margin: 0; font-size: 13px; line-height: 1.45; color: rgba(255,255,255,0.82); }
+		.gs-tech-code { display: flex; gap: 8px; align-items: center; background: #11121a; border-radius: 6px; padding: 6px 8px; }
+		.gs-tech-code code { flex: 1 1 auto; min-width: 0; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #a5f3c4; word-break: break-all; user-select: text; }
+		.gs-tech-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+		.gs-tech-row .dchat-btn, .gs-tech-code .dchat-btn { padding: 6px 10px; font-size: 12px; }
+		.gs-tech-diag { margin: 0; padding: 6px 8px; border-radius: 6px; background: #11121a; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; color: #d6d8e6; user-select: text; }
+		body.gs-xr-presenting .gs-tech-diag { max-height: none; }
+		.gs-tech-result { font-size: 12px; color: #c7d2fe; }
 		#gs-camera-panel .gs-cam-hint {
 			display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; flex-shrink: 0;
 			padding: 6px 8px; border-radius: 9px; font-size: 12px; line-height: 1.35; color: #fde68a;
@@ -2754,6 +2768,7 @@
 			<button class="dchat-tab" data-tab="controls">🎮 Controls</button>
 			<button class="dchat-tab" data-tab="deps">📦 <span class="dchat-tab-full">Dependencies</span><span class="dchat-tab-short">Deps</span></button>
 			<button class="dchat-tab" data-tab="share">🔗 Share</button>
+			<button class="dchat-tab" data-tab="technical" id="dchat-tab-technical" hidden>🛠 <span class="dchat-tab-full">Technical</span><span class="dchat-tab-short">Tech</span></button>
 		</div>
 
 		<div id="dchat-panel-chat" class="dchat-panel active">
@@ -3097,6 +3112,23 @@
 				<div class="dchat-controls-help" style="color:rgba(255,255,255,0.72)">
 					Desktop and phone only. In a headset, the thumbsticks still move you (see Environment &rarr; Navigation).
 				</div>
+				<div id="dchat-technical-setting">
+					<div class="dchat-section-label" style="margin:6px 0 8px">Technical mode</div>
+					<button type="button" id="dchat-technical-toggle" class="dchat-btn secondary" aria-checked="false">Technical mode: Off</button>
+					<div class="dchat-controls-help" style="margin-top:6px">
+						For advanced setup, such as permissions outside normal browser operation and developer tools.
+						Adds a 🛠 Technical tab. Saved in this browser. Works in the headset menu too.
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div id="dchat-panel-technical" class="dchat-panel">
+			<div id="dchat-technical">
+				<div class="dchat-controls-help" style="color:rgba(255,255,255,0.72)">
+					Advanced setup. These steps go outside normal browser use (developer tools, system permissions); only follow them if you know you need them.
+				</div>
+				<div class="gs-tech-list"></div>
 			</div>
 		</div>
 

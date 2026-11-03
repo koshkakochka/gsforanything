@@ -35,8 +35,8 @@
  * native dialog. Closing the panel stops every track.
  */
 
-import { gsAlert } from './gsDialog.js';
 import * as cam from './passthroughTexture.js';
+import { isTechnicalMode, onTechnicalModeChange, openTechnicalTab, registerTechnicalItem, copyText } from './technicalMode.js';
 
 const STORE_KEY = 'gs.cameraDevice';      // last camera picked on this device (outside XR)
 const STORE_KEY_XR = 'gs.cameraDeviceXr'; // last camera picked inside a headset session
@@ -54,7 +54,7 @@ export const QUEST_PASSTHROUGH_HELP = [
 	'3. Come back, reload the page and tap 📷 again. If Quest asks which cameras to allow, tick Headset cameras (Virtual cameras is ticked on its own), then Allow.',
 	'4. Still only the avatar camera? Select the lock icon left of the address bar, check the camera permission is Allow, reload. Quest only asks once: allowing with just Virtual cameras ticked means it won\u2019t ask again until step 2 is done.',
 	'',
-	'Only one app or website can use the headset cameras at a time, so close other tabs or apps that use them. Under 📷 › Details GS shows what the headset reports (camera list, permission, errors).'
+	'Only one app or website can use the headset cameras at a time, so close other tabs or apps that use them.'
 ].join('\n');
 
 const store = {
@@ -107,7 +107,7 @@ export function cameraLabel(device, index) {
 function errorMessage(err, { xr }) {
 	const name = err && err.name;
 	if (name === 'NotAllowedError' || name === 'SecurityError') {
-		if (isQuestBrowser() || xr) return 'Camera access is blocked. On Quest: Settings › Privacy & safety › Browser › turn on Headset cameras, and set the camera to Allow under the lock icon left of the address bar, then reload. (Help: “How to turn it on”.)';
+		if (isQuestBrowser() || xr) return 'Camera access is blocked. On Quest: Settings › Privacy & safety › Browser › turn on Headset cameras, and set the camera to Allow under the lock icon left of the address bar, then reload.';
 		return 'Camera access is blocked. Allow the camera for this site in your browser’s site settings (the icon next to the address), then try again.';
 	}
 	if (name === 'NotFoundError' || name === 'OverconstrainedError' || name === 'DevicesNotFoundError') {
@@ -139,12 +139,11 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 			<div class="gs-cam-msg" role="status" aria-live="polite" hidden></div>
 			<div class="gs-cam-flash"></div>
 		</div>
-		<div class="gs-cam-statusrow"><span class="gs-cam-status" aria-live="off">camera: off</span><button type="button" class="gs-cam-diag-toggle" aria-expanded="false">Details</button></div>
-		<div class="gs-cam-diag" hidden><pre class="gs-cam-diag-text"></pre><button type="button" class="gs-cam-diag-copy">Copy</button></div>
+		<div class="gs-cam-statusrow"><span class="gs-cam-status" aria-live="off">camera: off</span></div>
 		<div class="gs-cam-hint" role="note" hidden>
 			<span class="gs-cam-hint-text"></span>
-			<button type="button" class="gs-cam-hint-help">How to turn it on</button>
-			<button type="button" class="gs-cam-hint-retry">Try again</button>
+			<button type="button" class="gs-cam-hint-help" hidden>Open Technical</button>
+			<button type="button" class="gs-cam-hint-retry" hidden>Try again</button>
 		</div>
 		<div class="gs-cam-controls">
 			<select class="gs-cam-select" aria-label="Camera" title="Choose a camera"></select>
@@ -157,10 +156,6 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 	const view = panel.querySelector('.gs-cam-canvas'); // preview, drawn from the hidden video every frame
 	const video = cam.hiddenVideo();
 	const statusEl = panel.querySelector('.gs-cam-status');
-	const diagEl = panel.querySelector('.gs-cam-diag');
-	const diagText = panel.querySelector('.gs-cam-diag-text');
-	const diagToggle = panel.querySelector('.gs-cam-diag-toggle');
-	const diagCopy = panel.querySelector('.gs-cam-diag-copy');
 	const msgEl = panel.querySelector('.gs-cam-msg');
 	const flash = panel.querySelector('.gs-cam-flash');
 	const select = panel.querySelector('.gs-cam-select');
@@ -200,8 +195,7 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 		onLayout();
 	}
 
-	/** Quest with only the avatar camera listed: explain, offer help + retry. */
-	/** What the browser reports, for "Details" (Kross reads it out / copies it). */
+	/** What the browser reports (🛠 Technical › Quest passthrough camera (ADB) shows it). */
 	async function diagnostics() {
 		const ua = navigator.userAgent || '';
 		const qb = ua.match(/OculusBrowser\/([\w.]+)/);
@@ -229,27 +223,43 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 		];
 		return lines.join('\n');
 	}
-	async function refreshDiag() { if (!diagEl.hidden) { diagText.textContent = await diagnostics(); onLayout(); } }
-	function showDiag(on) {
-		diagEl.hidden = !on;
-		diagToggle.setAttribute('aria-expanded', String(on));
-		diagToggle.textContent = on ? 'Hide details' : 'Details';
-		if (on) refreshDiag(); else onLayout();
+	/**
+	 * "Check again": ask for the passthrough camera once more ({exact:
+	 * 'environment'}, the request behind Headset cameras), list the cameras
+	 * again and, if the preview is open, switch it to a passthrough camera.
+	 */
+	async function probePassthrough() {
+		if (!supported) return { ok: false, error: 'NotSupportedError', passthrough: 0 };
+		let s = null;
+		if (!(open && stream && isPassthroughCamera(devices.find((d) => d.deviceId === currentId)))) {
+			if (open) { startSeq++; stopTracks(); } // Quest gives one camera at a time
+			try { s = await md.getUserMedia(passthroughConstraints()); ptProbe = 'ok'; ptProbeMsg = ''; }
+			catch (e) { ptProbe = (e && e.name) || 'Error'; ptProbeMsg = (e && e.message) || ''; lastErr = `${ptProbe}: ${ptProbeMsg}`; }
+			if (s) for (const t of s.getTracks()) t.stop();
+		}
+		devices = await listCameras();
+		renderSelect();
+		if (open) await start(hasPassthrough() ? devices.filter(isPassthroughCamera)[0].deviceId : null);
+		updateHint();
+		return { ok: ptProbe === 'ok' || hasPassthrough(), error: ptProbe === 'ok' ? '' : `${ptProbe}${ptProbeMsg ? ': ' + ptProbeMsg : ''}`, passthrough: devices.filter(isPassthroughCamera).length, cameras: devices.length };
 	}
 
+	/** Quest with only the avatar camera listed: a short line (Technical mode: a pointer to the fix). */
 	function updateHint() {
 		const show = open && quest() && !hasPassthrough() && (!!stream || !!panel.dataset.error);
+		const tech = isTechnicalMode();
 		hintEl.hidden = !show;
-		refreshDiag();
+		hintHelp.hidden = !tech;
+		hintRetry.hidden = !tech;
 		panel.dataset.passthroughMissing = String(show);
 		if (show) {
-			hintText.textContent = xr()
-				? 'Only the avatar camera is available. Exit VR / AR, then turn on Quest Settings › Privacy & safety › Browser › Headset cameras.'
-				: 'Only the avatar camera is available. Turn on Quest Settings › Privacy & safety › Browser › Headset cameras, then reload.';
-			showDiag(true);
+			hintText.textContent = tech
+				? 'Only the avatar camera is available. See 🛠 Technical › Quest passthrough camera (ADB).'
+				: 'Passthrough camera needs extra setup: turn on Technical mode in Settings (🎮 Controls › Technical mode).';
 		}
 		onLayout();
 	}
+	onTechnicalModeChange(() => updateHint());
 
 	function clearRelist() { for (const t of relistTimers) clearTimeout(t); relistTimers = []; }
 
@@ -467,18 +477,7 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 		if (open) start(id);
 	});
 	if (md && md.addEventListener) md.addEventListener('devicechange', () => { relist(); });
-	diagToggle.addEventListener('click', (e) => { e.preventDefault(); showDiag(diagEl.hidden); });
-	diagCopy.addEventListener('click', async (e) => {
-		e.preventDefault();
-		const text = await diagnostics();
-		diagText.textContent = text;
-		let ok = false;
-		try { await navigator.clipboard.writeText(text); ok = true; } catch { /* no clipboard: select it instead */ }
-		if (!ok) { const r = document.createRange(); r.selectNodeContents(diagText); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); try { ok = document.execCommand('copy'); } catch { /* ignore */ } }
-		diagCopy.textContent = ok ? 'Copied' : 'Select + copy';
-		setTimeout(() => { diagCopy.textContent = 'Copy'; }, 1500);
-	});
-	hintHelp.addEventListener('click', (e) => { e.preventDefault(); gsAlert(QUEST_PASSTHROUGH_HELP, { title: 'Use the Quest passthrough camera' }); });
+	hintHelp.addEventListener('click', (e) => { e.preventDefault(); openTechnicalTab('quest-passthrough-adb'); });
 	hintRetry.addEventListener('click', (e) => { e.preventDefault(); if (open) start(null); });
 	// Hidden tab: release the camera (the light goes off).
 	document.addEventListener('visibilitychange', () => { if (document.hidden && open) closePanel(); });
@@ -513,7 +512,7 @@ export function createPhotoCapture({ panel, button, onPhoto, isImmersive = () =>
 			};
 		},
 		diagnostics,
-		showDetails: showDiag,
+		probePassthrough,
 		usedBefore: () => store.get(USED_KEY) === '1'
 	};
 }
@@ -547,4 +546,58 @@ export async function askCameraBeforeXr() {
 		stop(await md.getUserMedia({ video: true, audio: false }));
 		return true;
 	} catch { return false; }
+}
+
+// ───────────── 🛠 Technical › Quest passthrough camera (ADB) ─────────────
+export const QUEST_ADB_COMMAND = 'adb shell pm grant com.oculus.browser horizonos.permission.HEADSET_CAMERA';
+
+/**
+ * Registers the Technical mode item for the Quest Browser bug where the
+ * Headset cameras prompt never appears (only the avatar camera is listed and
+ * {exact:'environment'} fails with OverconstrainedError; Meta investigation
+ * 1557993751977106). Workaround: grant the permission over ADB.
+ */
+export function registerQuestPassthroughItem(capture) {
+	registerTechnicalItem({
+		id: 'quest-passthrough-adb', title: 'Quest passthrough camera (ADB)', order: 10,
+		render(body, { onLayout }) {
+			body.innerHTML = `
+				<p>On some Quest Browser versions the Headset cameras prompt never appears, so GS only gets the avatar camera and the passthrough request fails with OverconstrainedError (a Quest Browser bug Meta is investigating). First try Quest Settings › Privacy & safety › Browser › Headset cameras. If that doesn’t help, grant the permission from a computer with ADB:</p>
+					<div class="gs-tech-step">1. In the Meta Horizon phone app: Menu › Devices › your headset › Headset settings › Developer mode: turn it on (needs a developer account), then restart the headset.</div>
+					<div class="gs-tech-step">2. Install Android platform tools (adb) on your computer.</div>
+					<div class="gs-tech-step">3. Connect the headset by USB-C, put it on and choose Allow USB debugging (tick Always allow).</div>
+					<div class="gs-tech-step">4. On the computer run <code>adb devices</code> (the headset should be listed), then run:</div>
+				<div class="gs-tech-code"><code class="gs-tech-adb-cmd"></code><button type="button" class="dchat-btn secondary gs-tech-copy">Copy</button></div>
+					<div class="gs-tech-step">5. Quit and reopen Quest Browser (close it fully), reload GS, then tap Check again or 📷.</div>
+				<div class="gs-tech-row"><button type="button" class="dchat-btn gs-tech-check">Check again</button><span class="gs-tech-result" role="status"></span></div>
+				<div class="gs-tech-row"><span class="dchat-section-label" style="margin:0">Camera details</span><button type="button" class="dchat-btn secondary gs-tech-diag-copy">Copy details</button></div>
+				<pre class="gs-tech-diag">Open this tab or tap Check again to read the camera details.</pre>`;
+			const cmd = body.querySelector('.gs-tech-adb-cmd');
+			cmd.textContent = QUEST_ADB_COMMAND;
+			const copy = body.querySelector('.gs-tech-copy');
+			const check = body.querySelector('.gs-tech-check');
+			const result = body.querySelector('.gs-tech-result');
+			const diag = body.querySelector('.gs-tech-diag');
+			const diagCopy = body.querySelector('.gs-tech-diag-copy');
+			const flash = (btn, ok) => { btn.textContent = ok ? 'Copied' : 'Select + copy'; setTimeout(() => { btn.textContent = btn === copy ? 'Copy' : 'Copy details'; onLayout(); }, 1500); onLayout(); };
+			const refresh = async () => { diag.textContent = await capture.diagnostics(); onLayout(); };
+			copy.addEventListener('click', async (e) => { e.preventDefault(); flash(copy, await copyText(QUEST_ADB_COMMAND, cmd)); });
+			diagCopy.addEventListener('click', async (e) => { e.preventDefault(); await refresh(); flash(diagCopy, await copyText(diag.textContent, diag)); });
+			check.addEventListener('click', async (e) => {
+				e.preventDefault();
+				check.disabled = true; result.textContent = 'Checking…'; onLayout();
+				try {
+					const r = await capture.probePassthrough();
+					result.textContent = r.passthrough
+						? `Passthrough camera available (${r.passthrough} listed). The 📷 camera list now includes it.`
+						: `Still only ${r.cameras === 1 ? 'the avatar camera' : r.cameras + ' camera(s), no passthrough'}${r.error ? ' (' + r.error + ')' : ''}. Run the ADB command, then restart Browser.`;
+				} catch (err) { result.textContent = 'Check failed: ' + ((err && err.name) || err); }
+				check.disabled = false;
+				await refresh();
+			});
+			const md = navigator.mediaDevices;
+			if (md && md.addEventListener) md.addEventListener('devicechange', () => { if (isTechnicalMode()) refresh(); });
+			return { refresh };
+		}
+	});
 }

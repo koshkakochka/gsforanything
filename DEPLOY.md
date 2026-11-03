@@ -23,10 +23,14 @@ Current shipped version at time of writing this doc workflow: see `GS_VERSION` i
 
 Local HTTPS test serve (box): often `/workspace/gs-serve-gh` on `https://localhost:3456` (self-signed). Prefer PC edits; sync client files into the serve copy for browser tests.
 
+## Technical mode (`site-source/technicalMode.js`)
+
+Opt-in setting (off by default, saved per browser in `localStorage['gs.technicalMode']`) for advanced setup: permissions outside normal browser operation, developer tools. Toggle: **Controls tab › Technical mode** (the VR / AR menu window paints the same DOM, so it is ray-clickable there too). When on, a **🛠 Technical** tab lists registered items. Add one with `registerTechnicalItem({ id, title, order, render(body, { onLayout }) })` (see the file header); the first is *Quest passthrough camera (ADB)*, registered in `photoCapture.js` (`registerQuestPassthroughItem`). Off: the 📷 panel only shows a short "needs extra setup: turn on Technical mode" line on Quest when only the avatar camera exists. Remember new client modules go in `worker/sync-public.sh` and `vercel.json` `includeFiles`.
+
 ## Vercel
 
 1. Ask user for version → update `version.js` + `versions.json`.
-2. Ensure `vercel.json` `includeFiles` lists every client module the browser imports (`main.js`, `syntaxHighlight.js`, `version.js`, `versions.json`, `htmlInCanvas.js`, `menuSystem.js`, `vrWindows.js`, `exporter.js`, `creationContext.js`, `p5Import.js`, `communityMerge.js`, `twinSticks.js`, `cameraControls.js`, `chatPrompt.js`, `originGizmo.js`, `sceneFit.js`, `embedExport.js`, `sceneExportPolicy.js` (also imported by `server.js`), `gsDialog.js`, `photoCapture.js`, `passthroughTexture.js`, `threejsAddons/**`, `vendor_modules/**`, etc.).
+2. Ensure `vercel.json` `includeFiles` lists every client module the browser imports (`main.js`, `syntaxHighlight.js`, `version.js`, `versions.json`, `htmlInCanvas.js`, `menuSystem.js`, `vrWindows.js`, `exporter.js`, `creationContext.js`, `p5Import.js`, `communityMerge.js`, `twinSticks.js`, `cameraControls.js`, `chatPrompt.js`, `originGizmo.js`, `sceneFit.js`, `embedExport.js`, `sceneExportPolicy.js` (also imported by `server.js`), `gsDialog.js`, `photoCapture.js`, `passthroughTexture.js`, `technicalMode.js`, `threejsAddons/**`, `vendor_modules/**`, etc.).
 3. Commit only the intended files; push `origin/main`.
 4. **GitHub auto-deploy** usually ships Production for `vrclaudeinterface` / `carljr`. If the PC is online and logged into Vercel CLI: `npx vercel --prod --yes` from the repo root.
 5. Verify (below).
