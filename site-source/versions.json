@@ -1,9 +1,22 @@
 {
   "versions": [
     {
-      "id": "0.993",
-      "label": "GS 0.993 (this build)",
+      "id": "0.994",
+      "label": "GS 0.994 (this build)",
       "url": null,
+      "date": "2026-11-02",
+      "changes": [
+        "The 📷 camera preview in the chat window was rebuilt: the camera now plays in one hidden video and GS draws every frame into the preview itself, in the normal window and inside VR / AR (where the old preview could stay blank).",
+        "A small status line under the camera picture says which camera is on, its size and whether frames are coming in (for example “camera: Quest passthrough (left) 1280×960 · playing”), or the exact error.",
+        "New Details button under the camera picture: shows the browser version, the camera permission, every camera the device lists and the exact error, with a Copy button. It opens on its own when Quest only offers the avatar camera.",
+        "Only the avatar camera on Quest 3? The hint and help now point to the switch that fixes it: Quest Settings › Privacy & safety › Browser › Headset cameras (and tick Headset cameras, not just Virtual cameras, when Quest asks).",
+        "New for scenes: gsPassthroughTexture() puts the live camera feed (the Quest passthrough camera, or the back / default camera elsewhere) on any object, sharing the chat camera. The AI knows how to use it, and the camera picture is never saved in exports."
+      ]
+    },
+    {
+      "id": "0.993",
+      "label": "GS 0.993",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-02",
       "changes": [
         "The AR / VR toggle is now in the menu inside the headset too, at the top next to Exit VR, and you can click it with the controller ray. It shows the mode you're in and uses the same setting as the desktop toggle.",
