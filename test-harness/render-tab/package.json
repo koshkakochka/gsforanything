@@ -1,0 +1,6 @@
+{
+  "name": "gs-render-tab-tests",
+  "private": true,
+  "type": "module",
+  "description": "SBS VR180 Render tab tests for GS For Anything"
+}

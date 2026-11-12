@@ -28,6 +28,7 @@ import { THUMB_WIDTH, THUMB_HEIGHT, THUMB_MAX_BYTES } from './sceneThumbnail.js'
 import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
 import { createSceneFit, DOME_MARGIN, FAR_MARGIN, isDomeObject } from './sceneFit.js';
 import { createPhotoCapture, askCameraBeforeXr, registerQuestPassthroughItem } from './photoCapture.js';
+import { createSbsRenderer, mountRenderTab } from './sbsRender.js';
 import * as gsTechnicalMode from './technicalMode.js';
 import * as gsCamPipeline from './passthroughTexture.js';
 // p5.js sketch import (paste / file / zip / URL -> panel in the scene). Self-contained;
@@ -7258,6 +7259,16 @@ photoCapture = createPhotoCapture({
 	onLayout: () => { if (vrMainWindow) vrMainWindow.markDirty(); }
 });
 window.gsPhotoCapture = photoCapture;
+const sbsRender = createSbsRenderer({
+	THREE,
+	getRenderer: () => renderer,
+	getScene: () => scene,
+	getCamera: () => camera,
+	hideSystemObjects: hideSystemObjectsForThumb,
+});
+mountRenderTab(sbsRender);
+window.gsSbsRender = sbsRender;
+
 // Passthrough / camera feed as a THREE.VideoTexture for scene code (shares the
 // chat preview's hidden <video> and stream; passthroughTexture.js).
 window.gsPassthroughTexture = gsCamPipeline.gsPassthroughTexture;
@@ -8062,7 +8073,7 @@ document.addEventListener('keydown', (e) => {
 
 // Tabs: opened from the hamburger at the top left of the menu window
 // (Chat / Environment / Scenes / Files / Code / Community / Controls /
-// Dependencies / Share / Technical / Meta Settings).
+// Dependencies / Share / Render / Technical / Meta Settings).
 function tabButtonLabel(btn) {
 	if (!btn) return '';
 	const clone = btn.cloneNode(true);

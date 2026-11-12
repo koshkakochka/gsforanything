@@ -1,9 +1,20 @@
 {
   "versions": [
     {
-      "id": "0.997",
-      "label": "GS 0.997 (this build)",
+      "id": "0.998",
+      "label": "GS 0.998 (this build)",
       "url": null,
+      "date": "2026-11-12",
+      "changes": [
+        "The version picker and Cardboard VR button live in a new Meta Settings tab, so they no longer crowd the top of the window.",
+        "All tabs open from a hamburger at the top left of the menu window. The active tab name stays visible next to it; Esc or a click outside closes the list.",
+        "A new Render tab takes side-by-side VR180-style screenshots and screen recordings (equirectangular, default 180° field of view, saved to your device)."
+      ]
+    },
+    {
+      "id": "0.997",
+      "label": "GS 0.997",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-12",
       "changes": [
         "The Community tab shows each scene as a large tile in a responsive grid (several columns in a wide window, one column on a phone).",
