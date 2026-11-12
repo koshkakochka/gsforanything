@@ -6232,7 +6232,7 @@ window.gsOrigin = {
 // Environment (2D / 3D) + Dependencies (THREE.js / ammo.js / p5.js)
 // ============================================================================
 // The dependency loader itself lives in index.html (it has to run before this
-// module so ammo.js is already downloading). This section adds:
+// module so any dependency that is switched on is already downloading). This section adds:
 //   - the Environment tab's 2D/3D choice (2D: p5.js | blank canvas,
 //     3D: THREE.js | raw WebGL), saved in localStorage;
 //   - the Dependencies tab (which libraries load on startup);

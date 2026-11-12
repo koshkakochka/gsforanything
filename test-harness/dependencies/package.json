@@ -1,0 +1,6 @@
+{
+  "name": "gs-dependencies-tests",
+  "private": true,
+  "type": "module",
+  "description": "Dependencies tab defaults (ammo.js off by default, still available) for GS For Anything"
+}

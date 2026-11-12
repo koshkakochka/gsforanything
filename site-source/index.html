@@ -3448,7 +3448,8 @@
 	<!--
 		GS dependencies (see the Dependencies tab). This classic script runs
 		before main.js and injects the <script> tag for every library that is
-		switched on (ammo.js is on by default). Local copies are tried first,
+		switched on (ammo.js and p5.js are off by default; THREE.js is built in).
+		Local copies are tried first,
 		then a pinned CDN copy. Scene code gets libraries with gsRequire():
 		  const Ammo = await gsRequire('ammo');  // initialised ammo.js (Bullet physics)
 		  const p5 = await gsRequire('p5');      // p5.js constructor (instance mode)
@@ -3469,8 +3470,8 @@
 				homepage: 'https://threejs.org'
 			},
 			{
-				id: 'ammo', name: 'ammo.js', version: 'Bullet physics, WebAssembly build from three r180', defaultEnabled: true,
-				description: 'Rigid-body physics: gravity, collisions, constraints. The AI uses it when a scene needs physics.',
+				id: 'ammo', name: 'ammo.js', version: 'Bullet physics, WebAssembly build from three r180', defaultEnabled: false,
+				description: 'Rigid-body physics: gravity, collisions, constraints. Optional; scene code can still load it with await gsRequire(\'ammo\').',
 				src: './vendor_modules/three/examples/jsm/libs/ammo.wasm.js',
 				fallbackSrc: 'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/libs/ammo.wasm.js',
 				homepage: 'https://github.com/kripken/ammo.js'
@@ -3488,9 +3489,29 @@
 
 		var saved = {};
 		try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') || {}; } catch (e) { saved = {}; }
+		if (!saved || typeof saved !== 'object' || Array.isArray(saved)) saved = {};
+		var explicit = {};
+		if (saved.explicit && typeof saved.explicit === 'object' && !Array.isArray(saved.explicit)) {
+			Object.keys(saved.explicit).forEach(function (k) {
+				if (saved.explicit[k] === true) explicit[k] = true;
+			});
+		}
 		var enabled = {};
+		// A stored boolean is used when it is an explicit user choice.
+		// ammo.js used to default to on, and persist() wrote ammo:true whenever
+		// any dependency was saved, so a bare ammo:true with no explicit.ammo
+		// just mirrors that old default and is treated as off. A stored false
+		// is always honoured. explicit.ammo is set when the user toggles the
+		// checkbox, so an explicit on stays on.
 		LIST.forEach(function (d) {
-			enabled[d.id] = d.builtIn ? true : (typeof saved[d.id] === 'boolean' ? saved[d.id] : !!d.defaultEnabled);
+			if (d.builtIn) { enabled[d.id] = true; return; }
+			if (typeof saved[d.id] !== 'boolean') { enabled[d.id] = !!d.defaultEnabled; return; }
+			if (saved[d.id] === false) { enabled[d.id] = false; return; }
+			if (explicit[d.id] === true) { enabled[d.id] = true; return; }
+			// saved true, but not marked explicit: only ammo had a default of
+			// on, so treat that as the old implicit default (off now). Any
+			// other library's stored true is a real choice (they defaulted off).
+			enabled[d.id] = d.id === 'ammo' ? false : true;
 		});
 
 		var status = {};   // id -> 'idle' | 'loading' | 'loaded' | 'error'
@@ -3576,7 +3597,13 @@
 
 		function persist() {
 			var out = {};
-			LIST.forEach(function (d) { if (!d.builtIn) out[d.id] = !!enabled[d.id]; });
+			var ex = {};
+			LIST.forEach(function (d) {
+				if (d.builtIn) return;
+				out[d.id] = !!enabled[d.id];
+				if (explicit[d.id]) ex[d.id] = true;
+			});
+			if (Object.keys(ex).length) out.explicit = ex;
 			try { localStorage.setItem(STORAGE_KEY, JSON.stringify(out)); } catch (e) { /* storage blocked */ }
 		}
 
@@ -3590,6 +3617,7 @@
 				var d = byId[id];
 				if (!d || d.builtIn) return;
 				enabled[id] = !!on;
+				explicit[id] = true;
 				persist();
 				emit();
 				if (on) loadScript(id).catch(function (err) { console.error('[GS]', err); });
