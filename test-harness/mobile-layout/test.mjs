@@ -76,7 +76,7 @@ const layout = (p) => p.evaluate(() => {
   const last = list ? [...list.children].filter(c => c.getBoundingClientRect().height > 0).at(-1) : null;
   const lr = last ? last.getBoundingClientRect() : null; const listR = list.getBoundingClientRect();
   return { vv: { top: vv.offsetTop, h: vv.height, w: vv.width }, iw: innerWidth, ih: innerHeight, cls: document.documentElement.className, active: document.activeElement?.id || document.activeElement?.tagName,
-    panel: R('#desktop-chat'), header: R('#desktop-chat-header'), tabs: R('#desktop-chat-tabs'), input: R('#desktop-chat-input'), send: R('#desktop-send-button'), more: R('#desktop-chat-more'), list: R('#desktop-chat-messages'), dock: R('#gs-dock'), toggle: R('#ui-toggle'),
+    panel: R('#desktop-chat'), header: R('#desktop-chat-header'), tabs: R('#desktop-chat-tabs'), menu: R('#gs-menu-nav'), burger: R('#gs-menu-hamburger'), input: R('#desktop-chat-input'), send: R('#desktop-send-button'), more: R('#desktop-chat-more'), list: R('#desktop-chat-messages'), dock: R('#gs-dock'), toggle: R('#ui-toggle'),
     themeInput: R('#dchat-theme-chat-input'), code: R('#dchat-code-editor'), apply: R('#dchat-code-apply'),
     lastMsgVisible: !!lr && lr.bottom <= listR.bottom + 1 && lr.bottom > listR.top, lastMsgText: last?.textContent.slice(0, 40), canvas: [renderer.domElement.width, renderer.domElement.height], dpr: renderer.getPixelRatio() };
 });
@@ -96,7 +96,11 @@ async function keyboard(p, vp, mode, on) {
   await sleep(500);
 }
 async function tapEl(p, sel) { const r = await p.evaluate(s => { const e = document.querySelector(s); if (!e) return null; e.scrollIntoView({ block: 'nearest', inline: 'nearest' }); const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }, sel); if (!r) return; await p.touchscreen.tap(r[0], r[1]); await sleep(250); }
-async function tab(p, t) { await tapEl(p, `.dchat-tab[data-tab="${t}"]`); await sleep(250); }
+async function openTabMenu(p) {
+  const open = await p.evaluate(() => document.getElementById('desktop-chat')?.classList.contains('gs-tab-menu-open'));
+  if (!open) { await tapEl(p, '#gs-menu-hamburger'); await sleep(150); }
+}
+async function tab(p, t) { await openTabMenu(p); await tapEl(p, `.dchat-tab[data-tab="${t}"]`); await sleep(250); }
 
 const PHONES = [{ name: '390x844', w: 390, h: 844 }, { name: '412x915', w: 412, h: 915 }, { name: '844x390', w: 844, h: 390 }, { name: '915x412', w: 915, h: 412 }];
 const ONLY = process.env.ONLY || ''; // e.g. ONLY=390x844:android
@@ -113,11 +117,23 @@ for (const vp of PHONES) {
     const tg = await scanTargets(p, ['#desktop-chat', '#gs-dock', '#overlay-root']);
     ok(`${T} chat tab: every visible tap target >= 44px (${tg.count} checked)`, tg.count > 8 && tg.small.length === 0, JSON.stringify(tg.small));
     ok(`${T} chat tab: nothing covers a tap target`, tg.covered.length === 0, JSON.stringify(tg.covered));
-    const tabsRow = await p.evaluate(() => { const ts = [...document.querySelectorAll('.dchat-tab')]; const tops = new Set(ts.map(t => Math.round(t.getBoundingClientRect().top))); const row = document.getElementById('desktop-chat-tabs'); return { rows: tops.size, scroll: row.scrollWidth > row.clientWidth, n: ts.length }; });
-    ok(`${T} tabs: one scrollable row (not squeezed)`, tabsRow.rows === 1 && tabsRow.n === 9, JSON.stringify(tabsRow));
+    const burger = await p.evaluate(() => {
+      const b = document.getElementById('gs-menu-hamburger');
+      const cur = document.getElementById('gs-menu-current-tab');
+      const br = b.getBoundingClientRect(), cr = cur.getBoundingClientRect();
+      return { w: Math.round(br.width), h: Math.round(br.height), current: (cur.textContent || '').trim(), open: document.getElementById('desktop-chat').classList.contains('gs-tab-menu-open') };
+    });
+    ok(`${T} hamburger in the header (>= 44px) with the current tab name`, burger.w >= 44 && burger.h >= 44 && /chat/i.test(burger.current) && !burger.open, JSON.stringify(burger));
+    await openTabMenu(p);
+    const menu = await p.evaluate(() => {
+      const ts = [...document.querySelectorAll('#desktop-chat-tabs .dchat-tab')];
+      const vis = ts.map((t) => { const r = t.getBoundingClientRect(); return { tab: t.dataset.tab, h: Math.round(r.height), w: Math.round(r.width) }; });
+      return { n: ts.length, ids: ts.map((t) => t.dataset.tab), vis, allTall: vis.every((v) => v.h >= 44 && v.w >= 44) };
+    });
+    ok(`${T} hamburger opens a vertical list of every tab (incl. Share and Meta Settings)`, menu.n >= 11 && menu.ids.includes('share') && menu.ids.includes('meta') && menu.allTall, JSON.stringify(menu));
     await tab(p, 'share');
-    const sh = await p.evaluate(() => document.querySelector('.dchat-tab.active')?.dataset.tab);
-    ok(`${T} the last tab (Share) is reachable by tapping`, sh === 'share', sh);
+    const sh = await p.evaluate(() => ({ tab: document.querySelector('.dchat-tab.active')?.dataset.tab, open: document.getElementById('desktop-chat').classList.contains('gs-tab-menu-open'), label: document.getElementById('gs-menu-current-tab')?.textContent.trim() }));
+    ok(`${T} Share is reachable from the hamburger and the menu closes`, sh.tab === 'share' && sh.open === false && /share/i.test(sh.label || ''), JSON.stringify(sh));
     for (const t of ['env', 'scenes', 'files', 'code', 'community', 'controls', 'deps', 'share']) {
       await tab(p, t);
       const s = await scanTargets(p, [`#dchat-panel-${t}`]);
@@ -161,7 +177,7 @@ for (const vp of PHONES) {
     // keyboard dismissed without blurring (Android back / iOS keyboard hide)
     await keyboard(p, vp, mode, false); await sleep(1100);
     L = await layout(p);
-    ok(`${T} keyboard hidden while the field keeps focus: full layout returns`, !/gs-kb/.test(L.cls) && L.tabs && L.dock, L.cls);
+    ok(`${T} keyboard hidden while the field keeps focus: full layout returns`, !/gs-kb/.test(L.cls) && L.header && L.menu && L.dock, L.cls);
     ok(`${T} panel returns to its size from before the keyboard`, L.panel && Math.abs(L.panel.h - before.panel.h) <= 1 && Math.abs(L.panel.t - before.panel.t) <= 1, JSON.stringify({ before: before.panel, after: L.panel }));
     if (mode === 'android') { await sleep(400); const c = await layout(p); ok(`${T} canvas matches the window after the keyboard closes`, Math.abs(c.canvas[0] - Math.round(c.iw * c.dpr)) <= 1 && Math.abs(c.canvas[1] - Math.round(c.ih * c.dpr)) <= 1, JSON.stringify({ canvas: c.canvas, win: [c.iw, c.ih], dpr: c.dpr })); }
     // tap the focused field again: keyboard back
@@ -175,7 +191,7 @@ for (const vp of PHONES) {
     await keyboard(p, vp, mode, false);
     await p.evaluate(() => document.activeElement.blur()); await sleep(500);
     L = await layout(p);
-    ok(`${T} blur restores the tabs, dock and Hide UI`, !/gs-kb/.test(L.cls) && L.tabs && L.dock && L.toggle && L.header, L.cls);
+    ok(`${T} blur restores the hamburger, dock and Hide UI`, !/gs-kb/.test(L.cls) && L.menu && L.dock && L.toggle && L.header, L.cls);
     // ---- theme chat input
     await tapEl(p, '[data-chat-section="theme"]');
     await tapEl(p, '#dchat-theme-chat-input'); await keyboard(p, vp, mode, true);

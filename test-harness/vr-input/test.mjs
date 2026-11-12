@@ -1,7 +1,8 @@
 // VR input suite (IWER-emulated Meta Quest 3, puppeteer-core 24.43.1):
-//  1. Top bar: Enter VR and the GS version button sit side by side in the
-//     window header (desktop + phone widths), nothing is left at the bottom
-//     of the page, the version picker still opens, clicks there don't drag.
+//  1. Top bar: Enter VR sits in the window header dock; a hamburger at the
+//     left opens every tab (version and Cardboard live in Meta Settings).
+//     Nothing is left at the bottom of the page, the version picker still
+//     opens from Meta Settings, clicks on the hamburger don't drag.
 //  2. Exit VR: a big red button at the top of the VR menu on every tab;
 //     a ray click calls XRSession.end() and the page is back in 2D.
 //  3. Code tab in VR: thumbstick (with locomotion on) and trigger-drag scroll
@@ -57,10 +58,13 @@ const topBar = (p) => p.evaluate(() => {
 		return r.bottom > innerHeight - 120 && r.top < innerHeight;
 	}).map((e) => e.id || e.className || e.tagName);
 	return {
-		dockInHeader: !!dock.closest('#desktop-chat-header'), xrInDock: xr.parentElement === dock, verInDock: ver.parentElement === dock,
-		verRightAfterXr: xr.nextElementSibling === ver, order: shown.map((e) => e.id),
+		dockInHeader: !!dock.closest('#desktop-chat-header'), xrInDock: xr.parentElement === dock,
+		verInDock: ver.parentElement === dock, verInMeta: !!ver.closest('#dchat-panel-meta, #dchat-meta'),
+		burgerInHeader: !!document.getElementById('gs-menu-hamburger')?.closest('#desktop-chat-header'),
+		order: shown.map((e) => e.id),
 		header: R('#desktop-chat-header'), chat: R('#desktop-chat'), tabs: R('#desktop-chat-tabs'), dock: R('#gs-dock'), xr: R('#XRButton'), ver: R('#gs-version-btn'),
 		cardboard: R('#cardboard-btn'), exit: R('#gs-exit-vr-btn'), hb: R('#desktop-chat-header-buttons'), ui: R('#ui-toggle'),
+		burger: R('#gs-menu-hamburger'), current: R('#gs-menu-current-tab'),
 		overflow: dock.scrollWidth > dock.clientWidth + 1, bottomStuff, innerHeight
 	};
 });
@@ -78,20 +82,35 @@ for (const vp of [
 	const { p, errors } = await openPage(vp);
 	const g = await topBar(p);
 	const T = vp.name;
-	check(`${T}: top bar lives in the window header`, g.dockInHeader && g.xrInDock && g.verInDock, { dockInHeader: g.dockInHeader, xrInDock: g.xrInDock, verInDock: g.verInDock });
-	check(`${T}: version button sits right after Enter VR`, g.verRightAfterXr);
-	const vrBtn = g.xr.shown ? g.xr : g.cardboard;
-	check(`${T}: VR button shown (${g.xr.shown ? g.xr.text : g.cardboard.text})`, vrBtn && vrBtn.shown, g.order);
-	check(`${T}: VR + version buttons at the top of the window (above the tabs)`, vrBtn.b <= g.tabs.t + 1 && g.ver.b <= g.tabs.t + 1 && vrBtn.t >= g.chat.t && g.ver.t >= g.chat.t, { vr: [vrBtn.t, vrBtn.b], ver: [g.ver.t, g.ver.b], tabsTop: g.tabs.t, chatTop: g.chat.t });
-	check(`${T}: VR and version buttons are neighbours on one row`, Math.abs(vrBtn.t - g.ver.t) < 2 && g.ver.l - vrBtn.r >= 0 && g.ver.l - vrBtn.r < 14, { gap: g.ver.l - vrBtn.r });
-	check(`${T}: top bar inside the window, not overflowing`, !g.overflow && g.dock.l >= g.chat.l && g.dock.r <= g.chat.r + 0.5, { dock: [g.dock.l, g.dock.r], chat: [g.chat.l, g.chat.r] });
-	check(`${T}: no overlap with the expand / minimize buttons or Hide UI`, !overlaps(vrBtn, g.hb) && !overlaps(g.ver, g.hb) && !overlaps(vrBtn, g.ui) && !overlaps(g.ver, g.ui), { vr: vrBtn, ver: g.ver, hb: g.hb, ui: g.ui });
-	if (vp.viewport.hasTouch) check(`${T}: 44px touch targets`, vrBtn.h >= 44 && g.ver.h >= 44, { vr: vrBtn.h, ver: g.ver.h });
+	check(`${T}: hamburger + Enter VR live in the window header; version is in Meta Settings`, g.dockInHeader && g.xrInDock && g.burgerInHeader && !g.verInDock && g.verInMeta, { dockInHeader: g.dockInHeader, xrInDock: g.xrInDock, burgerInHeader: g.burgerInHeader, verInDock: g.verInDock, verInMeta: g.verInMeta });
+	check(`${T}: hamburger and current tab name are at the left of the header`, g.burger.shown && g.current.shown && /chat/i.test(g.current.text) && g.burger.t >= g.chat.t && g.burger.b <= g.header.b + 1, { burger: g.burger, current: g.current.text });
+	const vrBtn = g.xr.shown ? g.xr : null;
+	if (vp.xr) check(`${T}: Enter VR shown in the dock`, vrBtn && vrBtn.shown && /enter vr|vr not supported/i.test(vrBtn.text), g.order);
+	else if (!vp.viewport.isMobile) check(`${T}: "VR NOT SUPPORTED" still shown (compact status pill)`, g.xr.shown && /not supported/i.test(g.xr.text), g.xr.text);
+	else check(`${T}: no Cardboard or Enter VR in the top bar (they're in Meta Settings)`, !g.cardboard.shown && !g.xr.shown, { xr: g.xr, cardboard: g.cardboard });
+	check(`${T}: dock inside the window, not overflowing`, !g.overflow && g.dock.l >= g.chat.l && g.dock.r <= g.chat.r + 0.5, { dock: [g.dock.l, g.dock.r], chat: [g.chat.l, g.chat.r] });
+	check(`${T}: no overlap with the expand / minimize buttons or Hide UI`, !overlaps(g.burger, g.hb) && !overlaps(g.burger, g.ui) && (!vrBtn || (!overlaps(vrBtn, g.hb) && !overlaps(vrBtn, g.ui) && !overlaps(vrBtn, g.burger))), { vr: vrBtn, burger: g.burger, hb: g.hb, ui: g.ui });
+	if (vp.viewport.hasTouch) check(`${T}: 44px hamburger`, g.burger.h >= 44 && g.burger.w >= 44, { burger: g.burger.h });
 	check(`${T}: Exit VR hidden outside VR`, !g.exit.shown);
 	check(`${T}: nothing left at the bottom of the page`, g.bottomStuff.length === 0, g.bottomStuff);
-	if (!vp.xr && !vp.viewport.isMobile) check(`${T}: "VR NOT SUPPORTED" still shown (compact status pill)`, g.xr.shown && /not supported/i.test(g.xr.text), g.xr.text);
-	// Version picker still opens from the top bar; clicking there doesn't drag the window.
+	// Version picker opens from Meta Settings; clicking the hamburger doesn't drag the window.
 	const before = await p.evaluate(() => document.getElementById('desktop-chat').getBoundingClientRect().toJSON());
+	await p.click('#gs-menu-hamburger');
+	await sleep(200);
+	const afterBurger = await p.evaluate(() => document.getElementById('desktop-chat').getBoundingClientRect().toJSON());
+	check(`${T}: clicking the hamburger does not move the window`, Math.abs(afterBurger.left - before.left) < 1 && Math.abs(afterBurger.top - before.top) < 1);
+	await p.evaluate(() => window.gsSelectTab('meta'));
+	await sleep(250);
+	const meta = await p.evaluate(() => {
+		const ver = document.getElementById('gs-version-btn');
+		const card = document.getElementById('cardboard-btn');
+		const vr = ver.getBoundingClientRect(), cr = card.getBoundingClientRect();
+		const csC = getComputedStyle(card);
+		return { verShown: vr.width > 0, verH: Math.round(vr.height), cardShown: csC.display !== 'none' && !card.hidden && cr.width > 0, cardH: Math.round(cr.height), panel: document.getElementById('dchat-panel-meta').classList.contains('active'), label: document.getElementById('gs-menu-current-tab')?.textContent.trim() };
+	});
+	check(`${T}: Meta Settings shows the version button`, meta.panel && meta.verShown && meta.verH >= (vp.viewport.hasTouch ? 44 : 28) && /meta/i.test(meta.label || ''), meta);
+	if (!vp.xr && vp.viewport.isMobile) check(`${T}: Cardboard VR is offered inside Meta Settings`, meta.cardShown && meta.cardH >= 44, meta);
+	if (vp.xr) check(`${T}: Cardboard hidden when WebXR is available`, !meta.cardShown, meta);
 	await p.click('#gs-version-btn');
 	await sleep(400);
 	const modal = await p.evaluate(() => document.getElementById('gs-version-modal').classList.contains('visible'));
@@ -100,30 +119,40 @@ for (const vp of [
 	await p.evaluate(() => document.getElementById('gs-version-close')?.click());
 	await sleep(300);
 	const after = await p.evaluate(() => document.getElementById('desktop-chat').getBoundingClientRect().toJSON());
-	check(`${T}: clicking the top bar does not move the window`, Math.abs(after.left - before.left) < 1 && Math.abs(after.top - before.top) < 1);
+	check(`${T}: clicking Meta Settings does not move the window`, Math.abs(after.left - before.left) < 1 && Math.abs(after.top - before.top) < 1);
 	if (OUT) await p.screenshot({ path: `${OUT}/${T}-top-bar.png` });
-	if (OUT) await p.screenshot({ path: `${OUT}/${T}-top-bar-zoom.png`, clip: { x: Math.max(0, g.chat.l - 8), y: Math.max(0, g.chat.t - 8), width: Math.min(vp.viewport.width - Math.max(0, g.chat.l - 8), g.chat.w + 16), height: Math.min(200, g.tabs.b - g.chat.t + 24) } });
-	// The header is still a drag handle outside the top bar (desktop).
+	const clipH = Math.min(200, Math.max(80, g.header.b - g.chat.t + 24));
+	if (OUT) await p.screenshot({ path: `${OUT}/${T}-top-bar-zoom.png`, clip: { x: Math.max(0, g.chat.l - 8), y: Math.max(0, g.chat.t - 8), width: Math.min(vp.viewport.width - Math.max(0, g.chat.l - 8), g.chat.w + 16), height: clipH } });
+	// The header is still a drag handle outside the hamburger / dock (desktop).
 	if (!vp.viewport.isMobile) {
-		const h = g.header; const sx = g.chat.l + 20, sy = h.t + h.h / 2;
-		await p.mouse.move(sx, sy); await p.mouse.down(); await p.mouse.move(sx + 120, sy + 60, { steps: 6 }); await p.mouse.up(); await sleep(200);
+		const dragFrom = await p.evaluate(() => {
+			const title = document.getElementById('desktop-chat-title');
+			const cs = title && getComputedStyle(title);
+			if (title && cs.display !== 'none' && title.getBoundingClientRect().width > 20) {
+				const r = title.getBoundingClientRect();
+				return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+			}
+			const h = document.getElementById('desktop-chat-header').getBoundingClientRect();
+			const nav = document.getElementById('gs-menu-nav').getBoundingClientRect();
+			const dock = document.getElementById('gs-dock').getBoundingClientRect();
+			return { x: (nav.right + dock.left) / 2, y: h.top + h.height / 2 };
+		});
+		await p.mouse.move(dragFrom.x, dragFrom.y); await p.mouse.down(); await p.mouse.move(dragFrom.x + 120, dragFrom.y + 60, { steps: 6 }); await p.mouse.up(); await sleep(200);
 		const moved = await p.evaluate(() => document.getElementById('desktop-chat').getBoundingClientRect().toJSON());
 		check(`${T}: header still drags the window`, moved.left > after.left + 60, { from: after.left, to: moved.left });
-		// Default and narrow (300px) windows: one header row, same height as before (49px).
 		for (const w of [null, 300]) {
 			if (w) await p.evaluate((w) => { document.getElementById('desktop-chat').style.width = w + 'px'; }, w);
 			await sleep(150);
-			const o = await topBar(p); const ob = o.xr.shown ? o.xr : o.cardboard;
-			check(`${T}: ${w ? w + 'px' : 'default'} window: top bar on the title row, header not taller`, Math.abs(ob.t + ob.h / 2 - (o.hb.t + o.hb.h / 2)) < 3 && o.header.h <= 50 && !o.overflow && !overlaps(ob, o.hb) && !overlaps(o.ver, o.hb), { header: o.header.h, vr: [ob.l, ob.r], ver: [o.ver.l, o.ver.r], hb: [o.hb.l, o.hb.r] });
-			if (OUT && w) await p.screenshot({ path: `${OUT}/${T}-${w}px-window.png`, clip: { x: Math.max(0, o.chat.l - 8), y: Math.max(0, o.chat.t - 8), width: o.chat.w + 16, height: o.tabs.b - o.chat.t + 24 } });
+			const o = await topBar(p); const ob = o.xr.shown ? o.xr : null;
+			check(`${T}: ${w ? w + 'px' : 'default'} window: hamburger + dock fit, no overflow/overlap`, o.burger.shown && !o.overflow && !overlaps(o.burger, o.hb) && (!ob || !overlaps(ob, o.hb)), { header: o.header.h, burger: [o.burger.l, o.burger.r], dock: [o.dock.l, o.dock.r], hb: [o.hb.l, o.hb.r] });
+			if (OUT && w) await p.screenshot({ path: `${OUT}/${T}-${w}px-window.png`, clip: { x: Math.max(0, o.chat.l - 8), y: Math.max(0, o.chat.t - 8), width: o.chat.w + 16, height: Math.min(200, Math.max(80, o.header.b - o.chat.t + 24)) } });
 		}
-		// Narrowest window: the top bar wraps onto its own row instead of overflowing.
 		await p.evaluate(() => { const c = document.getElementById('desktop-chat'); c.style.width = '280px'; });
 		await sleep(200);
 		const n = await topBar(p);
-		const nb = n.xr.shown ? n.xr : n.cardboard;
-		check(`${T}: min-width window: top bar fits (no overflow / overlap)`, !n.overflow && n.dock.r <= n.chat.r + 0.5 && !overlaps(nb, n.hb) && !overlaps(n.ver, n.hb) && nb.b <= n.tabs.t + 1, { dock: n.dock, hb: n.hb });
-		if (OUT) await p.screenshot({ path: `${OUT}/${T}-min-width-window.png`, clip: { x: Math.max(0, n.chat.l - 8), y: Math.max(0, n.chat.t - 8), width: n.chat.w + 16, height: n.tabs.b - n.chat.t + 24 } });
+		const nb = n.xr.shown ? n.xr : null;
+		check(`${T}: min-width window: top bar fits (no overflow / overlap)`, !n.overflow && n.dock.r <= n.chat.r + 0.5 && !overlaps(n.burger, n.hb) && (!nb || !overlaps(nb, n.hb)), { dock: n.dock, hb: n.hb, burger: n.burger });
+		if (OUT) await p.screenshot({ path: `${OUT}/${T}-min-width-window.png`, clip: { x: Math.max(0, n.chat.l - 8), y: Math.max(0, n.chat.t - 8), width: n.chat.w + 16, height: Math.min(200, Math.max(80, n.header.b - n.chat.t + 24)) } });
 	}
 	check(`${T}: no console errors`, errors.length === 0, errors);
 	await p.close();
@@ -184,13 +213,13 @@ const saveTex = async (name, winName = 'menu') => { if (!OUT) return; const url 
 // ============================================================ 2. Exit VR
 const exitInfo = async () => p.evaluate(() => {
 	const e = document.getElementById('gs-exit-vr-btn'); const cs = getComputedStyle(e); const r = e.getBoundingClientRect();
-	const tabs = document.getElementById('desktop-chat-tabs').getBoundingClientRect();
+	const header = document.getElementById('desktop-chat-header').getBoundingClientRect();
 	const src = __t.win('menu').source.getBoundingClientRect();
 	// Red pixels painted into the VR menu texture inside the button.
 	const reg = __t.texRegion(e); let red = 0, n = 0;
 	for (let i = 0; i < reg.data.length; i += 4) { n++; const [R, G, B] = [reg.data[i], reg.data[i + 1], reg.data[i + 2]]; if (R > 170 && G < 90 && B < 90) red++; }
-	return { shown: cs.display !== 'none' && r.width > 0, w: r.width, h: r.height, aboveTabs: r.bottom <= tabs.top + 1, topOfMenu: r.top - src.top, bg: cs.backgroundColor, color: cs.color, fontSize: cs.fontSize, redShare: red / Math.max(1, n),
-		xrHidden: getComputedStyle(document.getElementById('XRButton')).display === 'none', verHidden: getComputedStyle(document.getElementById('gs-version-btn')).display === 'none' };
+	return { shown: cs.display !== 'none' && r.width > 0, w: r.width, h: r.height, aboveTabs: r.bottom <= header.bottom + 1, topOfMenu: r.top - src.top, bg: cs.backgroundColor, color: cs.color, fontSize: cs.fontSize, redShare: red / Math.max(1, n),
+		xrHidden: getComputedStyle(document.getElementById('XRButton')).display === 'none', verInChrome: !!document.getElementById('gs-version-btn')?.closest('#desktop-chat-header, #gs-dock') };
 });
 const ex = await exitInfo();
 check('VR menu: Exit VR button shown', ex.shown, ex);
@@ -198,12 +227,18 @@ check('VR menu: Exit VR is at the top of the menu (header, above the tabs)', ex.
 check('VR menu: Exit VR is large (≥ 40px tall, ≥ 120px wide) and bold', ex.h >= 40 && ex.w >= 120 && parseFloat(ex.fontSize) >= 15, { w: ex.w, h: ex.h, fontSize: ex.fontSize });
 check('VR menu: Exit VR is red with a white label', ex.bg === 'rgb(220, 38, 38)' && ex.color === 'rgb(255, 255, 255)', { bg: ex.bg, color: ex.color });
 check('VR menu: Exit VR is painted red into the headset texture', ex.redShare > 0.5, { redShare: +ex.redShare.toFixed(2) });
-check('VR menu: Enter VR / version buttons give way to Exit VR', ex.xrHidden && ex.verHidden);
+check('VR menu: Enter VR / version buttons give way to Exit VR', ex.xrHidden && !ex.verInChrome);
 // Contrast of the label: white on #dc2626 is 4.83:1.
 await saveTex('vr-menu-exit-vr-chat-tab');
 for (const tab of ['env', 'code', 'share']) {
+	await p.evaluate(() => __t.aimAt('right', document.getElementById('gs-menu-hamburger'), 'menu'));
+	await frame(300); await click();
+	const opened = await p.evaluate(() => document.getElementById('desktop-chat').classList.contains('gs-tab-menu-open'));
+	check(`VR menu: hamburger opens the tab list before ${tab}`, opened);
 	await p.evaluate((t) => __t.aimAt('right', document.querySelector(`.dchat-tab[data-tab="${t}"]`), 'menu'), tab);
 	await frame(300); await click();
+	const state = await p.evaluate((t) => ({ tab: document.querySelector('.dchat-tab.active')?.dataset.tab, open: document.getElementById('desktop-chat').classList.contains('gs-tab-menu-open') }), tab);
+	check(`VR menu: ray click selects ${tab} and closes the hamburger`, state.tab === tab && state.open === false, state);
 	const e2 = await exitInfo();
 	check(`VR menu: Exit VR still at the top on the ${tab} tab`, e2.shown && e2.aboveTabs && e2.redShare > 0.5, { shown: e2.shown, red: +e2.redShare.toFixed(2) });
 	if (tab === 'code') await saveTex('vr-menu-exit-vr-code-tab');

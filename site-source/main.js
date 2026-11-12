@@ -811,10 +811,10 @@ if (!('xr' in navigator)) { xrModeSupport.vr = false; xrModeSupport.ar = false; 
 // No-WebXR fallback is an <a> without an id; give it the same id for styling.
 if (!xrEntryButton.id) xrEntryButton.id = 'XRButton';
 // Lives in the window's top bar (#gs-dock in #desktop-chat-header), right
-// before the version button (see index.html).
+// before Exit VR (see index.html). Version and Cardboard are in Meta Settings.
 const gsDock = document.getElementById('gs-dock');
 if (gsDock) {
-	gsDock.insertBefore(xrEntryButton, document.getElementById('gs-version-btn'));
+	gsDock.insertBefore(xrEntryButton, document.getElementById('gs-exit-vr-btn'));
 } else {
 	document.body.appendChild(xrEntryButton);
 }
@@ -1012,6 +1012,8 @@ async function refreshMobileXRButtons() {
 		try { vrOk = await navigator.xr.isSessionSupported('immersive-vr'); } catch { /* unsupported */ }
 	}
 	cardboardBtn.hidden = vrOk;
+	const note = document.getElementById('dchat-meta-cardboard-note');
+	if (note) note.hidden = !cardboardBtn.hidden;
 }
 
 // Keep the Cardboard close X above the canvas, chat window, and modals.
@@ -7814,19 +7816,35 @@ updateKeyboardState('init');
 	compose.insertBefore(more, compose.firstChild);
 })();
 
-// Phone tab row scrolls sideways: keep the active tab in view and drop the
-// right-edge fade at the end of the row.
-(function initPhoneTabRow() {
+// Hamburger at the top left of the menu window: toggle the vertical tab list.
+// Esc or a click/ray outside the list closes it. Works on desktop, phone, and
+// in the VR menu (the list is inside #desktop-chat, so htmlInCanvas paints it).
+(function initTabMenu() {
+	const burger = document.getElementById('gs-menu-hamburger');
+	const nav = document.getElementById('gs-menu-nav');
 	const tabs = document.getElementById('desktop-chat-tabs');
-	if (!tabs) return;
-	const edge = () => tabs.classList.toggle('gs-at-end', tabs.scrollLeft + tabs.clientWidth >= tabs.scrollWidth - 4);
-	tabs.addEventListener('scroll', edge, { passive: true });
-	tabs.addEventListener('click', (e) => {
-		const t = e.target.closest('.dchat-tab');
-		if (t && _phoneLayout) t.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+	if (!burger || !tabs) return;
+	const toggle = (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		setTabMenuOpen(!isTabMenuOpen());
+	};
+	burger.addEventListener('click', toggle);
+	const current = document.getElementById('gs-menu-current-tab');
+	if (current) current.addEventListener('click', toggle);
+	document.addEventListener('pointerdown', (e) => {
+		if (!isTabMenuOpen()) return;
+		if (e.target.closest('#desktop-chat-tabs, #gs-menu-nav')) return;
+		setTabMenuOpen(false);
 	});
-	window.addEventListener('resize', edge);
-	edge();
+	document.addEventListener('keydown', (e) => {
+		if (e.key === 'Escape' && isTabMenuOpen()) {
+			setTabMenuOpen(false);
+			burger.focus();
+		}
+	});
+	window.addEventListener('resize', () => { if (isTabMenuOpen()) syncTabMenuPosition(); });
+	syncTabMenuPosition();
 })();
 
 // Dragging via the header, with any pointer: mouse on desktop, a finger on
@@ -7868,7 +7886,7 @@ const DRAG_TOUCH_SLOP = 6;      // px a finger may wobble before a press becomes
 		if (drag) return;
 		if (!e.isPrimary) return;
 		if (e.pointerType === 'mouse' && e.button !== 0) return;
-		if (e.target.closest('#desktop-chat-header-buttons, #gs-dock')) return;
+		if (e.target.closest('#desktop-chat-header-buttons, #gs-dock, #gs-menu-nav')) return;
 		if (desktopChat.classList.contains('expanded')) return;
 		if (desktopChat.classList.contains('html-in-canvas-source')) return;
 		if (typeof _kbChat !== 'undefined' && _kbChat) return;
@@ -8042,17 +8060,61 @@ document.addEventListener('keydown', (e) => {
 	if (phone) fitDesktopChatToViewport();
 });
 
-// Tabs: Chat (Scene|Theme) / Environment / Scenes / Files / Code / Community (Scenes|Themes) / Controls / Dependencies / Share.
-document.querySelectorAll('.dchat-tab').forEach(tab => {
-	tab.addEventListener('click', () => {
-		document.querySelectorAll('.dchat-tab').forEach(t => t.classList.remove('active'));
-		document.querySelectorAll('.dchat-panel').forEach(p => p.classList.remove('active'));
-		tab.classList.add('active');
-		document.getElementById(`dchat-panel-${tab.dataset.tab}`).classList.add('active');
-		if (tab.dataset.tab === 'community') setCommunitySection(communitySection);
-		if (tab.dataset.tab === 'code') syncCodeEditorFromState({ force: false });
-	});
+// Tabs: opened from the hamburger at the top left of the menu window
+// (Chat / Environment / Scenes / Files / Code / Community / Controls /
+// Dependencies / Share / Technical / Meta Settings).
+function tabButtonLabel(btn) {
+	if (!btn) return '';
+	const clone = btn.cloneNode(true);
+	clone.querySelectorAll('.dchat-tab-short').forEach((el) => el.remove());
+	return (clone.textContent || '').replace(/\s+/g, ' ').trim();
+}
+function syncCurrentTabLabel() {
+	const label = document.getElementById('gs-menu-current-tab');
+	const active = document.querySelector('.dchat-tab.active');
+	if (label && active) label.textContent = tabButtonLabel(active);
+}
+function isTabMenuOpen() {
+	return !!(desktopChat && desktopChat.classList.contains('gs-tab-menu-open'));
+}
+function syncTabMenuPosition() {
+	if (!desktopChat || !desktopChatHeader) return;
+	desktopChat.style.setProperty('--gs-header-h', `${desktopChatHeader.offsetHeight}px`);
+}
+function setTabMenuOpen(open) {
+	if (!desktopChat) return;
+	desktopChat.classList.toggle('gs-tab-menu-open', !!open);
+	const burger = document.getElementById('gs-menu-hamburger');
+	if (burger) {
+		burger.setAttribute('aria-expanded', String(!!open));
+		burger.setAttribute('aria-label', open ? 'Close menu' : 'Menu');
+		burger.title = open ? 'Close menu' : 'Open menu';
+	}
+	if (open) {
+		syncTabMenuPosition();
+		document.querySelector('.dchat-tab.active')?.scrollIntoView({ block: 'nearest' });
+	}
+}
+function activateTab(name) {
+	const tab = document.querySelector(`.dchat-tab[data-tab="${name}"]`);
+	if (!tab) return false;
+	document.querySelectorAll('.dchat-tab').forEach((t) => t.classList.remove('active'));
+	document.querySelectorAll('.dchat-panel').forEach((p) => p.classList.remove('active'));
+	tab.classList.add('active');
+	const panel = document.getElementById(`dchat-panel-${tab.dataset.tab}`);
+	if (panel) panel.classList.add('active');
+	if (tab.dataset.tab === 'community') setCommunitySection(communitySection);
+	if (tab.dataset.tab === 'code') syncCodeEditorFromState({ force: false });
+	syncCurrentTabLabel();
+	setTabMenuOpen(false);
+	return true;
+}
+window.gsSelectTab = activateTab;
+
+document.querySelectorAll('.dchat-tab').forEach((tab) => {
+	tab.addEventListener('click', () => activateTab(tab.dataset.tab));
 });
+syncCurrentTabLabel();
 
 // Code tab: edit generated VR program with optional live re-apply.
 if (dchatCodeEditor) {
@@ -8334,7 +8396,7 @@ function applySceneEnvironmentHdri(data) {
 }
 
 // ============================================================================
-// GS version badge + picker (top bar of the window, next to Enter VR)
+// GS version badge + picker (Meta Settings tab)
 // ============================================================================
 function initGsVersionPicker() {
 	const btn = document.getElementById('gs-version-btn');

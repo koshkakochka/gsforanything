@@ -38,7 +38,7 @@ async function newPage(base, tag) {
   await sleep(2000);
   return p;
 }
-async function tab(p, t) { await p.click(`.dchat-tab[data-tab="${t}"]`); await sleep(300); }
+async function tab(p, t) { await p.evaluate((t) => window.gsSelectTab(t), t); await sleep(300); }
 async function send(p, text) {
   await tab(p, 'chat');
   await p.click('#desktop-chat-input', { clickCount: 3 });

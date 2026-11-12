@@ -26,7 +26,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   await p.evaluate(() => { localStorage.removeItem('gs.twinSticks'); localStorage.removeItem('gs.cameraControlMode'); });
   await p.reload({ waitUntil: 'networkidle2' }); await sleep(3000);
   const cdp = await p.createCDPSession();
-  const tab = async (t) => { await p.click(`.dchat-tab[data-tab="${t}"]`); await sleep(250); };
+  const tab = async (t) => { await p.evaluate((t) => window.gsSelectTab(t), t); await sleep(250); };
   const mode = async (m) => { await tab('controls'); await p.click(`#dchat-camera-mode [data-camera-mode="${m}"]`); await sleep(400); await tab('chat'); };
   const canvasSpot = () => p.evaluate(() => { const c = renderer.domElement; const no = [...document.querySelectorAll('.gs-stick')].map(e => e.getBoundingClientRect()); for (let y = 0.8; y > 0.2; y -= 0.03) for (let x = 0.3; x < 0.95; x += 0.03) { const X = innerWidth * x, Y = innerHeight * y; if (document.elementFromPoint(X, Y) === c && !no.some(r => X > r.left - 10 && X < r.right + 10 && Y > r.top - 10 && Y < r.bottom + 10)) return [X, Y]; } return null; });
   const ray = () => p.evaluate(() => { const o = camera.getWorldPosition(new THREE.Vector3()); const d = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion())); return [o.toArray(), d.toArray()]; });
@@ -161,7 +161,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
     ok(`${T} clicking the scene next to the sticks locks the mouse (First person)`, await p.evaluate(() => document.pointerLockElement === renderer.domElement));
     await p.evaluate(() => document.exitPointerLock?.()); await sleep(200);
   }
-  await p.click('.dchat-tab[data-tab="scenes"]'); await sleep(250);
+  await p.evaluate(() => window.gsSelectTab('scenes')); await sleep(250);
   ok(`${T} UI still clickable (Scenes tab opens)`, await p.evaluate(() => document.querySelector('.dchat-tab.active')?.dataset.tab === 'scenes'));
   // WASD in First person still works
   p0 = await rigPos(); await p.keyboard.down('KeyW'); await sleep(500); await p.keyboard.up('KeyW'); await sleep(400); p1 = await rigPos();

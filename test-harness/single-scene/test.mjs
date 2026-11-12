@@ -46,7 +46,7 @@ async function newPage(base, path = '/', { viewport = { width: 1280, height: 900
   await sleep(1800);
   return p;
 }
-const tab = (p, t) => p.click(`.dchat-tab[data-tab="${t}"]`).then(() => sleep(300));
+const tab = (p, t) => p.evaluate((t) => window.gsSelectTab(t), t).then(() => sleep(300));
 async function send(p, text, { wait = true } = {}) {
   await tab(p, 'chat');
   await p.click('#desktop-chat-input', { clickCount: 3 });

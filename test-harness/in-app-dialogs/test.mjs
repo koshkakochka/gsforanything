@@ -275,7 +275,7 @@ if (want('vr')) {
   // While it's open, pointing at the menu and pulling the trigger does nothing.
   await p.evaluate(() => { const q = new THREE.Quaternion(); window.__xrDevice.quaternion.set(q.x, q.y, q.z, q.w); }); await sleep(300);
   const tabBefore = await p.evaluate(() => document.querySelector('.dchat-tab.active')?.dataset.tab);
-  await aimClick('.dchat-tab[data-tab="env"]', 'menu');
+  await aimClick('#gs-menu-hamburger', 'menu');
   ok(`${H} the menu behind an open dialog can't be clicked (modal)`, tabBefore === await p.evaluate(() => document.querySelector('.dchat-tab.active')?.dataset.tab) && !!(await dlg(p)));
   await aimClick('[data-gs-dialog="ok"]', 'dialog');
   ok(`${H} trigger on "Clear scene" clears the scene`, !(await dlg(p)) && !(await hasBox(p)));

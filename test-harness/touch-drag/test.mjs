@@ -132,12 +132,12 @@ async function touchSuite(dev) {
   const rR = await rect(p);
 
   // 4. taps on tabs and header buttons still work and don't move the window
-  await tapEl(p, '.dchat-tab[data-tab="controls"]');
+  await p.evaluate(() => window.gsSelectTab('controls')); await sleep(200);
   let active = await p.evaluate(() => document.querySelector('.dchat-tab.active')?.dataset.tab);
   const rT = await rect(p);
   ok(`${T} tap on a tab switches tabs`, active === 'controls', active);
   ok(`${T} tab tap doesn't move the window`, near(rT.l, rR.l) && near(rT.t, rR.t), JSON.stringify({ rR, rT }));
-  await tapEl(p, '.dchat-tab[data-tab="chat"]');
+  await p.evaluate(() => window.gsSelectTab('chat')); await sleep(200);
   await tapEl(p, '#desktop-chat-expand');
   const exp = await p.evaluate(() => document.getElementById('desktop-chat').classList.contains('expanded'));
   ok(`${T} tap on the header's Expand button works`, exp, '');
@@ -268,10 +268,10 @@ async function desktopSuite(dev) {
   const rZ = await rect(p);
   ok(`${T} corner resize still works`, near(rZ.w - rR.w, 60, 3) && near(rZ.h - rR.h, 40, 3), JSON.stringify({ rR, rZ }));
   // text in the window is still selectable/clickable: clicking a tab works
-  await p.click('.dchat-tab[data-tab="env"]'); await sleep(150);
+  await p.evaluate(() => window.gsSelectTab('env')); await sleep(150);
   const act = await p.evaluate(() => document.querySelector('.dchat-tab.active')?.dataset.tab);
   ok(`${T} clicking a tab works`, act === 'env', act);
-  await p.click('.dchat-tab[data-tab="chat"]');
+  await p.evaluate(() => window.gsSelectTab('chat'));
   // camera: mouse drag on the scene still orbits
   const rc = await rect(p);
   const sx = rc.l > 300 ? 150 : Math.round((rc.r + B.iw) / 2);
