@@ -1,9 +1,18 @@
 {
   "versions": [
     {
-      "id": "0.998",
-      "label": "GS 0.998 (this build)",
+      "id": "0.999",
+      "label": "GS 0.999 (this build)",
       "url": null,
+      "date": "2026-11-12",
+      "changes": [
+        "ammo.js is no longer selected by default in the Dependencies tab. It stays in the list and can still be turned on, and scenes that already use it still load it with gsRequire('ammo')."
+      ]
+    },
+    {
+      "id": "0.998",
+      "label": "GS 0.998",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-12",
       "changes": [
         "The version picker and Cardboard VR button live in a new Meta Settings tab, so they no longer crowd the top of the window.",
