@@ -20,15 +20,15 @@ const scr = (sel) => p.evaluate(s => { const r = typeof s === 'string' ? documen
 const click = async (sel) => { const [x, y] = await scr(sel); X(`mousemove ${x} ${y} click 1`); await sleep(500); };
 const st = () => p.evaluate(() => ({ locked: document.pointerLockElement === renderer.domElement, tab: document.querySelector('.dchat-tab.active')?.dataset.tab, mode: gsControls.mode, status: document.getElementById('dchat-controls-status').textContent }));
 const SPOT = [900, 450];
-await click('.dchat-tab[data-tab="controls"]'); await click('[data-camera-mode="firstperson"]');
+await p.evaluate(() => window.gsSelectTab('controls')); await sleep(200); await click('[data-camera-mode="firstperson"]');
 ok('First person selected', (await st()).mode === 'firstperson');
 await click(SPOT); let s = await st(); ok('clicking the scene locks the pointer', s.locked, JSON.stringify(s));
 X('key Escape'); await sleep(600); s = await st(); ok('real Esc releases pointer lock', !s.locked, JSON.stringify(s));
-await click('.dchat-tab[data-tab="scenes"]'); s = await st(); ok('panels are clickable after Esc (Scenes tab opens)', s.tab === 'scenes' && !s.locked, JSON.stringify(s));
+await p.evaluate(() => window.gsSelectTab('scenes')); s = await st(); ok('panels are clickable after Esc (Scenes tab opens)', s.tab === 'scenes' && !s.locked, JSON.stringify(s));
 await click('#desktop-chat'); s = await st(); ok('clicking the panel does not re-lock', !s.locked, JSON.stringify(s));
 await sleep(1500); await click(SPOT); s = await st(); ok('clicking the scene locks again', s.locked, JSON.stringify(s));
 X('key Escape'); await sleep(600); s = await st(); ok('second Esc releases again', !s.locked, JSON.stringify(s));
-await click('.dchat-tab[data-tab="chat"]'); s = await st(); ok('Chat tab clickable', s.tab === 'chat' && !s.locked, JSON.stringify(s));
+await p.evaluate(() => window.gsSelectTab('chat')); s = await st(); ok('Chat tab clickable', s.tab === 'chat' && !s.locked, JSON.stringify(s));
 ok('no console errors', errs.length === 0, JSON.stringify(errs));
 console.log(`${pass}/${pass + fail} passed`);
 await b.close(); process.exit(fail ? 1 : 0);

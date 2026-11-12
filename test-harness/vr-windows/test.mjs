@@ -118,8 +118,10 @@ const painted = await p.evaluate(async () => {
 		for (let i = 0; i < d.length; i += 4) { const L = lum(d[i], d[i + 1], d[i + 2]); if (L < lo) lo = L; if (L > hi) hi = L; }
 		out.push({ label, ratio: +((hi + 0.05) / (lo + 0.05)).toFixed(2) });
 	};
+	document.getElementById('gs-menu-hamburger')?.click();
 	const q = (s) => document.querySelector(s);
 	probe('Header title', 'menu', q('#desktop-chat-header span, #desktop-chat-header'));
+	probe('Current tab name', 'menu', q('#gs-menu-current-tab'));
 	probe('Selected tab label', 'menu', q('.dchat-tab.active'));
 	probe('Unselected tab label', 'menu', q('.dchat-tab:not(.active)'));
 	probe('Selected sub-tab label', 'menu', q('.dchat-subtab.active'));

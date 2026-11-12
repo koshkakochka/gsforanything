@@ -1,0 +1,6 @@
+{
+  "name": "gs-meta-settings-tests",
+  "private": true,
+  "type": "module",
+  "description": "Meta Settings tab + hamburger menu tests for GS For Anything"
+}

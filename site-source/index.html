@@ -61,8 +61,10 @@
 		}
 
 		/* Window top bar (#gs-dock, inside #desktop-chat-header, between the
-		   title and the expand / minimize buttons): Cardboard (phones), WebXR
-		   Enter VR and the GS version button, side by side. main.js moves
+		   title and the expand / minimize buttons): WebXR Enter VR (and, in a
+		   session, Exit VR). The GS version and Cardboard VR buttons live in
+		   the Meta Settings tab. The hamburger at the left of the header opens
+		   every tab as a vertical list. main.js moves
 		   three's XRButton (#XRButton) in here; its inline position/left/zIndex/
 		   background are overridden below. Icons are ::before masks because
 		   XRButton rewrites textContent on session start/end, which would wipe
@@ -162,7 +164,7 @@
 		}
 		#gs-dock #XRButton[data-xr-state="unavailable"]::before { display: none; }
 		/* Cardboard VR offered (no WebXR): the "not supported" pill adds nothing. */
-		#gs-dock:has(> #cardboard-btn:not([hidden])) #XRButton[data-xr-state="unavailable"] { display: none !important; }
+		body:has(#cardboard-btn:not([hidden])) #gs-dock #XRButton[data-xr-state="unavailable"] { display: none !important; }
 		/* A narrow window (desktop min width, small tablets): the top bar gets
 		   its own row at the top of the window instead of overflowing. */
 		#desktop-chat-header { container: gs-chat-header / inline-size; flex-wrap: wrap; row-gap: 6px; }
@@ -195,7 +197,8 @@
 		#gs-dock #gs-exit-vr-btn.gs-ray-hover { background: #b91c1c !important; }
 
 		#gs-dock #XRButton::before,
-		#gs-dock .gs-dock-btn::before {
+		#gs-dock .gs-dock-btn::before,
+		#dchat-panel-meta .gs-dock-btn::before {
 			content: '';
 			flex: 0 0 auto;
 			width: 18px;
@@ -206,17 +209,17 @@
 		}
 		/* VR headset */
 		#gs-dock #XRButton,
-		#gs-dock #cardboard-btn {
+		#cardboard-btn {
 			--gs-dock-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 7h16a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-4.2a2 2 0 0 1-1.7-.95l-1.25-2.05a1 1 0 0 0-1.7 0L9.9 16.05A2 2 0 0 1 8.2 17H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zm3.5 3.25a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5zm9 0a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5z'/%3E%3C/svg%3E");
 		}
 		/* Phone (Cardboard) */
-		#gs-dock #cardboard-btn {
+		#cardboard-btn {
 			--gs-dock-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm0 3v13h10V5H7zm5 14.25a1 1 0 1 0 0 2 1 1 0 0 0 0-2z'/%3E%3C/svg%3E");
 		}
 		/* Exit VR: label only (CSS mask icons don't paint into the headset texture). */
 		#gs-dock #gs-exit-vr-btn::before { display: none; }
 		/* Tag (version) */
-		#gs-dock #gs-version-btn {
+		#gs-version-btn {
 			--gs-dock-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 4.5A1.5 1.5 0 0 1 4.5 3h6.38a1.5 1.5 0 0 1 1.06.44l8.62 8.62a1.5 1.5 0 0 1 0 2.12l-6.38 6.38a1.5 1.5 0 0 1-2.12 0L3.44 11.94A1.5 1.5 0 0 1 3 10.88V4.5zM7.75 6a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5z'/%3E%3C/svg%3E");
 		}
 
@@ -516,33 +519,116 @@
 			#desktop-chat-header { min-height: 44px; box-sizing: border-box; }
 		}
 
-		#desktop-chat-tabs {
+		/* Hamburger + current tab name at the top left of the menu window.
+		   The horizontal tab strip is replaced by #desktop-chat-tabs, a vertical
+		   list that drops down over the panel when the hamburger is open. */
+		#gs-menu-nav {
 			display: flex;
-			flex-wrap: nowrap;
-			width: 100%;
-			box-sizing: border-box;
-			gap: 4px;
-			padding: 8px 10px 0;
-			flex-shrink: 0;
-			background: var(--dchat-tabs-bg);
-			overflow: hidden;
+			align-items: center;
+			gap: 8px;
+			/* Don't grow/shrink against the title: the current tab name must
+			   stay readable. The decorative title yields space first. */
+			flex: 0 0 auto;
+			min-width: 0;
+			margin-right: 8px;
 		}
+		#gs-menu-hamburger {
+			flex: 0 0 auto;
+			width: 36px;
+			height: 36px;
+			box-sizing: border-box;
+			border: 1px solid var(--dchat-control-border, #70738c);
+			border-radius: 9px;
+			background: #3a3c4e;
+			color: #fff;
+			padding: 0;
+			cursor: pointer;
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			position: relative;
+		}
+		#gs-menu-hamburger:hover { background: #4e5168; }
+		#gs-menu-hamburger:focus-visible { outline: 2px solid #facc15; outline-offset: 1px; }
+		#gs-menu-hamburger[aria-expanded="true"] { background: var(--dchat-tab-active-bg); border-color: var(--dchat-selected-border, #c7d2fe); }
+		#gs-menu-hamburger-bars,
+		#gs-menu-hamburger-bars::before,
+		#gs-menu-hamburger-bars::after {
+			display: block;
+			width: 16px;
+			height: 2px;
+			border-radius: 1px;
+			background: currentColor;
+			position: relative;
+			content: '';
+		}
+		#gs-menu-hamburger-bars::before { position: absolute; top: -5px; left: 0; }
+		#gs-menu-hamburger-bars::after { position: absolute; top: 5px; left: 0; }
+		#gs-menu-hamburger[aria-expanded="true"] #gs-menu-hamburger-bars { background: transparent; }
+		#gs-menu-hamburger[aria-expanded="true"] #gs-menu-hamburger-bars::before { top: 0; transform: rotate(45deg); }
+		#gs-menu-hamburger[aria-expanded="true"] #gs-menu-hamburger-bars::after { top: 0; transform: rotate(-45deg); }
+		#gs-menu-current-tab {
+			flex: 0 0 auto;
+			white-space: nowrap;
+			font-size: 14px;
+			font-weight: 700;
+			letter-spacing: 0.2px;
+			color: var(--dchat-text);
+			cursor: pointer;
+			user-select: none;
+		}
+		@media (pointer: coarse) {
+			#gs-menu-hamburger { width: 44px; height: 44px; }
+		}
+
+		#desktop-chat-tabs {
+			display: none;
+			position: absolute;
+			top: var(--gs-header-h, 56px);
+			left: 8px;
+			right: 8px;
+			bottom: 8px;
+			z-index: 40;
+			flex-direction: column;
+			flex-wrap: nowrap;
+			align-items: stretch;
+			gap: 6px;
+			padding: 8px;
+			box-sizing: border-box;
+			background: var(--dchat-tabs-bg, rgba(22, 22, 32, 0.98));
+			border: 1px solid var(--dchat-control-border, #70738c);
+			border-radius: 12px;
+			box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+			overflow-x: hidden;
+			overflow-y: auto;
+			-webkit-overflow-scrolling: touch;
+			scrollbar-width: thin;
+			scrollbar-color: rgba(255, 255, 255, 0.35) transparent;
+		}
+		#desktop-chat-tabs::-webkit-scrollbar { width: 8px; }
+		#desktop-chat-tabs::-webkit-scrollbar-thumb {
+			background: rgba(255, 255, 255, 0.35);
+			border-radius: 8px;
+		}
+		#desktop-chat.gs-tab-menu-open #desktop-chat-tabs { display: flex; }
 
 		.dchat-tab {
 			border: 1px solid var(--dchat-control-border, #70738c);
 			background: #3a3c4e;
 			color: var(--dchat-tab-color);
-			font-size: 12px;
+			font-size: 14px;
 			font-weight: 600;
-			padding: 6px 7px;
-			border-radius: 8px 8px 0 0;
+			padding: 0 12px;
+			border-radius: 8px;
 			cursor: pointer;
 			display: flex;
 			align-items: center;
-			justify-content: center;
-			gap: 4px;
-			flex: 1 1 0;
+			justify-content: flex-start;
+			gap: 8px;
+			flex: 0 0 auto;
+			width: 100%;
 			min-width: 0;
+			min-height: 44px;
 			box-sizing: border-box;
 			white-space: nowrap;
 			transition: background 0.15s, color 0.15s;
@@ -557,63 +643,44 @@
 			border-color: var(--dchat-selected-border, #c7d2fe);
 		}
 
-		/* Environment / Dependencies show their short labels ("Env" / "Deps")
-		   only in the narrow two-row layout. */
+		/* Vertical list always has room for the full label. */
 		.dchat-tab-short { display: none; }
+		.dchat-tab-full { display: inline; }
 
-		/* Narrow chat panel (phone / resized / default 380px): nine tabs as
-		   two rows (5 + 4, the second row stretches), pill tabs. */
-		@container desktop-chat (max-width: 760px) {
-			#desktop-chat-tabs {
-				flex-wrap: wrap;
-				padding: 8px 8px 6px;
-				gap: 4px;
-			}
-			.dchat-tab-full { display: none; }
-			.dchat-tab-short { display: inline; }
-			.dchat-tab {
-				flex: 1 1 calc(20% - 4px);
-				min-width: calc(20% - 4px);
-				max-width: none;
-				padding: 7px 3px;
-				font-size: 11px;
-				border-radius: 8px;
-				min-height: 36px;
-				gap: 3px;
-			}
-		}
 
-		@container desktop-chat (max-width: 340px) {
-			.dchat-tab {
-				font-size: 10px;
-				padding: 7px 1px;
-				gap: 2px;
-				min-height: 36px;
-			}
+		/* Meta Settings: version picker and Cardboard VR, moved out of the top bar. */
+		#dchat-meta {
+			display: flex;
+			flex-direction: column;
+			gap: 12px;
+			padding: 14px;
+			overflow: auto;
 		}
-
-		/* Viewport fallback when container queries are unavailable */
-		@media (max-width: 560px) {
-			#desktop-chat-tabs {
-				flex-wrap: wrap;
-				padding: 8px 8px 6px;
-				gap: 4px;
-				overflow: hidden;
-			}
-			.dchat-tab-full { display: none; }
-			.dchat-tab-short { display: inline; }
-			.dchat-tab {
-				flex: 1 1 calc(20% - 4px);
-				min-width: calc(20% - 4px);
-				max-width: none;
-				padding: 7px 3px;
-				font-size: 11px;
-				border-radius: 8px;
-				min-height: 36px;
-				justify-content: center;
-				gap: 3px;
-			}
+		#dchat-meta .dchat-section-label { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--dchat-text-muted, rgba(255,255,255,0.72)); }
+		#dchat-meta-actions {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 8px;
+			align-items: stretch;
 		}
+		#dchat-panel-meta .gs-dock-btn {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			gap: 8px;
+			min-height: 44px;
+			padding: 0 14px;
+			border: 1px solid var(--dchat-control-border, #70738c);
+			border-radius: 10px;
+			background: #3a3c4e;
+			color: #fff;
+			font-size: 14px;
+			font-weight: 600;
+			cursor: pointer;
+		}
+		#dchat-panel-meta .gs-dock-btn:hover { background: #4e5168; }
+		#dchat-panel-meta .gs-dock-btn[hidden] { display: none !important; }
+		#dchat-meta-note { font-size: 12px; color: var(--dchat-text-muted, rgba(255,255,255,0.72)); line-height: 1.45; }
 
 		.dchat-panel { display: none; flex: 1; min-height: 0; flex-direction: column; overflow: hidden; border-radius: 0 0 var(--dchat-radius) var(--dchat-radius); }
 		.dchat-panel.active { display: flex; }
@@ -1790,7 +1857,7 @@
 			background: linear-gradient(135deg, #4f46e5, #6d28d9);
 		}
 
-		/* GS version control: the button lives in #gs-dock (styles above). */
+		/* GS version control: the button lives in the Meta Settings tab. */
 		#gs-version-modal {
 			display: none;
 			position: fixed;
@@ -2481,8 +2548,12 @@
 		html.gs-phone #desktop-chat textarea { font-size: 16px; } /* no iOS focus zoom */
 		/* Header: the floating Hide UI button sits over the title, so the
 		   (decorative) title gives way; bigger minimize / expand buttons. */
-		html.gs-phone #desktop-chat-header { padding: 6px 8px 6px 14px; min-height: 56px; box-sizing: border-box; }
-		html.gs-phone #desktop-chat-title { visibility: hidden; }
+		html.gs-phone #desktop-chat-header {
+			/* 96px left padding keeps the hamburger clear of the page-level
+			   Hide UI button (position:fixed in the top-left corner). */
+			padding: 6px 8px 6px 96px; min-height: 56px; box-sizing: border-box;
+		}
+		html.gs-phone #desktop-chat-title { display: none; }
 		html.gs-phone #desktop-chat-header-buttons { gap: 8px; }
 		html.gs-phone #desktop-chat-header-buttons button { width: 44px; height: 44px; font-size: 16px; border-radius: 10px; }
 		html.gs-phone #ui-toggle {
@@ -2490,35 +2561,12 @@
 			left: max(16px, calc(env(safe-area-inset-left, 0px) + 8px));
 			padding: 0 14px;
 		}
-		/* Tabs: one horizontally scrollable row instead of two squeezed rows. */
-		html.gs-phone #desktop-chat-tabs {
-			flex-wrap: nowrap;
-			overflow-x: auto;
-			overflow-y: hidden;
-			gap: 6px;
-			padding: 6px 8px;
-			scrollbar-width: none;
-			scroll-snap-type: x proximity;
-			-webkit-overflow-scrolling: touch;
-			overscroll-behavior-x: contain;
-			touch-action: pan-x;
-			-webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-			mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-		}
-		html.gs-phone #desktop-chat-tabs.gs-at-end { -webkit-mask-image: none; mask-image: none; }
-		html.gs-phone #desktop-chat-tabs::-webkit-scrollbar { display: none; }
-		html.gs-phone .dchat-tab {
-			flex: 0 0 auto;
-			min-width: 0;
-			max-width: none;
+		html.gs-phone #gs-menu-hamburger { width: 44px; height: 44px; }
+		html.gs-phone #gs-menu-current-tab {
+			display: flex; align-items: center;
 			min-height: 44px;
-			padding: 0 13px; /* 1px border: same box as 0.978 */
-			font-size: 13px;
-			border-radius: 10px;
-			scroll-snap-align: start;
 		}
-		html.gs-phone .dchat-tab-full { display: inline; }
-		html.gs-phone .dchat-tab-short { display: none; }
+		html.gs-phone .dchat-tab { min-height: 44px; font-size: 15px; }
 		html.gs-phone .dchat-subtab { min-height: 44px; }
 		html.gs-phone #dchat-prompt-editor { font-size: 16px; min-height: 140px; }
 		html.gs-phone #dchat-prompt-actions .dchat-btn { min-height: 44px; }
@@ -2898,15 +2946,18 @@
 	<!-- Desktop (non-AR) chat window: movable, resizable, floats over the 3D scene -->
 	<div id="desktop-chat">
 		<div id="desktop-chat-header">
+			<div id="gs-menu-nav">
+				<button type="button" id="gs-menu-hamburger" aria-label="Menu" aria-expanded="false" aria-controls="desktop-chat-tabs" aria-haspopup="true" title="Open menu">
+					<span id="gs-menu-hamburger-bars" aria-hidden="true"></span>
+				</button>
+				<span id="gs-menu-current-tab">💬 Chat</span>
+			</div>
 			<div id="desktop-chat-title"><span class="dot"></span>Claude</div>
-			<!-- Top bar of the window: Cardboard (phones without immersive-vr;
-			     shown/hidden by refreshMobileXRButtons()), three's XRButton
-			     (inserted by main.js before the version button), the GS version
-			     button, and, only inside a VR session (this window is the VR
-			     menu), a big red Exit VR button. -->
-			<div id="gs-dock" role="toolbar" aria-label="VR and version">
-				<button type="button" id="cardboard-btn" class="mobile-xr-btn gs-dock-btn" hidden>Cardboard VR</button>
-				<button type="button" id="gs-version-btn" class="gs-dock-btn" title="Choose GS version" aria-haspopup="dialog" aria-controls="gs-version-modal">GS v…</button>
+			<!-- Top bar of the window: three's XRButton (inserted by main.js
+			     before Exit VR) and, only inside a VR session (this window is
+			     the VR menu), a big red Exit VR button. Version and Cardboard
+			     VR are in the Meta Settings tab. -->
+			<div id="gs-dock" role="toolbar" aria-label="VR">
 				<button type="button" id="gs-exit-vr-btn" class="gs-dock-btn" title="Leave the VR session" aria-label="Exit VR">Exit VR</button>
 			</div>
 			<div id="desktop-chat-header-buttons">
@@ -2914,7 +2965,7 @@
 				<button id="desktop-chat-minimize" title="Minimize">&#95;</button>
 			</div>
 		</div>
-		<div id="desktop-chat-tabs">
+		<nav id="desktop-chat-tabs" aria-label="Menu sections">
 			<button class="dchat-tab active" data-tab="chat">💬 Chat</button>
 			<button class="dchat-tab" data-tab="env">🎨 <span class="dchat-tab-full">Environment</span><span class="dchat-tab-short">Env</span></button>
 			<button class="dchat-tab" data-tab="scenes">📁 Scenes</button>
@@ -2925,7 +2976,8 @@
 			<button class="dchat-tab" data-tab="deps">📦 <span class="dchat-tab-full">Dependencies</span><span class="dchat-tab-short">Deps</span></button>
 			<button class="dchat-tab" data-tab="share">🔗 Share</button>
 			<button class="dchat-tab" data-tab="technical" id="dchat-tab-technical">🛠 <span class="dchat-tab-full">Technical</span><span class="dchat-tab-short">Tech</span></button>
-		</div>
+			<button class="dchat-tab" data-tab="meta" id="dchat-tab-meta">⚙️ <span class="dchat-tab-full">Meta Settings</span><span class="dchat-tab-short">Meta</span></button>
+		</nav>
 
 		<div id="dchat-panel-chat" class="dchat-panel active">
 			<div id="dchat-chat-subtabs">
@@ -3284,6 +3336,18 @@
 					These steps go outside normal browser use; only follow them if you know you need them.
 				</div>
 				<div class="gs-tech-list"></div>
+			</div>
+		</div>
+
+		<div id="dchat-panel-meta" class="dchat-panel">
+			<div id="dchat-meta">
+				<div class="dchat-section-label">Meta Settings</div>
+				<p id="dchat-meta-note">App version and headset options, moved here to keep the top of the window clear.</p>
+				<div id="dchat-meta-actions">
+					<button type="button" id="gs-version-btn" class="gs-dock-btn" title="Choose GS version" aria-haspopup="dialog" aria-controls="gs-version-modal">GS v…</button>
+					<button type="button" id="cardboard-btn" class="mobile-xr-btn gs-dock-btn" hidden>Cardboard VR</button>
+				</div>
+				<p id="dchat-meta-cardboard-note" class="dchat-controls-help">On a phone that doesn't support WebXR, Cardboard VR appears here.</p>
 			</div>
 		</div>
 

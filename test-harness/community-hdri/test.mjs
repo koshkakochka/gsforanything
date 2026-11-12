@@ -36,7 +36,7 @@ async function newPage(base, path = '/', { userHdri = null } = {}) {
   await sleep(1500);
   return p;
 }
-const tab = (p, t) => p.click(`.dchat-tab[data-tab="${t}"]`).then(() => sleep(300));
+const tab = (p, t) => p.evaluate((t) => window.gsSelectTab(t), t).then(() => sleep(300));
 const clickText = (p, root, text) => p.evaluate((root, text) => {
   const el = [...document.querySelectorAll(`${root} button`)].find(x => x.textContent.trim() === text && x.offsetParent);
   if (el) el.click(); return !!el;

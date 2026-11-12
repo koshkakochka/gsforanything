@@ -24,7 +24,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   await p.evaluate(() => { localStorage.removeItem('gs.twinSticks'); localStorage.removeItem('gs.cameraControlMode'); });
   await p.reload({ waitUntil: 'networkidle2' }); await sleep(2500);
   const cdp = await p.createCDPSession();
-  const tab = async (t) => { await p.click(`.dchat-tab[data-tab="${t}"]`); await sleep(200); };
+  const tab = async (t) => { await p.evaluate((t) => window.gsSelectTab(t), t); await sleep(200); };
   // Real clicks on the Controls-tab buttons (focus stays on the button afterwards).
   const mode = async (m) => { await tab('controls'); await p.click(`#dchat-camera-mode [data-camera-mode="${m}"]`); await sleep(350); };
   const st = () => p.evaluate(() => {

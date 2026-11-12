@@ -42,7 +42,7 @@ async function newPage(base, path = '/', { userHdri = null } = {}) {
   await sleep(1000);
   return p;
 }
-const tab = (p, t) => p.click(`.dchat-tab[data-tab="${t}"]`).then(() => sleep(300));
+const tab = (p, t) => p.evaluate((t) => window.gsSelectTab(t), t).then(() => sleep(300));
 // isHdri: the background is the equirect HDRI texture (what the checkbox promises).
 const bg = (p) => p.evaluate(() => ({
   env: !!(scene.environment && scene.environment.isTexture),
