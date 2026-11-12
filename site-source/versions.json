@@ -1,9 +1,20 @@
 {
   "versions": [
     {
-      "id": "0.996",
-      "label": "GS 0.996 (this build)",
+      "id": "0.997",
+      "label": "GS 0.997 (this build)",
       "url": null,
+      "date": "2026-11-12",
+      "changes": [
+        "The Community tab shows each scene as a large tile in a responsive grid (several columns in a wide window, one column on a phone).",
+        "When you save a scene, a screenshot thumbnail is taken from the initial camera view and shown on the tile.",
+        "Each scene has an editable multiline description. It is left blank if nothing has been written yet, and you can change it."
+      ]
+    },
+    {
+      "id": "0.996",
+      "label": "GS 0.996",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-02",
       "changes": [
         "Technical mode now has a checkbox at the top of the 🛠 Technical tab, which is always in the menu (also in the headset). It replaces the Off/On button in Controls, still asks before turning on, and keeps your earlier choice.",
