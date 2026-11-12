@@ -1208,13 +1208,22 @@
 			flex: 1 1 auto;
 			min-height: 120px;
 			overflow-y: auto;
-			display: flex;
-			flex-direction: column;
-			gap: 6px;
+			display: grid;
+			grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+			gap: 14px;
+			align-content: start;
+			align-items: start;
+			grid-auto-rows: min-content;
 			margin-top: 10px;
 		}
 		#dchat-community-list::-webkit-scrollbar { width: 8px; }
 		#dchat-community-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+		#dchat-community-list > .dchat-scene-empty {
+			grid-column: 1 / -1;
+		}
+		@media (max-width: 600px) {
+			#dchat-community-list { grid-template-columns: 1fr; }
+		}
 
 		#dchat-current-scene {
 			flex: 1;
@@ -1894,23 +1903,159 @@
 			color: #fff;
 			border-color: var(--dchat-selected-border, #c7d2fe);
 		}
-		/* Community scene entries: name (+ dates) on one row, actions on the next.
+		/* Community scene tiles: large thumbnail, title, description, actions.
 		   Scoped so Scenes and Community Themes keep the single-row item layout. */
 		#dchat-community-list > .dchat-community-scene {
+			display: flex;
 			flex-direction: column;
 			align-items: stretch;
+			align-self: start;
+			min-height: min-content;
+			height: auto;
+			gap: 0;
+			padding: 0 0 10px;
+			overflow: hidden;
+			background: rgba(255, 255, 255, 0.05);
+			border: 1px solid rgba(255, 255, 255, 0.10);
+			border-radius: 14px;
+			box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset;
+			transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+		}
+		#dchat-community-list > .dchat-community-scene:hover,
+		#dchat-community-list > .dchat-community-scene:focus-within {
+			transform: translateY(-2px);
+			border-color: var(--dchat-selected-border, #c7d2fe);
+			box-shadow: 0 10px 28px rgba(0,0,0,0.4), 0 0 0 1px rgba(199,210,254,0.3);
+			background: rgba(255, 255, 255, 0.08);
+		}
+		#dchat-community-list > .dchat-community-scene.active {
+			border-color: var(--dchat-selected-border, #c7d2fe);
+			background: rgba(99, 102, 241, 0.18);
+			box-shadow: 0 0 0 1px rgba(199,210,254,0.35), 0 8px 22px rgba(0,0,0,0.28);
+		}
+		.dchat-community-thumb {
+			position: relative;
+			aspect-ratio: 16 / 9;
+			width: 100%;
+			flex-shrink: 0;
+			overflow: hidden;
+			background:
+				radial-gradient(120% 80% at 18% 8%, rgba(199, 210, 254, 0.32), transparent 52%),
+				radial-gradient(100% 90% at 92% 92%, rgba(109, 40, 217, 0.5), transparent 56%),
+				linear-gradient(135deg, #2a2d4a 0%, #3b2860 52%, #1c3558 100%);
+			cursor: pointer;
+		}
+		.dchat-community-thumb::before {
+			content: 'GS';
+			position: absolute;
+			inset: 0;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			font: 700 28px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			letter-spacing: 0.08em;
+			color: rgba(255, 255, 255, 0.28);
+			pointer-events: none;
+		}
+		.dchat-community-thumb.has-image::before { display: none; }
+		.dchat-community-thumb img {
+			position: absolute;
+			inset: 0;
+			width: 100%;
+			height: 100%;
+			object-fit: cover;
+			display: block;
+			background: #16161f;
+		}
+		.dchat-community-scene-body {
+			display: flex;
+			flex-direction: column;
 			gap: 8px;
+			padding: 10px 12px 0;
+			min-width: 0;
 		}
 		.dchat-community-scene-name-row {
 			width: 100%;
 			min-width: 0;
+			display: flex;
+			flex-direction: column;
+			gap: 3px;
+		}
+		#dchat-community-list .dchat-community-scene .dchat-scene-name {
+			white-space: normal;
+			font-size: 14px;
+			font-weight: 700;
+			line-height: 1.3;
+			display: -webkit-box;
+			-webkit-line-clamp: 2;
+			-webkit-box-orient: vertical;
+			overflow: hidden;
+		}
+		.dchat-community-desc-wrap {
+			display: flex;
+			flex-direction: column;
+			gap: 6px;
+			min-width: 0;
+		}
+		.dchat-community-desc {
+			display: block;
+			width: 100%;
+			box-sizing: border-box;
+			min-height: 44px;
+			max-height: 160px;
+			resize: none;
+			overflow-y: auto;
+			margin: 0;
+			padding: 7px 9px;
+			border-radius: 8px;
+			border: 1px solid rgba(255, 255, 255, 0.14);
+			background: rgba(0, 0, 0, 0.28);
+			color: #f4f4f8;
+			font: 400 12.5px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			white-space: pre-wrap;
+			word-break: break-word;
+		}
+		.dchat-community-desc::placeholder {
+			color: rgba(255, 255, 255, 0.42);
+			font-style: italic;
+		}
+		.dchat-community-desc:hover:not(:read-only) {
+			border-color: rgba(199, 210, 254, 0.45);
+		}
+		.dchat-community-desc:focus {
+			outline: none;
+			border-color: var(--dchat-selected-border, #c7d2fe);
+			box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.35);
+			background: rgba(0, 0, 0, 0.4);
+		}
+		.dchat-community-desc.is-readonly,
+		.dchat-community-desc:read-only {
+			border-color: transparent;
+			background: transparent;
+			padding: 2px 0;
+			cursor: default;
+			color: rgba(255, 255, 255, 0.82);
+			max-height: 120px;
+		}
+		.dchat-community-desc-save {
+			align-self: flex-end;
+			height: 28px !important;
+			min-height: 28px !important;
+			max-height: 28px !important;
+			padding: 0 12px !important;
+			line-height: 26px !important;
+			font-size: 11px !important;
 		}
 		.dchat-community-scene-actions-row {
 			width: 100%;
+			display: flex;
+			flex-wrap: wrap;
+			gap: 6px;
 		}
 		.dchat-community-scene-actions-row .dchat-btn {
-			flex: 1;
+			flex: 1 1 auto;
 			text-align: center;
+			min-width: 0;
 		}
 
 		/* Nested sub-tabs (Chat Scene|Theme, Community Scenes|Themes) */

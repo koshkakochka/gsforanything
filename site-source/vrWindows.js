@@ -131,7 +131,7 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 		};
 		const markDirty = () => { win._dirty = true; };
 		win.markDirty = markDirty;
-		const EVENTS = ['scroll', 'input', 'change', 'focusin', 'focusout'];
+		const EVENTS = ['scroll', 'input', 'change', 'focusin', 'focusout', 'load', 'error'];
 
 		win.setVisible = (on) => {
 			on = !!on;

@@ -394,6 +394,28 @@ function drawScrollThumb(ctx, el, style, rect, ox, oy) {
 	ctx.restore();
 }
 
+
+function drawObjectFitImage(ctx, el, nw, nh, style, box, ox, oy) {
+	const fit = style.objectFit || 'fill';
+	const dx0 = box.left - ox, dy0 = box.top - oy;
+	if (fit === 'cover' || fit === 'contain') {
+		const scale = fit === 'cover'
+			? Math.max(box.width / nw, box.height / nh)
+			: Math.min(box.width / nw, box.height / nh);
+		const w = nw * scale, h = nh * scale;
+		const dx = dx0 + (box.width - w) / 2;
+		const dy = dy0 + (box.height - h) / 2;
+		ctx.save();
+		ctx.beginPath();
+		ctx.rect(dx0, dy0, box.width, box.height);
+		ctx.clip();
+		ctx.drawImage(el, dx, dy, w, h);
+		ctx.restore();
+	} else {
+		ctx.drawImage(el, dx0, dy0, box.width, box.height);
+	}
+}
+
 function paintNode(ctx, el, ox, oy, clip) {
 	if (!(el instanceof Element)) return;
 	// Cull before getComputedStyle: anything entirely outside the current
@@ -431,6 +453,12 @@ function paintNode(ctx, el, ox, oy, clip) {
 			const k = Math.min(box.width / el.videoWidth, box.height / el.videoHeight);
 			const w = el.videoWidth * k, h = el.videoHeight * k;
 			ctx.drawImage(el, box.left - ox + (box.width - w) / 2, box.top - oy + (box.height - h) / 2, w, h);
+		}
+		// Community (and other) <img> thumbnails. object-fit cover/contain is
+		// honoured; a failed or not-yet-loaded image is skipped (the CSS
+		// placeholder/gradient already painted via drawBackground).
+		if (el instanceof HTMLImageElement && el.complete && el.naturalWidth > 0 && box.width > 0 && box.height > 0) {
+			drawObjectFitImage(ctx, el, el.naturalWidth, el.naturalHeight, style, box, ox, oy);
 		}
 	} catch {
 		// Keep painting the rest of the menu if one node can't be sampled.

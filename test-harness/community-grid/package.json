@@ -1,0 +1,10 @@
+{
+  "name": "gs-community-grid-test",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "unit": "node unit.mjs",
+    "api": "node api.mjs",
+    "test": "node test.mjs"
+  }
+}

@@ -18,6 +18,8 @@
           "site-source/exporter.js",
           "site-source/sceneHdri.js",
           "site-source/sceneExportPolicy.js",
+          "site-source/sceneThumbnail.js",
+          "site-source/sceneDescription.js",
           "site-source/embedExport.js",
           "site-source/creationContext.js",
           "site-source/communityMerge.js",

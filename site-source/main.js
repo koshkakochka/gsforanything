@@ -22,7 +22,9 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { initSceneExport } from './exporter.js';
 import { createTwinSticks } from './twinSticks.js';
-import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, ORBIT_TARGET, isTextEntry } from './cameraControls.js';
+import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, ORBIT_TARGET, DEFAULT_CAMERA_POSITION, isTextEntry } from './cameraControls.js';
+import { sanitizeDescription, DESCRIPTION_MAX_CHARS } from './sceneDescription.js';
+import { THUMB_WIDTH, THUMB_HEIGHT, THUMB_MAX_BYTES } from './sceneThumbnail.js';
 import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
 import { createSceneFit, DOME_MARGIN, FAR_MARGIN, isDomeObject } from './sceneFit.js';
 import { createPhotoCapture, askCameraBeforeXr, registerQuestPassthroughItem } from './photoCapture.js';
@@ -2414,6 +2416,150 @@ function captureScreenshot() {
 	return cvs.toDataURL('image/jpeg', 0.7);
 }
 
+function pixelsToCanvas(pixels, w, h) {
+	const cvs = document.createElement('canvas');
+	cvs.width = w;
+	cvs.height = h;
+	const c = cvs.getContext('2d');
+	const imgData = c.createImageData(w, h);
+	for (let y = 0; y < h; y++) {
+		for (let x = 0; x < w; x++) {
+			const src = ((h - 1 - y) * w + x) * 4;
+			const dst = (y * w + x) * 4;
+			imgData.data[dst] = pixels[src];
+			imgData.data[dst + 1] = pixels[src + 1];
+			imgData.data[dst + 2] = pixels[src + 2];
+			imgData.data[dst + 3] = 255;
+		}
+	}
+	c.putImageData(imgData, 0, 0);
+	return cvs;
+}
+
+function encodeCommunityThumb(cvs) {
+	const dataBytes = (url) => {
+		const i = url.indexOf(',');
+		if (i < 0) return Infinity;
+		const b64 = url.slice(i + 1);
+		return Math.floor(b64.length * 3 / 4) - (b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0);
+	};
+	const tryEncode = (src, type, q) => {
+		const url = src.toDataURL(type, q);
+		if (!url.startsWith(`data:${type}`)) return null;
+		return { url, bytes: dataBytes(url) };
+	};
+	for (const type of ['image/webp', 'image/jpeg']) {
+		for (const q of [0.82, 0.68, 0.52, 0.4, 0.3]) {
+			const r = tryEncode(cvs, type, q);
+			if (r && r.bytes <= THUMB_MAX_BYTES) return r.url;
+		}
+	}
+	// Last resort: shrink and JPEG.
+	const small = document.createElement('canvas');
+	small.width = 320;
+	small.height = 180;
+	small.getContext('2d').drawImage(cvs, 0, 0, 320, 180);
+	for (const q of [0.55, 0.4, 0.28]) {
+		const r = tryEncode(small, 'image/jpeg', q);
+		if (r && r.bytes <= THUMB_MAX_BYTES) return r.url;
+	}
+	const last = small.toDataURL('image/jpeg', 0.22);
+	return last.startsWith('data:image/') ? last : '';
+}
+
+function hideSystemObjectsForThumb() {
+	const hidden = [];
+	const hide = (obj) => {
+		if (!obj) return;
+		obj.traverse((o) => {
+			if (o.visible) { o.visible = false; hidden.push(o); }
+		});
+	};
+	for (const root of menuPriorityRoots) hide(root);
+	if (vrWindows) {
+		for (const w of vrWindows.windows) hide(w.mesh);
+	}
+	if (renderer && renderer.xr) {
+		for (let i = 0; i < 2; i++) {
+			hide(renderer.xr.getController?.(i));
+			hide(renderer.xr.getControllerGrip?.(i));
+			hide(renderer.xr.getHand?.(i));
+			// Controller rays are children of the controller; reticles are
+			// already in menuPriorityRoots.
+		}
+	}
+	scene.traverse((o) => {
+		if (!o.visible) return;
+		if (o.userData && (o.userData.gsNoExport || o.userData.vrWindow)) {
+			o.visible = false;
+			hidden.push(o);
+		}
+	});
+	return hidden;
+}
+
+/** Offscreen screenshot from the scene's spawn/start camera pose (not the
+ *  user's current view). System UI (menus, controllers, gsNoExport) is hidden.
+ *  Pass { initial: false } to use the current camera (tests). */
+function captureCommunityThumbnail({ initial = true } = {}) {
+	if (!renderer || !scene || !camera) return '';
+	const w = THUMB_WIDTH;
+	const h = THUMB_HEIGHT;
+	const saved = {
+		pos: camera.position.clone(),
+		quat: camera.quaternion.clone(),
+		up: camera.up.clone(),
+		aspect: camera.aspect,
+		near: camera.near,
+		far: camera.far,
+		fov: camera.fov
+	};
+	const hidden = hideSystemObjectsForThumb();
+	const prevTarget = renderer.getRenderTarget();
+	const prevXr = renderer.xr ? renderer.xr.enabled : false;
+	let rt = null;
+	try {
+		if (initial) {
+			camera.position.copy(DEFAULT_CAMERA_POSITION);
+			camera.up.set(0, 1, 0);
+			camera.quaternion.identity();
+			camera.lookAt(ORBIT_TARGET);
+		}
+		camera.aspect = w / h;
+		camera.updateProjectionMatrix();
+		if (renderer.xr) renderer.xr.enabled = false;
+		rt = new THREE.WebGLRenderTarget(w, h);
+		if ('colorSpace' in rt.texture && renderer.outputColorSpace) {
+			rt.texture.colorSpace = renderer.outputColorSpace;
+		}
+		renderer.setRenderTarget(rt);
+		keepHdriBackground();
+		renderer.render(scene, camera);
+		const pixels = new Uint8Array(w * h * 4);
+		renderer.readRenderTargetPixels(rt, 0, 0, w, h, pixels);
+		const cvs = pixelsToCanvas(pixels, w, h);
+		return encodeCommunityThumb(cvs);
+	} catch (err) {
+		console.warn('Community thumbnail capture failed:', err);
+		return '';
+	} finally {
+		renderer.setRenderTarget(prevTarget);
+		if (renderer.xr) renderer.xr.enabled = prevXr;
+		if (rt) rt.dispose();
+		camera.position.copy(saved.pos);
+		camera.quaternion.copy(saved.quat);
+		camera.up.copy(saved.up);
+		camera.aspect = saved.aspect;
+		camera.near = saved.near;
+		camera.far = saved.far;
+		camera.fov = saved.fov;
+		camera.updateProjectionMatrix();
+		for (const o of hidden) o.visible = true;
+	}
+}
+window.__gsCaptureCommunityThumbnail = (opts) => captureCommunityThumbnail(opts);
+window.__gsPaintElementToCanvas = paintElementToCanvas;
+
 function disposeRecursive(obj) {
 	if (obj.geometry) obj.geometry.dispose();
 	if (obj.material) {
@@ -2902,7 +3048,9 @@ async function loadSceneData(data, fallbackName, { key, source = 'file', extra =
 	const sc = {
 		id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
 		name: data.name || fallbackName,
-		thumbnail: data.thumbnail || '',
+		thumbnail: (data.thumbnail && typeof data.thumbnail === 'object' && data.thumbnail.url)
+			? data.thumbnail.url
+			: (typeof data.thumbnail === 'string' ? data.thumbnail : (data.thumbUrl || '')),
 		codeBlocks: data.codeBlocks,
 		createdAt: data.createdAt || new Date().toISOString(),
 		...(Array.isArray(data.mergedFrom) ? { mergedFrom: data.mergedFrom } : {}),
@@ -3124,6 +3272,11 @@ async function uploadCurrentSceneToCommunity({ showShare = true, allowExport = u
 	const hdriFile = hdriFileForUpload();
 	if (hdriFile) sceneData = { ...sceneData, environmentHdri: hdriFile.desc };
 	const uploadHdriSig = hdriShareSig();
+	// Thumbnail from the initial camera pose (not the current view, and not
+	// a leftover export-modal screenshot). Stored separately on the server.
+	let thumb = '';
+	try { thumb = captureCommunityThumbnail({ initial: true }); } catch (err) { console.warn('Community thumbnail capture failed:', err); }
+	sceneData = { ...sceneData, thumbnail: thumb || '' };
 	updateStatus('Uploading to community...', 'connecting');
 	return fetch('/api/community-scenes', {
 		method: 'POST',
@@ -3323,6 +3476,120 @@ function appendCommunityDatesEl(parent, item) {
 	return dates;
 }
 
+function autosizeCommunityDesc(ta) {
+	ta.style.height = 'auto';
+	const min = 44;
+	const max = 160;
+	ta.style.height = Math.min(max, Math.max(min, ta.scrollHeight)) + 'px';
+}
+
+/** Creator-only: save a Community scene's description (PATCH with the owner key). */
+async function setCommunitySceneDescription(cs, description) {
+	if (!cs?.id || !ownerKeyFor(cs.id)) return false;
+	const text = sanitizeDescription(description);
+	try {
+		const res = await fetch(`/api/community-scenes/${encodeURIComponent(cs.id)}`, {
+			method: 'PATCH',
+			headers: ownerHeaders(cs.id, { 'Content-Type': 'application/json' }),
+			body: JSON.stringify({ description: text })
+		});
+		const data = await res.json().catch(() => ({}));
+		if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
+		cs.description = text;
+		const cached = communityScenesCache.find((s) => s.id === cs.id);
+		if (cached) cached.description = text;
+		return true;
+	} catch (err) {
+		updateStatus(`Description error: ${err.message}`, 'error');
+		return false;
+	}
+}
+
+function bindCommunityDescription(wrap, cs, owned) {
+	const initial = typeof cs.description === 'string' ? cs.description : '';
+	if (!owned && !initial) return;
+	const ta = document.createElement('textarea');
+	ta.className = 'dchat-community-desc';
+	ta.setAttribute('data-gs-wrap', '');
+	ta.rows = 2;
+	ta.maxLength = DESCRIPTION_MAX_CHARS;
+	ta.spellcheck = false;
+	ta.value = initial;
+	ta.setAttribute('aria-label', `Description of ${cs.name || 'scene'}`);
+	// Don't let a tile-level click (thumb / title load) fire from the field.
+	const stop = (e) => e.stopPropagation();
+	for (const ev of ['click', 'pointerdown', 'mousedown', 'touchstart']) {
+		wrap.addEventListener(ev, stop);
+		ta.addEventListener(ev, stop);
+	}
+	if (!owned) {
+		ta.readOnly = true;
+		ta.classList.add('is-readonly');
+		ta.placeholder = '';
+		wrap.appendChild(ta);
+		queueMicrotask(() => autosizeCommunityDesc(ta));
+		return;
+	}
+	ta.placeholder = 'Add a description…';
+	let saved = initial;
+	let saving = false;
+	const saveBtn = document.createElement('button');
+	saveBtn.type = 'button';
+	saveBtn.className = 'dchat-btn dchat-community-desc-save';
+	saveBtn.textContent = 'Save';
+	saveBtn.hidden = true;
+	saveBtn.setAttribute('aria-label', 'Save description');
+	const setDirty = () => {
+		const dirty = ta.value !== saved;
+		saveBtn.hidden = !dirty;
+		wrap.classList.toggle('is-dirty', dirty);
+	};
+	const restore = () => { ta.value = saved; autosizeCommunityDesc(ta); setDirty(); };
+	const persist = async () => {
+		if (saving || ta.value === saved) { setDirty(); return; }
+		saving = true;
+		saveBtn.disabled = true;
+		const ok = await setCommunitySceneDescription(cs, ta.value);
+		saving = false;
+		saveBtn.disabled = false;
+		if (ok) {
+			saved = sanitizeDescription(ta.value);
+			ta.value = saved;
+		} else {
+			restore();
+		}
+		setDirty();
+		autosizeCommunityDesc(ta);
+	};
+	ta.addEventListener('input', () => { autosizeCommunityDesc(ta); setDirty(); });
+	ta.addEventListener('keydown', (e) => {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			e.stopPropagation();
+			restore();
+			ta.blur();
+		} else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+			e.preventDefault();
+			persist().then(() => ta.blur());
+		}
+	});
+	ta.addEventListener('blur', (e) => {
+		if (e.relatedTarget === saveBtn) return;
+		persist();
+	});
+	saveBtn.addEventListener('mousedown', (e) => e.preventDefault());
+	saveBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); persist(); });
+	wrap.append(ta, saveBtn);
+	queueMicrotask(() => autosizeCommunityDesc(ta));
+}
+
+function communityThumbUrl(cs) {
+	if (cs && cs.hasThumbnail && cs.thumbUrl) return cs.thumbUrl;
+	if (cs && cs.thumbnail && typeof cs.thumbnail === 'object' && cs.thumbnail.url) return cs.thumbnail.url;
+	if (cs && typeof cs.thumbnail === 'string' && (cs.thumbnail.startsWith('data:image/') || cs.thumbnail.startsWith('/'))) return cs.thumbnail;
+	return '';
+}
+
 function renderCommunitySceneList(scenes) {
 	communityScenesCache = scenes;
 	if (scenePanelSubTab === 'community') renderDomSceneList();
@@ -3338,6 +3605,29 @@ function renderCommunitySceneList(scenes) {
 	for (const cs of scenes) {
 		const item = document.createElement('div');
 		item.className = 'dchat-scene-item dchat-community-scene';
+		item.dataset.sceneId = cs.id || '';
+
+		const thumbWrap = document.createElement('div');
+		thumbWrap.className = 'dchat-community-thumb';
+		thumbWrap.title = 'Load this scene';
+		const thumbSrc = communityThumbUrl(cs);
+		if (thumbSrc) {
+			const img = document.createElement('img');
+			img.alt = '';
+			img.src = thumbSrc;
+			img.loading = 'lazy';
+			img.decoding = 'async';
+			img.addEventListener('load', () => thumbWrap.classList.add('has-image'));
+			img.addEventListener('error', () => { img.remove(); thumbWrap.classList.remove('has-image'); });
+			thumbWrap.appendChild(img);
+		}
+		thumbWrap.addEventListener('click', (e) => {
+			e.stopPropagation();
+			loadCommunityScene(cs).catch(() => {});
+		});
+
+		const body = document.createElement('div');
+		body.className = 'dchat-community-scene-body';
 
 		const nameRow = document.createElement('div');
 		nameRow.className = 'dchat-scene-info dchat-community-scene-name-row';
@@ -3348,6 +3638,9 @@ function renderCommunitySceneList(scenes) {
 		name.title = cs.name + (cs.id ? ` (${cs.id})` : '');
 		nameRow.appendChild(name);
 		appendCommunityDatesEl(nameRow, cs);
+
+		const descWrap = document.createElement('div');
+		descWrap.className = 'dchat-community-desc-wrap';
 
 		const actions = document.createElement('div');
 		actions.className = 'dchat-scene-actions dchat-community-scene-actions-row';
@@ -3404,7 +3697,9 @@ function renderCommunitySceneList(scenes) {
 			actions.appendChild(toggle);
 		}
 		GSMerge.decorateCommunityRow(actions, cs); // "Merge" pick button
-		item.append(nameRow, actions);
+		bindCommunityDescription(descWrap, cs, owned);
+		body.append(nameRow, descWrap, actions);
+		item.append(thumbWrap, body);
 		dchatCommunityList.appendChild(item);
 	}
 }
