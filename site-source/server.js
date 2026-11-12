@@ -10,6 +10,8 @@ import selfsigned from 'selfsigned';
 import { randomBytes } from 'crypto';
 import { environmentHdriForRecord, HDRI_FILE_MAX_BYTES, hdriContentType } from './sceneHdri.js';
 import { allowExportFromBody, embedUnavailableHtml, exportAllowed, isSceneOwner, newOwnerKey, OWNER_KEY_HEADER, ownerKeyHash, publicSceneRecord } from './sceneExportPolicy.js';
+import { listThumbFields, parseThumbnailPayload, publicThumbnailField, THUMB_PREFIX, thumbPathname, thumbStub } from './sceneThumbnail.js';
+import { descriptionForList, sanitizeDescription } from './sceneDescription.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -777,6 +779,15 @@ function splitIdMark(raw) {
 		: { id: raw, allowExport: true };
 }
 
+function normalizeBlobPathname(pathname) {
+	if (!pathname) return '';
+	try { return decodeURIComponent(String(pathname)); } catch { return String(pathname); }
+}
+
+function sameBlobPathname(a, b) {
+	return normalizeBlobPathname(a) === normalizeBlobPathname(b);
+}
+
 function parseCommunityPathname(pathname) {
 	if (!pathname || !pathname.startsWith(COMMUNITY_PREFIX) || !pathname.endsWith('.json')) return null;
 	const base = pathname.slice(COMMUNITY_PREFIX.length, -'.json'.length);
@@ -907,6 +918,43 @@ async function readCommunitySceneRecord(meta) {
 const CONTEXT_PREFIX = 'community-scene-context/';
 const CONTEXT_FORMAT = 'gs-creation-context';
 const CONTEXT_MAX_CHARS = 20 * 1024 * 1024;
+// Compact per-id metadata so the Community list can show descriptions and
+// thumbnail URLs without fetching every scene body (or the image bytes).
+const SCENE_META_PATH = 'community-scene-meta.json';
+
+async function findBlobByPathname(pathname) {
+	const { blobs } = await blobList(pathname);
+	return (blobs || []).find(b => b.pathname === pathname) || null;
+}
+
+async function readSceneMetaIndex() {
+	try {
+		const b = await findBlobByPathname(SCENE_META_PATH);
+		if (!b) return {};
+		const r = await fetch(b.url);
+		if (!r.ok) return {};
+		const data = await r.json();
+		return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+	} catch {
+		return {};
+	}
+}
+
+async function updateSceneMeta(id, patch) {
+	const index = await readSceneMetaIndex();
+	const prev = index[id] && typeof index[id] === 'object' ? index[id] : {};
+	const next = { ...prev, ...patch };
+	if (!next.description && !next.hasThumbnail) delete index[id];
+	else index[id] = next;
+	await blobPut(SCENE_META_PATH, JSON.stringify(index), 'application/json');
+	return index;
+}
+
+async function findThumbBlob(id) {
+	const pathname = thumbPathname(id);
+	const { blobs } = await blobList(pathname);
+	return (blobs || []).find(b => b.pathname === pathname) || null;
+}
 
 function validCreationContext(cc) {
 	return !!(cc && typeof cc === 'object' && cc.format === CONTEXT_FORMAT &&
@@ -935,7 +983,7 @@ app.post('/api/community-scenes', async (req, res) => {
 		const id = newSceneId();
 		const name = sanitizeSceneName(sceneData.name);
 		const now = new Date().toISOString();
-		const { creationContext, allowExport: allowExportRaw, ownerKey: _k, ownerKeyHash: _h, isOwner: _o, ...sceneFields } = sceneData;
+		const { creationContext, allowExport: allowExportRaw, ownerKey: _k, ownerKeyHash: _h, isOwner: _o, thumbnail: thumbRaw, description: descRaw, ...sceneFields } = sceneData;
 		const allowExport = allowExportFromBody(allowExportRaw);
 		const ownerKey = newOwnerKey();
 		const record = {
@@ -949,8 +997,20 @@ app.post('/api/community-scenes', async (req, res) => {
 		};
 		// Environment HDRI (see sceneHdri.js): keep a clean copy or drop it.
 		delete record.environmentHdri;
+		delete record.thumbnail;
 		const hdri = environmentHdriForRecord(sceneData.environmentHdri, id);
 		if (hdri) record.environmentHdri = hdri;
+		const description = sanitizeDescription(descRaw);
+		if (description) record.description = description;
+		else delete record.description;
+		const parsedThumb = parseThumbnailPayload(thumbRaw);
+		let hasThumbnail = false;
+		if (parsedThumb && parsedThumb.bytes) {
+			await blobPut(thumbPathname(id), Buffer.from(parsedThumb.bytes), parsedThumb.contentType);
+			record.thumbnail = thumbStub(id, { contentType: parsedThumb.contentType, size: parsedThumb.bytes.byteLength });
+			hasThumbnail = true;
+		}
+		await updateSceneMeta(id, { description: description || '', hasThumbnail });
 		if (creationContext != null) {
 			if (!validCreationContext(creationContext)) {
 				return res.status(400).json({ error: 'Invalid creationContext' });
@@ -968,7 +1028,7 @@ app.post('/api/community-scenes', async (req, res) => {
 			ok: true,
 			url: blob.url,
 			pathname: blob.pathname || pathname,
-			scene: { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: record.updatedAt, size: blob.size, allowExport },
+			scene: { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: record.updatedAt, size: blob.size, allowExport, description: description || '', ...listThumbFields(id, hasThumbnail) },
 			allowExport,
 			// Returned once; the uploader's browser keeps it to prove ownership.
 			ownerKey,
@@ -985,17 +1045,29 @@ app.get('/api/community-scenes', async (req, res) => {
 	try {
 		const listed = await listCommunityBlobs();
 		const urls = (id) => sceneUrls(req, id);
-		const scenes = listed.map(s => ({
-			id: s.id,
-			name: s.name,
-			url: s.url,
-			pathname: s.pathname,
-			uploadedAt: s.uploadedAt,
-			size: s.size,
-			allowExport: s.allowExport !== false,
-			...listItemTimestamps(s),
-			...urls(s.id)
-		}));
+		const metaIndex = await readSceneMetaIndex();
+		let thumbIds = new Set();
+		try {
+			const { blobs: thumbs } = await blobList(THUMB_PREFIX);
+			thumbIds = new Set((thumbs || []).map(b => (b.pathname || '').slice(THUMB_PREFIX.length)).filter(Boolean));
+		} catch { /* listing thumbs is best-effort */ }
+		const scenes = listed.map(s => {
+			const meta = metaIndex[s.id] || {};
+			const hasThumb = !!(meta.hasThumbnail || thumbIds.has(s.id));
+			return {
+				id: s.id,
+				name: s.name,
+				url: s.url,
+				pathname: s.pathname,
+				uploadedAt: s.uploadedAt,
+				size: s.size,
+				allowExport: s.allowExport !== false,
+				description: descriptionForList(meta.description),
+				...listThumbFields(s.id, hasThumb),
+				...listItemTimestamps(s),
+				...urls(s.id)
+			};
+		});
 		res.json({ scenes });
 	} catch (error) {
 		console.error('Community list error:', error);
@@ -1015,7 +1087,13 @@ app.get('/api/community-scenes/:id', async (req, res) => {
 		if (req.query.embed === '1' && !exportAllowed(record) && !isOwner) {
 			return res.status(403).json({ error: 'The creator of this scene turned off exports, so it can\'t be embedded.', exportsDisabled: true });
 		}
-		res.json({ ...publicSceneRecord(record, { isOwner }), ...sceneUrls(req, meta.id) });
+		const pub = publicSceneRecord(record, { isOwner });
+		const thumb = publicThumbnailField({ ...record, ...pub, id: meta.id });
+		if (thumb) pub.thumbnail = thumb;
+		else delete pub.thumbnail;
+		if (pub.description == null) pub.description = descriptionForList(record.description);
+		const hasThumb = !!(record.thumbnail && record.thumbnail.stored === 'separate') || !!thumb;
+		res.json({ ...pub, ...listThumbFields(meta.id, hasThumb), ...sceneUrls(req, meta.id) });
 	} catch (error) {
 		console.error('Community get error:', error);
 		res.status(500).json({ error: error.message });
@@ -1102,38 +1180,93 @@ app.get('/api/community-scenes/:id/hdri', async (req, res) => {
 	}
 });
 
+async function serveCommunityThumb(req, res) {
+	if (!requireBlob(res)) return;
+	try {
+		const id = req.params.id;
+		if (!SCENE_ID_RE.test(id)) return res.status(404).json({ error: 'Scene not found' });
+		const b = await findThumbBlob(id);
+		if (b) {
+			const r = await fetch(b.url);
+			if (!r.ok) return res.status(502).json({ error: `Failed to fetch thumbnail: ${r.status}` });
+			const buf = Buffer.from(await r.arrayBuffer());
+			res.set('Content-Type', r.headers.get('content-type') || 'image/jpeg');
+			res.set('Cache-Control', 'public, max-age=31536000, immutable');
+			res.set('Access-Control-Allow-Origin', '*');
+			if (req.method === 'HEAD') return res.status(200).end();
+			return res.send(buf);
+		}
+		// Legacy inline data-URL on the scene record.
+		const meta = await findCommunityBlob(id);
+		if (meta) {
+			const record = await readCommunitySceneRecord(meta);
+			if (typeof record.thumbnail === 'string' && record.thumbnail.startsWith('data:image/')) {
+				const parsed = parseThumbnailPayload(record.thumbnail);
+				if (parsed && parsed.bytes) {
+					res.set('Content-Type', parsed.contentType);
+					res.set('Cache-Control', 'public, max-age=86400');
+					res.set('Access-Control-Allow-Origin', '*');
+					if (req.method === 'HEAD') return res.status(200).end();
+					return res.send(Buffer.from(parsed.bytes));
+				}
+			}
+		}
+		return res.status(404).json({ error: 'This scene has no thumbnail' });
+	} catch (error) {
+		console.error('Community thumbnail get error:', error);
+		res.status(500).json({ error: error.message });
+	}
+}
+
+app.get('/api/community-scenes/:id/thumb', serveCommunityThumb);
+app.head('/api/community-scenes/:id/thumb', serveCommunityThumb);
+app.get('/api/scenes/:id/thumb', serveCommunityThumb);
+app.head('/api/scenes/:id/thumb', serveCommunityThumb);
+
 app.patch('/api/community-scenes/:id', async (req, res) => {
 	if (!requireBlob(res)) return;
 	try {
 		const id = req.params.id;
 		const meta = await findCommunityBlob(id);
 		if (!meta) return res.status(404).json({ error: 'Scene not found' });
-		if (req.body == null || (req.body.name == null && req.body.allowExport == null)) {
+		if (req.body == null || (req.body.name == null && req.body.allowExport == null && req.body.description == null)) {
 			return res.status(400).json({ error: 'Missing name' });
 		}
 		const record = await readCommunitySceneRecord(meta);
 		if (meta.allowExport === false) record.allowExport = false;
-		// Only the uploader (owner key) can change the export setting.
-		if (req.body.allowExport != null && !(await isSceneOwner(record, req.get(OWNER_KEY_HEADER)))) {
+		const isOwner = await isSceneOwner(record, req.get(OWNER_KEY_HEADER));
+		// Only the uploader (owner key) can change the export setting or the description.
+		if (req.body.allowExport != null && !isOwner) {
 			return res.status(403).json({ error: 'Only the scene\'s creator can change its export setting' });
+		}
+		if (req.body.description != null && !isOwner) {
+			return res.status(403).json({ error: 'Only the scene\'s creator can change its description' });
 		}
 		const name = req.body.name != null ? sanitizeSceneName(req.body.name) : sanitizeSceneName(record.name);
 		record.name = name;
 		record.id = id;
 		if (req.body.allowExport != null) record.allowExport = allowExportFromBody(req.body.allowExport);
+		if (req.body.description != null) {
+			const description = sanitizeDescription(req.body.description);
+			if (description) record.description = description;
+			else delete record.description;
+		}
 		record.updatedAt = new Date().toISOString();
 		const allowExport = exportAllowed(record);
 		const newPathname = communityPathname(id, name, allowExport);
 		const blob = await blobPut(newPathname, JSON.stringify(record), 'application/json');
-		if (meta.pathname !== newPathname && meta.url) {
+		if (!sameBlobPathname(meta.pathname, newPathname) && meta.url) {
 			await blobDelete(meta.url);
 		}
+		const hasThumb = !!(record.thumbnail && record.thumbnail.stored === 'separate');
+		await updateSceneMeta(id, { description: descriptionForList(record.description), hasThumbnail: hasThumb });
 		res.json({
 			ok: true,
 			url: blob.url,
 			pathname: blob.pathname || newPathname,
-			scene: { id, name, uploadedAt: record.updatedAt, createdAt: record.createdAt || null, updatedAt: record.updatedAt, size: blob.size, allowExport },
+			scene: { id, name, uploadedAt: record.updatedAt, createdAt: record.createdAt || null, updatedAt: record.updatedAt, size: blob.size, allowExport, description: descriptionForList(record.description), ...listThumbFields(id, hasThumb) },
 			allowExport,
+			description: descriptionForList(record.description),
 			...sceneUrls(req, id)
 		});
 	} catch (error) {
@@ -1308,7 +1441,7 @@ app.patch('/api/community-themes/:id', async (req, res) => {
 		record.updatedAt = new Date().toISOString();
 		const newPathname = themePathname(id, name);
 		const blob = await blobPut(newPathname, JSON.stringify(record), 'application/json');
-		if (meta.pathname !== newPathname && meta.url) {
+		if (!sameBlobPathname(meta.pathname, newPathname) && meta.url) {
 			await blobDelete(meta.url);
 		}
 		res.json({

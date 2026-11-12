@@ -1,5 +1,7 @@
 import { environmentHdriForRecord, HDRI_FILE_MAX_BYTES, hdriContentType } from "../site-source/sceneHdri.js";
 import { allowExportFromBody, embedUnavailableHtml, exportAllowed, isSceneOwner, newOwnerKey, OWNER_KEY_HEADER, ownerKeyHash, publicSceneRecord } from "../site-source/sceneExportPolicy.js";
+import { listThumbFields, parseThumbnailPayload, publicThumbnailField, thumbKey, thumbStub } from "../site-source/sceneThumbnail.js";
+import { descriptionForList, sanitizeDescription } from "../site-source/sceneDescription.js";
 import { CHAT_PROMPT_REQUIRED, FIX_CODE_PROMPT, MAX_CUSTOM_PROMPT_CHARS, SYSTEM_PROMPT, THEME_SYSTEM_PROMPT } from "./prompts.js";
 
 // Hosted Worker for Carl Junior. Local-only HTTPS / self-signed certs / port
@@ -377,6 +379,41 @@ async function handleApi(request, env) {
 
   const sceneIdMatch = path.match(/^\/api\/community-scenes\/([^/]+)$/);
   const sceneContextMatch = path.match(/^\/api\/community-scenes\/([^/]+)\/context$/);
+  const sceneThumbMatch = path.match(/^\/api\/(?:community-scenes|scenes)\/([^/]+)\/thumb$/);
+
+  if (sceneThumbMatch && (method === "GET" || method === "HEAD")) {
+    const missing = requireStore(env);
+    if (missing) return missing;
+    const id = decodeURIComponent(sceneThumbMatch[1]);
+    if (!SCENE_ID_RE.test(id)) return json({ error: "Scene not found" }, 404);
+    const { value, metadata } = await env.SCENES.getWithMetadata(thumbKey(id), "arrayBuffer");
+    if (value) {
+      return new Response(method === "HEAD" ? null : value, {
+        headers: {
+          "content-type": (metadata && metadata.contentType) || "image/jpeg",
+          "content-length": String(value.byteLength),
+          "cache-control": "public, max-age=31536000, immutable",
+          "access-control-allow-origin": "*",
+        },
+      });
+    }
+    // Legacy: an inline data-URL thumbnail on the scene record.
+    const record = await kvGetJson(env, `cs:${id}`);
+    if (record && typeof record.thumbnail === "string" && record.thumbnail.startsWith("data:image/")) {
+      const parsed = parseThumbnailPayload(record.thumbnail);
+      if (parsed && parsed.bytes) {
+        return new Response(method === "HEAD" ? null : parsed.bytes, {
+          headers: {
+            "content-type": parsed.contentType,
+            "content-length": String(parsed.bytes.byteLength),
+            "cache-control": "public, max-age=86400",
+            "access-control-allow-origin": "*",
+          },
+        });
+      }
+    }
+    return json({ error: "This scene has no thumbnail" }, 404);
+  }
 
   if (sceneContextMatch && method === "GET") {
     const missing = requireStore(env);
@@ -447,14 +484,25 @@ async function handleApi(request, env) {
     const name = sanitizeSceneName(sceneData.name);
     const now = new Date().toISOString();
     const { creationContext, ...sceneFields } = sceneData;
-    const { allowExport: allowExportRaw, ownerKey: _ignoredOwnerKey, ownerKeyHash: _ignoredHash, isOwner: _ignoredIsOwner, ...cleanFields } = sceneFields;
+    const { allowExport: allowExportRaw, ownerKey: _ignoredOwnerKey, ownerKeyHash: _ignoredHash, isOwner: _ignoredIsOwner, thumbnail: thumbRaw, description: descRaw, ...cleanFields } = sceneFields;
     const allowExport = allowExportFromBody(allowExportRaw);
     const ownerKey = newOwnerKey();
     const record = { ...cleanFields, id, name, createdAt: sceneData.createdAt || now, updatedAt: now, allowExport, ownerKeyHash: await ownerKeyHash(ownerKey) };
     // Environment HDRI (see site-source/sceneHdri.js): keep a clean copy or drop it.
     delete record.environmentHdri;
+    delete record.thumbnail;
     const hdri = environmentHdriForRecord(sceneData.environmentHdri, id);
     if (hdri) record.environmentHdri = hdri;
+    const description = sanitizeDescription(descRaw);
+    if (description) record.description = description;
+    else delete record.description;
+    const parsedThumb = parseThumbnailPayload(thumbRaw);
+    let hasThumbnail = false;
+    if (parsedThumb && parsedThumb.bytes) {
+      await env.SCENES.put(thumbKey(id), parsedThumb.bytes, { metadata: { contentType: parsedThumb.contentType, size: parsedThumb.bytes.byteLength } });
+      record.thumbnail = thumbStub(id, { contentType: parsedThumb.contentType, size: parsedThumb.bytes.byteLength });
+      hasThumbnail = true;
+    }
     if (creationContext != null) {
       if (!validCreationContext(creationContext)) return json({ error: "Invalid creationContext" }, 400);
       const ctxEncoded = JSON.stringify(creationContext);
@@ -464,7 +512,7 @@ async function handleApi(request, env) {
     }
     const encoded = JSON.stringify(record);
     await env.SCENES.put(`cs:${id}`, encoded);
-    const meta = { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: now, size: new TextEncoder().encode(encoded).length, pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json`, allowExport };
+    const meta = { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: now, size: new TextEncoder().encode(encoded).length, pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json`, allowExport, hasThumbnail, description: description || "" };
     const index = await readIndex(env, "cs-index");
     index.unshift(meta);
     await env.SCENES.put("cs-index", JSON.stringify(index));
@@ -492,6 +540,8 @@ async function handleApi(request, env) {
       uploadedAt: s.uploadedAt,
       size: s.size,
       allowExport: exportAllowed(s),
+      description: descriptionForList(s.description),
+      ...listThumbFields(s.id, s.hasThumbnail),
       ...listItemTimestamps(s),
       ...sceneUrls(request, s.id),
     }));
@@ -510,7 +560,12 @@ async function handleApi(request, env) {
     if (url.searchParams.get("embed") === "1" && !exportAllowed(record) && !isOwner) {
       return json({ error: "The creator of this scene turned off exports, so it can't be embedded.", exportsDisabled: true }, 403);
     }
-    return json({ ...publicSceneRecord(record, { isOwner }), ...sceneUrls(request, id) });
+    const pub = publicSceneRecord(record, { isOwner });
+    const thumb = publicThumbnailField({ ...record, ...pub, id });
+    if (thumb) pub.thumbnail = thumb;
+    else delete pub.thumbnail;
+    if (pub.description == null) pub.description = descriptionForList(record.description);
+    return json({ ...pub, ...listThumbFields(id, !!(record.thumbnail && record.thumbnail.stored === "separate") || !!thumb), ...sceneUrls(request, id) });
   }
 
   if (sceneIdMatch && method === "PATCH") {
@@ -521,29 +576,39 @@ async function handleApi(request, env) {
     if (!SCENE_ID_RE.test(id)) return json({ error: "Scene not found" }, 404);
     const record = await kvGetJson(env, `cs:${id}`);
     if (!record) return json({ error: "Scene not found" }, 404);
-    if (body == null || (body.name == null && body.allowExport == null)) return json({ error: "Missing name" }, 400);
-    // Only the uploader (owner key) can change the export setting.
-    if (body.allowExport != null && !(await isSceneOwner(record, request.headers.get(OWNER_KEY_HEADER)))) {
+    if (body == null || (body.name == null && body.allowExport == null && body.description == null)) return json({ error: "Missing name" }, 400);
+    const isOwner = await isSceneOwner(record, request.headers.get(OWNER_KEY_HEADER));
+    // Only the uploader (owner key) can change the export setting or the description.
+    if (body.allowExport != null && !isOwner) {
       return json({ error: "Only the scene's creator can change its export setting" }, 403);
+    }
+    if (body.description != null && !isOwner) {
+      return json({ error: "Only the scene's creator can change its description" }, 403);
     }
     const name = body.name != null ? sanitizeSceneName(body.name) : sanitizeSceneName(record.name);
     record.name = name;
     record.id = id;
     if (body.allowExport != null) record.allowExport = allowExportFromBody(body.allowExport);
+    if (body.description != null) {
+      const description = sanitizeDescription(body.description);
+      if (description) record.description = description;
+      else delete record.description;
+    }
     record.updatedAt = new Date().toISOString();
     const encoded = JSON.stringify(record);
     await env.SCENES.put(`cs:${id}`, encoded);
     const allowExport = exportAllowed(record);
     const index = await readIndex(env, "cs-index");
-    const next = index.map((s) => s.id === id ? { ...s, name, allowExport, updatedAt: record.updatedAt, uploadedAt: record.updatedAt, size: new TextEncoder().encode(encoded).length, pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json` } : s);
+    const next = index.map((s) => s.id === id ? { ...s, name, allowExport, updatedAt: record.updatedAt, uploadedAt: record.updatedAt, size: new TextEncoder().encode(encoded).length, pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json`, description: descriptionForList(record.description), hasThumbnail: !!(s.hasThumbnail || (record.thumbnail && record.thumbnail.stored === "separate")) } : s);
     await env.SCENES.put("cs-index", JSON.stringify(next));
     const meta = next.find((s) => s.id === id) || { pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json`, size: encoded.length };
     return json({
       ok: true,
       url: `${requestOrigin(request)}/api/community-scenes/${id}`,
       pathname: meta.pathname,
-      scene: { id, name, uploadedAt: record.updatedAt, createdAt: record.createdAt || null, updatedAt: record.updatedAt, size: meta.size, allowExport },
+      scene: { id, name, uploadedAt: record.updatedAt, createdAt: record.createdAt || null, updatedAt: record.updatedAt, size: meta.size, allowExport, description: descriptionForList(record.description), ...listThumbFields(id, !!(record.thumbnail && record.thumbnail.stored === "separate")) },
       allowExport,
+      description: descriptionForList(record.description),
       ...sceneUrls(request, id),
     });
   }
