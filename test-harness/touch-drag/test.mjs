@@ -39,8 +39,7 @@ async function open(dev, { clearStorage = true } = {}) {
 const shot = (p, name) => p.screenshot({ path: `${SHOT_DIR}/${name}.png` });
 const rect = (p, sel = '#desktop-chat') => p.evaluate(sel => { const e = document.querySelector(sel); const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; }, sel);
 const vbox = p => p.evaluate(() => { const vv = visualViewport; return { w: vv.width, h: vv.height, iw: innerWidth, ih: innerHeight, cls: document.documentElement.className }; });
-// A point on the header that the header itself receives (Hide UI can sit on
-// top of it when the window is in the top-left corner).
+// A point on the header that the header itself receives.
 const headerGrab = p => p.evaluate(() => {
   const h = document.getElementById('desktop-chat-header'); const r = h.getBoundingClientRect();
   const btns = document.getElementById('desktop-chat-header-buttons').getBoundingClientRect();

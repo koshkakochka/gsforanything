@@ -23,7 +23,7 @@ import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { initSceneExport } from './exporter.js';
 import { createTwinSticks } from './twinSticks.js';
 import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, ORBIT_TARGET, DEFAULT_CAMERA_POSITION, isTextEntry } from './cameraControls.js';
-import { sanitizeDescription, DESCRIPTION_MAX_CHARS } from './sceneDescription.js';
+import { sanitizeDescription, DESCRIPTION_MAX_CHARS, DESCRIPTION_PLACEHOLDER } from './sceneDescription.js';
 import { THUMB_WIDTH, THUMB_HEIGHT, THUMB_MAX_BYTES } from './sceneThumbnail.js';
 import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
 import { createSceneFit, DOME_MARGIN, FAR_MARGIN, isDomeObject } from './sceneFit.js';
@@ -133,8 +133,11 @@ function applyMenuLayerPriority() {
 }
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-renderer.setPixelRatio(window.devicePixelRatio);
-renderer.setSize(window.innerWidth, window.innerHeight);
+// Drawing-buffer size is kept in sync by applyRendererSize(); pass false so
+// the CSS (position:fixed; inset:0; 100%/100dvh) keeps the canvas covering
+// the visible page instead of being locked to stale inline pixel sizes.
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 3));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.xr.enabled = true;
 appElement.appendChild(renderer.domElement);
 renderer.setClearColor(0x000000, 0.0);
@@ -247,7 +250,7 @@ const desktopOllamaModelRow = document.getElementById('desktop-ollama-model-row'
 const desktopOllamaModelSelect = document.getElementById('desktop-ollama-model-select');
 const desktopChatMinimizeBtn = document.getElementById('desktop-chat-minimize');
 const desktopChatExpandBtn = document.getElementById('desktop-chat-expand');
-const desktopChatReopenBtn = null; // Show Chat removed — restore via Show UI
+const desktopChatReopenBtn = null; // Show Chat removed — restore via the Show UI button after minimize
 const chatOverlayBar = document.getElementById('chat-overlay');
 const dchatEnvModeMount = document.getElementById('dchat-env-mode');
 const dchatEnvControls = document.getElementById('dchat-env-controls');
@@ -3486,9 +3489,9 @@ function autosizeCommunityDesc(ta) {
 	ta.style.height = Math.min(max, Math.max(min, ta.scrollHeight)) + 'px';
 }
 
-/** Creator-only: save a Community scene's description (PATCH with the owner key). */
+/** Save a Community scene's description (PATCH). Same as rename: no owner key required. The key is still sent when this browser has it. */
 async function setCommunitySceneDescription(cs, description) {
-	if (!cs?.id || !ownerKeyFor(cs.id)) return false;
+	if (!cs?.id) return false;
 	const text = sanitizeDescription(description);
 	try {
 		const res = await fetch(`/api/community-scenes/${encodeURIComponent(cs.id)}`, {
@@ -3508,15 +3511,15 @@ async function setCommunitySceneDescription(cs, description) {
 	}
 }
 
-function bindCommunityDescription(wrap, cs, owned) {
+function bindCommunityDescription(wrap, cs) {
 	const initial = typeof cs.description === 'string' ? cs.description : '';
-	if (!owned && !initial) return;
 	const ta = document.createElement('textarea');
 	ta.className = 'dchat-community-desc';
 	ta.setAttribute('data-gs-wrap', '');
 	ta.rows = 2;
 	ta.maxLength = DESCRIPTION_MAX_CHARS;
 	ta.spellcheck = false;
+	ta.placeholder = DESCRIPTION_PLACEHOLDER;
 	ta.value = initial;
 	ta.setAttribute('aria-label', `Description of ${cs.name || 'scene'}`);
 	// Don't let a tile-level click (thumb / title load) fire from the field.
@@ -3525,65 +3528,110 @@ function bindCommunityDescription(wrap, cs, owned) {
 		wrap.addEventListener(ev, stop);
 		ta.addEventListener(ev, stop);
 	}
-	if (!owned) {
-		ta.readOnly = true;
-		ta.classList.add('is-readonly');
-		ta.placeholder = '';
-		wrap.appendChild(ta);
-		queueMicrotask(() => autosizeCommunityDesc(ta));
-		return;
-	}
-	ta.placeholder = 'Add a description…';
-	let saved = initial;
-	let saving = false;
+
+	const btnRow = document.createElement('div');
+	btnRow.className = 'dchat-community-desc-actions';
+
+	const editBtn = document.createElement('button');
+	editBtn.type = 'button';
+	editBtn.className = 'dchat-btn dchat-community-desc-edit';
+	editBtn.textContent = 'Edit';
+	editBtn.setAttribute('aria-label', 'Edit description');
+
 	const saveBtn = document.createElement('button');
 	saveBtn.type = 'button';
 	saveBtn.className = 'dchat-btn dchat-community-desc-save';
 	saveBtn.textContent = 'Save';
-	saveBtn.hidden = true;
 	saveBtn.setAttribute('aria-label', 'Save description');
-	const setDirty = () => {
-		const dirty = ta.value !== saved;
-		saveBtn.hidden = !dirty;
-		wrap.classList.toggle('is-dirty', dirty);
+
+	const cancelBtn = document.createElement('button');
+	cancelBtn.type = 'button';
+	cancelBtn.className = 'dchat-btn secondary dchat-community-desc-cancel';
+	cancelBtn.textContent = 'Cancel';
+	cancelBtn.setAttribute('aria-label', 'Cancel description edit');
+
+	let saved = initial;
+	let saving = false;
+	let editing = false;
+
+	const applyView = () => {
+		editing = false;
+		ta.readOnly = true;
+		ta.classList.add('is-readonly');
+		ta.classList.toggle('is-empty', !saved);
+		ta.value = saved;
+		editBtn.hidden = false;
+		saveBtn.hidden = true;
+		cancelBtn.hidden = true;
+		wrap.classList.remove('is-dirty', 'is-editing');
+		autosizeCommunityDesc(ta);
+		if (document.activeElement === ta) ta.blur();
 	};
-	const restore = () => { ta.value = saved; autosizeCommunityDesc(ta); setDirty(); };
+
+	const applyEdit = () => {
+		if (editing) return;
+		editing = true;
+		ta.readOnly = false;
+		ta.classList.remove('is-readonly', 'is-empty');
+		editBtn.hidden = true;
+		saveBtn.hidden = false;
+		cancelBtn.hidden = false;
+		wrap.classList.add('is-editing');
+		setDirty();
+		autosizeCommunityDesc(ta);
+		if (document.activeElement !== ta) ta.focus();
+	};
+
+	const setDirty = () => {
+		wrap.classList.toggle('is-dirty', ta.value !== saved);
+	};
+
+	const restore = () => {
+		ta.value = saved;
+		applyView();
+	};
+
 	const persist = async () => {
-		if (saving || ta.value === saved) { setDirty(); return; }
+		if (saving) return false;
+		if (ta.value === saved) { applyView(); return true; }
 		saving = true;
 		saveBtn.disabled = true;
+		cancelBtn.disabled = true;
 		const ok = await setCommunitySceneDescription(cs, ta.value);
 		saving = false;
 		saveBtn.disabled = false;
+		cancelBtn.disabled = false;
 		if (ok) {
 			saved = sanitizeDescription(ta.value);
 			ta.value = saved;
-		} else {
-			restore();
+			applyView();
+			return true;
 		}
-		setDirty();
-		autosizeCommunityDesc(ta);
+		return false;
 	};
-	ta.addEventListener('input', () => { autosizeCommunityDesc(ta); setDirty(); });
+
+	editBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); applyEdit(); });
+	saveBtn.addEventListener('mousedown', (e) => e.preventDefault());
+	cancelBtn.addEventListener('mousedown', (e) => e.preventDefault());
+	saveBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); persist(); });
+	cancelBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); restore(); });
+	ta.addEventListener('input', () => { if (!editing) applyEdit(); autosizeCommunityDesc(ta); setDirty(); });
+	ta.addEventListener('focus', () => { if (!editing && !saving) applyEdit(); });
 	ta.addEventListener('keydown', (e) => {
+		if (!editing) return;
 		if (e.key === 'Escape') {
 			e.preventDefault();
 			e.stopPropagation();
 			restore();
-			ta.blur();
 		} else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
 			e.preventDefault();
-			persist().then(() => ta.blur());
+			persist();
 		}
 	});
-	ta.addEventListener('blur', (e) => {
-		if (e.relatedTarget === saveBtn) return;
-		persist();
-	});
-	saveBtn.addEventListener('mousedown', (e) => e.preventDefault());
-	saveBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); persist(); });
-	wrap.append(ta, saveBtn);
-	queueMicrotask(() => autosizeCommunityDesc(ta));
+
+	btnRow.append(editBtn, saveBtn, cancelBtn);
+	wrap.append(ta, btnRow);
+	queueMicrotask(() => applyView());
 }
 
 function communityThumbUrl(cs) {
@@ -3700,7 +3748,7 @@ function renderCommunitySceneList(scenes) {
 			actions.appendChild(toggle);
 		}
 		GSMerge.decorateCommunityRow(actions, cs); // "Merge" pick button
-		bindCommunityDescription(descWrap, cs, owned);
+		bindCommunityDescription(descWrap, cs);
 		body.append(nameRow, descWrap, actions);
 		item.append(thumbWrap, body);
 		dchatCommunityList.appendChild(item);
@@ -5748,8 +5796,9 @@ function updateStatus(text, className) {
 	}
 }
 
-// Hide/show the VR menu (headset) or the menu window (windowed view). The
-// head-locked Hide/Show UI window stays so the UI can always be brought back.
+// Hide/show the VR menu (headset) or the menu window (windowed view). In a
+// headset the head-locked HUD stays so the UI can always be brought back; in
+// the windowed view a Show UI button appears after minimize and does the same.
 function setUiCollapsed(collapsed) {
 	if (displayOnlyMode) collapsed = true;
 	uiCollapsed = collapsed;
@@ -5769,12 +5818,17 @@ function toggleUi() {
 }
 
 function updateUiToggleDOM() {
-	const label = uiCollapsed ? 'Show UI' : 'Hide UI';
+	// Page-level button: only "Show UI", and only while the menu is hidden.
+	// The menu window's '_' button is what hides it. The in-headset HUD
+	// toggle still switches between Hide UI and Show UI.
 	const btn = document.getElementById('ui-toggle');
-	if (btn) btn.textContent = label;
+	if (btn) {
+		btn.textContent = 'Show UI';
+		btn.hidden = !uiCollapsed || displayOnlyMode;
+	}
 	const vrBtn = document.getElementById('gs-vr-hud-toggle');
 	if (vrBtn) {
-		vrBtn.textContent = label;
+		vrBtn.textContent = uiCollapsed ? 'Show UI' : 'Hide UI';
 		vrBtn.setAttribute('aria-pressed', uiCollapsed ? 'true' : 'false');
 	}
 }
@@ -6996,7 +7050,7 @@ chatInput.addEventListener('keydown', (e) => {
 	}
 });
 
-// Collapse-all-UI: wire the DOM toggle button (windowed view).
+// Restore-UI: the page-level Show UI button (visible only when collapsed).
 const uiToggleBtn = document.getElementById('ui-toggle');
 if (uiToggleBtn) uiToggleBtn.addEventListener('click', toggleUi);
 
@@ -7335,7 +7389,8 @@ if (desktopMicButton) {
 }
 
 if (desktopChatMinimizeBtn) {
-	// Minimize = Hide UI; bring the panel back with Show UI only.
+	// Minimize hides the same chrome the old Hide UI button did. A Show UI
+	// button then appears so the panel can always be brought back.
 	desktopChatMinimizeBtn.addEventListener('click', () => setUiCollapsed(true));
 }
 if (desktopChatExpandBtn) {
@@ -7633,7 +7688,7 @@ document.addEventListener('visibilitychange', () => {
 // ============================================================================
 // html.gs-phone   a touch screen whose short side is <= 600px.
 // html.gs-kb      a text field has focus and the on-screen keyboard is (or is
-//                 about to be) up. Hides the dock, Hide UI, joysticks.
+//                 about to be) up. Hides the dock, Show UI, joysticks.
 // html.gs-kb-chat the field is inside the GS panel: the panel fills the
 //                 visible area above the keyboard (--gs-kb-*) with only the
 //                 messages / editor and the input row, like a messaging app.
@@ -8615,8 +8670,8 @@ function xrSessionActive() {
 	return !!(renderer && renderer.xr && renderer.xr.isPresenting);
 }
 
-// One place for VR window visibility so Hide UI, display-only shares and the
-// keyboard cannot disagree. In a headset the menu is #desktop-chat painted
+// One place for VR window visibility so collapsing the UI, display-only shares
+// and the keyboard cannot disagree. In a headset the menu is #desktop-chat painted
 // into the world (vrWindows.js); outside XR it is the on-screen window.
 function applyXrPanelVisibility(immersive = xrSessionActive()) {
 	const show = immersive && !uiCollapsed && !displayOnlyMode;
@@ -8636,7 +8691,7 @@ function applyXrPanelVisibility(immersive = xrSessionActive()) {
 
 function setImmersiveUiMode(immersive) {
 	// The head-locked hud (Hide/Show-UI window) only makes sense with a headset;
-	// the desktop equivalent is the #ui-toggle button.
+	// the desktop equivalent is the #ui-toggle Show UI button after minimize.
 	hud.visible = immersive && !displayOnlyMode;
 	// Mouse orbit/pan/zoom only makes sense windowed — the headset pose drives
 	// the camera during an XR session.
@@ -8649,39 +8704,105 @@ function setImmersiveUiMode(immersive) {
 // ============================================================================
 // Window Resize
 // ============================================================================
+// The canvas must always fill the visible page: pinch-zoom, browser zoom,
+// orientation, window resize, iOS Safari toolbar show/hide, and
+// devicePixelRatio changes. Size comes from the live layout (canvas client
+// box, visualViewport, innerWidth/innerHeight) rather than cached values.
+// Skip while WebXR is presenting — three.js owns the buffer then.
+const MAX_PIXEL_RATIO = 3;
 var _rendererSize = { w: window.innerWidth, h: window.innerHeight };
-var _rendererResizeTimer = 0;
+var _rendererResizeRaf = 0;
+
+function rendererPixelRatio() {
+	return Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
+}
+
+function visibleViewportSize() {
+	const vv = window.visualViewport;
+	const iw = window.innerWidth || 0;
+	const ih = window.innerHeight || 0;
+	const vw = vv && vv.width > 0 ? vv.width : 0;
+	const vh = vv && vv.height > 0 ? vv.height : 0;
+	// Pinch-zoom out can make the visual viewport larger than the layout one.
+	return {
+		w: Math.max(1, Math.round(Math.max(iw, vw))),
+		h: Math.max(1, Math.round(Math.max(ih, vh)))
+	};
+}
+
 function applyRendererSize() {
-	_rendererResizeTimer = 0;
-	const w = window.innerWidth, h = window.innerHeight;
+	_rendererResizeRaf = 0;
+	if (renderer.xr.isPresenting) return;
+	const canvas = renderer.domElement;
+	const vis = visibleViewportSize();
+	// If CSS has not filled the visible page (older browsers, leftover inline
+	// sizes), force the CSS box to the visible viewport.
+	if (canvas.clientWidth + 1 < vis.w || canvas.clientHeight + 1 < vis.h) {
+		canvas.style.width = vis.w + 'px';
+		canvas.style.height = vis.h + 'px';
+	}
+	const w = Math.max(vis.w, Math.round(canvas.clientWidth || vis.w));
+	const h = Math.max(vis.h, Math.round(canvas.clientHeight || vis.h));
 	// While the phone keyboard is up (Android shrinks the window), keep the
 	// canvas at its full size: it sits behind the panel, and resizing it on
 	// every keyboard animation frame just thrashes WebGL.
 	if (isKeyboardLayoutActive() && w === _rendererSize.w) return;
-	if (w === _rendererSize.w && h === _rendererSize.h && renderer.domElement.width) {
-		const px = renderer.getPixelRatio();
-		if (Math.round(w * px) === renderer.domElement.width && Math.round(h * px) === renderer.domElement.height) return;
+	const px = rendererPixelRatio();
+	if (w === _rendererSize.w && h === _rendererSize.h && canvas.width) {
+		if (Math.round(w * px) === canvas.width && Math.round(h * px) === canvas.height) return;
 	}
 	_rendererSize = { w, h };
 	camera.aspect = w / h;
 	camera.updateProjectionMatrix();
-	renderer.setSize(w, h);
+	if (renderer.getPixelRatio() !== px) renderer.setPixelRatio(px);
+	renderer.setSize(w, h, false);
 }
+
 function scheduleRendererResize() {
-	clearTimeout(_rendererResizeTimer);
-	_rendererResizeTimer = setTimeout(applyRendererSize, 150);
+	if (_rendererResizeRaf) return;
+	_rendererResizeRaf = requestAnimationFrame(applyRendererSize);
 }
+
 function onWindowResize() {
-	// Phones: debounce (keyboard and URL-bar animations fire many resizes).
-	// Desktop, tablets and VR / Cardboard resize immediately as before.
-	if (isPhoneLayout() && !renderer.xr.isPresenting && !document.body.classList.contains('gs-cardboard-active')) {
-		scheduleRendererResize();
-		return;
-	}
-	applyRendererSize();
+	scheduleRendererResize();
 }
 
 window.addEventListener('resize', onWindowResize);
+window.addEventListener('orientationchange', () => {
+	scheduleRendererResize();
+	// iOS often fires this before the new layout size is available.
+	setTimeout(scheduleRendererResize, 200);
+	setTimeout(scheduleRendererResize, 500);
+});
+if (window.visualViewport) {
+	window.visualViewport.addEventListener('resize', scheduleRendererResize);
+	window.visualViewport.addEventListener('scroll', scheduleRendererResize);
+}
+if (typeof ResizeObserver === 'function') {
+	const ro = new ResizeObserver(() => scheduleRendererResize());
+	ro.observe(document.documentElement);
+	if (appElement) ro.observe(appElement);
+}
+(function watchDevicePixelRatio() {
+	let mql;
+	const onChange = () => {
+		scheduleRendererResize();
+		attach();
+	};
+	const attach = () => {
+		if (mql) {
+			if (mql.removeEventListener) mql.removeEventListener('change', onChange);
+			else if (mql.removeListener) mql.removeListener(onChange);
+		}
+		try { mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`); }
+		catch { mql = null; return; }
+		if (!mql) return;
+		if (mql.addEventListener) mql.addEventListener('change', onChange);
+		else if (mql.addListener) mql.addListener(onChange);
+	};
+	attach();
+})();
+applyRendererSize();
 
 renderer.xr.addEventListener('sessionstart', () => {
 	// 'local-floor' reference space: origin at the real floor, eye level
@@ -8714,6 +8835,7 @@ renderer.xr.addEventListener('sessionend', () => {
 	setImmersiveUiMode(false);
 	resetCameraView(); // back to the default desktop view (not the headset pose)
 	photoCapture?.restartForMode();
+	scheduleRendererResize();
 });
 
 // ============================================================================
@@ -9452,7 +9574,7 @@ renderer.setAnimationLoop((time) => {
 	if (mobileXRMode === 'cardboard') {
 		// Manual side-by-side stereo render (no OpenXR session to do this for us).
 		stereoCam.update(camera);
-		const w = window.innerWidth, h = window.innerHeight;
+		const w = _rendererSize.w, h = _rendererSize.h;
 		renderer.setScissorTest(true);
 		renderer.setScissor(0, 0, w / 2, h);
 		renderer.setViewport(0, 0, w / 2, h);

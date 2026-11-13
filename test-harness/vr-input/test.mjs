@@ -65,7 +65,9 @@ const topBar = (p) => p.evaluate(() => {
 		header: R('#desktop-chat-header'), chat: R('#desktop-chat'), tabs: R('#desktop-chat-tabs'), dock: R('#gs-dock'), xr: R('#XRButton'), ver: R('#gs-version-btn'),
 		cardboard: R('#cardboard-btn'), exit: R('#gs-exit-vr-btn'), hb: R('#desktop-chat-header-buttons'), ui: R('#ui-toggle'),
 		burger: R('#gs-menu-hamburger'), current: R('#gs-menu-current-tab'),
-		overflow: dock.scrollWidth > dock.clientWidth + 1, bottomStuff, innerHeight
+		overflow: dock.scrollWidth > dock.clientWidth + 1, bottomStuff, innerHeight,
+		backendBadge: !!document.getElementById('desktop-chat-title'),
+		modelSelect: !!document.getElementById('desktop-model-select')
 	};
 });
 const overlaps = (a, b) => a && b && a.shown && b.shown && a.l < b.r - 1 && b.l < a.r - 1 && a.t < b.b - 1 && b.t < a.b - 1;
@@ -84,12 +86,45 @@ for (const vp of [
 	const T = vp.name;
 	check(`${T}: hamburger + Enter VR live in the window header; version is in Meta Settings`, g.dockInHeader && g.xrInDock && g.burgerInHeader && !g.verInDock && g.verInMeta, { dockInHeader: g.dockInHeader, xrInDock: g.xrInDock, burgerInHeader: g.burgerInHeader, verInDock: g.verInDock, verInMeta: g.verInMeta });
 	check(`${T}: hamburger and current tab name are at the left of the header`, g.burger.shown && g.current.shown && /chat/i.test(g.current.text) && g.burger.t >= g.chat.t && g.burger.b <= g.header.b + 1, { burger: g.burger, current: g.current.text });
+	check(`${T}: no Claude/backend status badge in the header; Model dropdown remains`, !g.backendBadge && g.modelSelect, { backendBadge: g.backendBadge, modelSelect: g.modelSelect });
 	const vrBtn = g.xr.shown ? g.xr : null;
 	if (vp.xr) check(`${T}: Enter VR shown in the dock`, vrBtn && vrBtn.shown && /enter vr|vr not supported/i.test(vrBtn.text), g.order);
 	else if (!vp.viewport.isMobile) check(`${T}: "VR NOT SUPPORTED" still shown (compact status pill)`, g.xr.shown && /not supported/i.test(g.xr.text), g.xr.text);
 	else check(`${T}: no Cardboard or Enter VR in the top bar (they're in Meta Settings)`, !g.cardboard.shown && !g.xr.shown, { xr: g.xr, cardboard: g.cardboard });
 	check(`${T}: dock inside the window, not overflowing`, !g.overflow && g.dock.l >= g.chat.l && g.dock.r <= g.chat.r + 0.5, { dock: [g.dock.l, g.dock.r], chat: [g.chat.l, g.chat.r] });
-	check(`${T}: no overlap with the expand / minimize buttons or Hide UI`, !overlaps(g.burger, g.hb) && !overlaps(g.burger, g.ui) && (!vrBtn || (!overlaps(vrBtn, g.hb) && !overlaps(vrBtn, g.ui) && !overlaps(vrBtn, g.burger))), { vr: vrBtn, burger: g.burger, hb: g.hb, ui: g.ui });
+	check(`${T}: no overlap with the expand / minimize buttons`, !overlaps(g.burger, g.hb) && (!vrBtn || (!overlaps(vrBtn, g.hb) && !overlaps(vrBtn, g.burger))), { vr: vrBtn, burger: g.burger, hb: g.hb });
+	check(`${T}: Hide UI button is not shown while the menu is open`, !g.ui.shown, g.ui);
+	await p.click('#desktop-chat-minimize');
+	await sleep(250);
+	const hid = await p.evaluate(() => {
+		const chat = document.getElementById('desktop-chat');
+		const btn = document.getElementById('ui-toggle');
+		const cs = btn && getComputedStyle(btn);
+		const r = btn && btn.getBoundingClientRect();
+		return {
+			chatHidden: chat.classList.contains('hidden') || getComputedStyle(chat).display === 'none',
+			showShown: !!(btn && !btn.hidden && cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0),
+			label: (btn && btn.textContent || '').trim(),
+			w: r ? Math.round(r.width) : 0,
+			h: r ? Math.round(r.height) : 0
+		};
+	});
+	check(`${T}: minimize hides the menu and shows Show UI`, hid.chatHidden && hid.showShown && /show ui/i.test(hid.label), hid);
+	const short = Math.min(vp.viewport.width, vp.viewport.height);
+	if (short <= 600) check(`${T}: Show UI is at least 44px`, hid.w >= 44 && hid.h >= 44, hid);
+	await p.click('#ui-toggle');
+	await sleep(250);
+	const restored = await p.evaluate(() => {
+		const chat = document.getElementById('desktop-chat');
+		const btn = document.getElementById('ui-toggle');
+		const cs = btn && getComputedStyle(btn);
+		const r = btn && btn.getBoundingClientRect();
+		return {
+			chatShown: !chat.classList.contains('hidden') && getComputedStyle(chat).display !== 'none',
+			toggleHidden: !btn || btn.hidden || cs.display === 'none' || r.width === 0
+		};
+	});
+	check(`${T}: Show UI brings the menu back and hides itself`, restored.chatShown && restored.toggleHidden, restored);
 	if (vp.viewport.hasTouch) check(`${T}: 44px hamburger`, g.burger.h >= 44 && g.burger.w >= 44, { burger: g.burger.h });
 	check(`${T}: Exit VR hidden outside VR`, !g.exit.shown);
 	check(`${T}: nothing left at the bottom of the page`, g.bottomStuff.length === 0, g.bottomStuff);
@@ -126,16 +161,12 @@ for (const vp of [
 	// The header is still a drag handle outside the hamburger / dock (desktop).
 	if (!vp.viewport.isMobile) {
 		const dragFrom = await p.evaluate(() => {
-			const title = document.getElementById('desktop-chat-title');
-			const cs = title && getComputedStyle(title);
-			if (title && cs.display !== 'none' && title.getBoundingClientRect().width > 20) {
-				const r = title.getBoundingClientRect();
-				return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-			}
 			const h = document.getElementById('desktop-chat-header').getBoundingClientRect();
 			const nav = document.getElementById('gs-menu-nav').getBoundingClientRect();
 			const dock = document.getElementById('gs-dock').getBoundingClientRect();
-			return { x: (nav.right + dock.left) / 2, y: h.top + h.height / 2 };
+			const hb = document.getElementById('desktop-chat-header-buttons').getBoundingClientRect();
+			const right = dock.width > 0 ? dock.left : hb.left;
+			return { x: (nav.right + right) / 2, y: h.top + h.height / 2 };
 		});
 		await p.mouse.move(dragFrom.x, dragFrom.y); await p.mouse.down(); await p.mouse.move(dragFrom.x + 120, dragFrom.y + 60, { steps: 6 }); await p.mouse.up(); await sleep(200);
 		const moved = await p.evaluate(() => document.getElementById('desktop-chat').getBoundingClientRect().toJSON());

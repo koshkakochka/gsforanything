@@ -194,7 +194,7 @@ for (const [H, base] of HOSTS) {
   await shot(v, `${H}-5-community-row-embed-dialog`);
   await v.click('#gs-embed-close'); await sleep(200);
   // Loading an allowed scene unlocks again
-  await v.evaluate((id) => document.querySelector(`[data-community-embed="${id}"]`)?.closest('.dchat-community-scene')?.querySelector('button')?.click(), allowedId);
+  await v.evaluate((id) => document.querySelector(`[data-community-embed="${id}"]`)?.closest('.dchat-community-scene')?.querySelector('.dchat-community-scene-actions-row button')?.click(), allowedId);
   await v.waitForFunction(() => document.querySelector('[data-share="embed"]') && !document.querySelector('[data-share="embed"]').disabled, { timeout: 15000 }).catch(() => {});
   ok(`${H} loading an allowed scene re-enables exports`, (await shareTab(v)).embedDisabled === false);
   ok(`${H} viewer: no page errors / no AI calls`, v._errs.length === 0 && v._chat === 0, v._errs.join(' | '));

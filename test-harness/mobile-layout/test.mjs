@@ -75,8 +75,9 @@ const layout = (p) => p.evaluate(() => {
   const list = document.getElementById('desktop-chat-messages');
   const last = list ? [...list.children].filter(c => c.getBoundingClientRect().height > 0).at(-1) : null;
   const lr = last ? last.getBoundingClientRect() : null; const listR = list.getBoundingClientRect();
+  const shown = sel => { const e = document.querySelector(sel); if (!e) return false; const s = getComputedStyle(e); return s.display !== 'none' && s.visibility !== 'hidden'; };
   return { vv: { top: vv.offsetTop, h: vv.height, w: vv.width }, iw: innerWidth, ih: innerHeight, cls: document.documentElement.className, active: document.activeElement?.id || document.activeElement?.tagName,
-    panel: R('#desktop-chat'), header: R('#desktop-chat-header'), tabs: R('#desktop-chat-tabs'), menu: R('#gs-menu-nav'), burger: R('#gs-menu-hamburger'), input: R('#desktop-chat-input'), send: R('#desktop-send-button'), more: R('#desktop-chat-more'), list: R('#desktop-chat-messages'), dock: R('#gs-dock'), toggle: R('#ui-toggle'),
+    panel: R('#desktop-chat'), header: R('#desktop-chat-header'), tabs: R('#desktop-chat-tabs'), menu: R('#gs-menu-nav'), burger: R('#gs-menu-hamburger'), input: R('#desktop-chat-input'), send: R('#desktop-send-button'), more: R('#desktop-chat-more'), list: R('#desktop-chat-messages'), dock: R('#gs-dock'), dockShown: shown('#gs-dock'), toggle: R('#ui-toggle'),
     themeInput: R('#dchat-theme-chat-input'), code: R('#dchat-code-editor'), apply: R('#dchat-code-apply'),
     lastMsgVisible: !!lr && lr.bottom <= listR.bottom + 1 && lr.bottom > listR.top, lastMsgText: last?.textContent.slice(0, 40), canvas: [renderer.domElement.width, renderer.domElement.height], dpr: renderer.getPixelRatio() };
 });
@@ -124,6 +125,29 @@ for (const vp of PHONES) {
       return { w: Math.round(br.width), h: Math.round(br.height), current: (cur.textContent || '').trim(), open: document.getElementById('desktop-chat').classList.contains('gs-tab-menu-open') };
     });
     ok(`${T} hamburger in the header (>= 44px) with the current tab name`, burger.w >= 44 && burger.h >= 44 && /chat/i.test(burger.current) && !burger.open, JSON.stringify(burger));
+    ok(`${T} Hide UI button is not shown while the menu is open`, !L.toggle, JSON.stringify(L.toggle));
+    await tapEl(p, '#desktop-chat-minimize');
+    await sleep(250);
+    const hid = await p.evaluate(() => {
+      const chat = document.getElementById('desktop-chat');
+      const btn = document.getElementById('ui-toggle');
+      const cs = btn && getComputedStyle(btn);
+      const r = btn && btn.getBoundingClientRect();
+      const chatCs = getComputedStyle(chat);
+      return {
+        chatHidden: chat.classList.contains('hidden') || chatCs.display === 'none',
+        showShown: !!(btn && !btn.hidden && cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0),
+        label: (btn && btn.textContent || '').trim(),
+        w: r ? Math.round(r.width) : 0,
+        h: r ? Math.round(r.height) : 0
+      };
+    });
+    ok(`${T} minimize hides the menu and shows Show UI`, hid.chatHidden && hid.showShown && /show ui/i.test(hid.label), JSON.stringify(hid));
+    ok(`${T} Show UI is at least 44px`, hid.w >= 44 && hid.h >= 44, JSON.stringify(hid));
+    await tapEl(p, '#ui-toggle');
+    await sleep(250);
+    L = await layout(p);
+    ok(`${T} Show UI brings the menu back and hides itself`, !!L.panel && !!L.header && !L.toggle, JSON.stringify({ panel: L.panel, toggle: L.toggle }));
     await openTabMenu(p);
     const menu = await p.evaluate(() => {
       const ts = [...document.querySelectorAll('#desktop-chat-tabs .dchat-tab')];
@@ -159,7 +183,7 @@ for (const vp of PHONES) {
     ok(`${T} keyboard: Send fully visible`, inside(L.send, L) && inside(L.more, L), JSON.stringify(L.send));
     ok(`${T} keyboard: input row sits at the bottom of the visible area`, L.vv.top + L.vv.h - L.input.b < 24, `gap ${Math.round(L.vv.top + L.vv.h - L.input.b)}px`);
     ok(`${T} keyboard: panel inside the visible area`, inside(L.panel, L), JSON.stringify(L.panel));
-    ok(`${T} keyboard: dock, Hide UI and tabs are out of the way`, !L.dock && !L.toggle && !L.tabs && !L.header, JSON.stringify({ dock: L.dock, toggle: L.toggle, tabs: L.tabs }));
+    ok(`${T} keyboard: dock and tabs are out of the way`, !L.dock && !L.toggle && !L.tabs && !L.header, JSON.stringify({ dock: L.dock, toggle: L.toggle, tabs: L.tabs }));
     ok(`${T} keyboard: nothing covers the input or Send`, !(await covers(p, '#desktop-chat-input')) && !(await covers(p, '#desktop-send-button')), (await covers(p, '#desktop-chat-input')) + ' ' + (await covers(p, '#desktop-send-button')));
     ok(`${T} keyboard: recent messages visible (${L.list?.h}px of chat)`, L.list && L.list.h >= (portrait ? 200 : 60) && L.lastMsgVisible, JSON.stringify(L.list));
     ok(`${T} keyboard: typed text lands in the input`, await p.evaluate(() => document.getElementById('desktop-chat-input').value) === 'a red cube on a table');
@@ -177,7 +201,7 @@ for (const vp of PHONES) {
     // keyboard dismissed without blurring (Android back / iOS keyboard hide)
     await keyboard(p, vp, mode, false); await sleep(1100);
     L = await layout(p);
-    ok(`${T} keyboard hidden while the field keeps focus: full layout returns`, !/gs-kb/.test(L.cls) && L.header && L.menu && L.dock, L.cls);
+    ok(`${T} keyboard hidden while the field keeps focus: full layout returns`, !/gs-kb/.test(L.cls) && L.header && L.menu && L.dockShown, JSON.stringify({ cls: L.cls, header: !!L.header, menu: !!L.menu, dock: L.dock, dockShown: L.dockShown }));
     ok(`${T} panel returns to its size from before the keyboard`, L.panel && Math.abs(L.panel.h - before.panel.h) <= 1 && Math.abs(L.panel.t - before.panel.t) <= 1, JSON.stringify({ before: before.panel, after: L.panel }));
     if (mode === 'android') { await sleep(400); const c = await layout(p); ok(`${T} canvas matches the window after the keyboard closes`, Math.abs(c.canvas[0] - Math.round(c.iw * c.dpr)) <= 1 && Math.abs(c.canvas[1] - Math.round(c.ih * c.dpr)) <= 1, JSON.stringify({ canvas: c.canvas, win: [c.iw, c.ih], dpr: c.dpr })); }
     // tap the focused field again: keyboard back
@@ -191,7 +215,7 @@ for (const vp of PHONES) {
     await keyboard(p, vp, mode, false);
     await p.evaluate(() => document.activeElement.blur()); await sleep(500);
     L = await layout(p);
-    ok(`${T} blur restores the hamburger, dock and Hide UI`, !/gs-kb/.test(L.cls) && L.menu && L.dock && L.toggle && L.header, L.cls);
+    ok(`${T} blur restores the hamburger, dock and header`, !/gs-kb/.test(L.cls) && L.menu && L.dockShown && L.header && !L.toggle, JSON.stringify({ cls: L.cls, menu: !!L.menu, header: !!L.header, dock: L.dock, dockShown: L.dockShown, toggle: L.toggle }));
     // ---- theme chat input
     await tapEl(p, '[data-chat-section="theme"]');
     await tapEl(p, '#dchat-theme-chat-input'); await keyboard(p, vp, mode, true);
@@ -213,6 +237,105 @@ for (const vp of PHONES) {
     await keyboard(p, vp, mode, false); await p.evaluate(() => document.activeElement.blur()); await sleep(400);
     await tab(p, 'chat');
     ok(`${T} no console/page errors`, p._errs.length === 0, JSON.stringify(p._errs.slice(0, 4)));
+    await p.close();
+  }
+}
+
+// ---- Header stays one row at narrow widths (hamburger, tab title, expand, minimize)
+async function headerRow(p) {
+  return p.evaluate(() => {
+    const box = (s) => {
+      const e = document.querySelector(s);
+      if (!e) return null;
+      const r = e.getBoundingClientRect();
+      const cs = getComputedStyle(e);
+      if (r.width < 1 || r.height < 1 || cs.display === 'none' || cs.visibility === 'hidden' || e.closest('[hidden]')) return null;
+      return { t: r.top, b: r.bottom, l: r.left, r: r.right, w: r.width, h: r.height };
+    };
+    const header = box('#desktop-chat-header');
+    const burger = box('#gs-menu-hamburger');
+    const title = box('#gs-menu-current-tab');
+    const expand = box('#desktop-chat-expand');
+    const mini = box('#desktop-chat-minimize');
+    const buttons = [burger, expand, mini].filter(Boolean);
+    const tops = buttons.map((x) => x.t);
+    // Same row: the band from the highest top to the lowest bottom is no
+    // taller than the tallest button (plus a 4px slop). Different-height
+    // buttons (36px hamburger vs 24px expand on desktop / VR) can have
+    // different tops and still sit on one row.
+    const band = buttons.length ? Math.max(...buttons.map((x) => x.b)) - Math.min(...tops) : 0;
+    const tallest = buttons.length ? Math.max(...buttons.map((x) => x.h)) : 0;
+    const sameTop = buttons.length >= 1 && band <= tallest + 4;
+    const titleOverflow = !!(title && header && (title.r > header.r + 1 || title.l < header.l - 1 || title.t < header.t - 1 || title.b > header.b + 1));
+    const titleOverButtons = !!(title && expand && title.r > expand.l + 1);
+    const titleOnRow = !title || (buttons.length && title.b > Math.min(...tops) + 2 && title.t < Math.max(...buttons.map((x) => x.b)) - 2);
+    return {
+      label: (document.getElementById('gs-menu-current-tab')?.textContent || '').trim(),
+      sameTop, titleOverflow, titleOverButtons, titleOnRow, band, tallest,
+      n: buttons.length,
+      header, burger, title, expand, mini,
+    };
+  });
+}
+
+const HEADER_VPS = [
+  { name: '320x568', w: 320, h: 568 },
+  { name: '375x667', w: 375, h: 667 },
+  { name: '390x844', w: 390, h: 844 },
+  { name: '568x320', w: 568, h: 320 },
+  { name: '667x375', w: 667, h: 375 },
+  { name: '844x390', w: 844, h: 390 },
+];
+if (!ONLY || ONLY.split(',').some((o) => o.startsWith('header'))) {
+  for (const vp of HEADER_VPS) {
+    const T = `[header ${vp.name}]`;
+    const p = await openPhone(vp);
+    for (const tabName of ['chat', 'env', 'meta']) {
+      await tab(p, tabName);
+      const row = await headerRow(p);
+      ok(`${T} ${tabName}: hamburger, expand and minimize share the same top`, row.sameTop && row.n >= 2, JSON.stringify(row));
+      ok(`${T} ${tabName}: tab title stays on that row and does not overflow the header`, row.titleOnRow && !row.titleOverflow && !row.titleOverButtons, JSON.stringify({ label: row.label, title: row.title, header: row.header, expand: row.expand, overflow: row.titleOverflow, overButtons: row.titleOverButtons }));
+    }
+    await p.close();
+  }
+  // VR menu: the in-world source is a fixed 600x700 html-in-canvas window
+  // (minimize hidden, Exit VR visible). Also check a 320px on-screen window
+  // with the same presenting chrome, in case a narrow desktop window is used.
+  {
+    const p = await b.newPage();
+    p._errs = [];
+    await p.setViewport({ width: 1280, height: 800 });
+    await p.setRequestInterception(true);
+    p.on('request', req => {
+      const u = req.url();
+      if (u.includes('/api/community-scenes') && req.method() === 'POST') return req.respond({ status: 503, body: 'blocked' });
+      if (u.endsWith('/api/chat')) return req.respond({ status: 200, contentType: 'application/json', body: '{"content":[{"type":"text","text":"ok"}]}' });
+      req.continue();
+    });
+    await p.goto(BASE + '/', { waitUntil: 'networkidle2' }); await sleep(2500);
+    await p.evaluate(() => {
+      document.body.classList.add('gs-xr-presenting');
+      document.getElementById('desktop-chat').classList.add('html-in-canvas-source');
+      document.querySelector('.dchat-tab[data-tab="env"]')?.click();
+    });
+    await sleep(200);
+    let row = await headerRow(p);
+    ok(`[header VR 600] Environment: visible header buttons share one row`, row.sameTop && row.n >= 1, JSON.stringify(row));
+    ok(`[header VR 600] Environment: tab title stays on that row and does not overflow the header`, row.titleOnRow && !row.titleOverflow && !row.titleOverButtons, JSON.stringify({ label: row.label, title: row.title, header: row.header, expand: row.expand }));
+    await p.evaluate(() => {
+      const el = document.getElementById('desktop-chat');
+      el.classList.remove('html-in-canvas-source');
+      el.style.width = '320px';
+      el.style.minWidth = '0px';
+      el.style.maxWidth = '320px';
+      el.style.left = '24px';
+      el.style.top = '24px';
+      el.style.right = 'auto';
+    });
+    await sleep(200);
+    row = await headerRow(p);
+    ok(`[header VR 320] Environment: visible header buttons share one row`, row.sameTop && row.n >= 1, JSON.stringify(row));
+    ok(`[header VR 320] Environment: tab title stays on that row and does not overflow the header`, row.titleOnRow && !row.titleOverflow && !row.titleOverButtons, JSON.stringify({ label: row.label, title: row.title, header: row.header, expand: row.expand }));
     await p.close();
   }
 }

@@ -1,9 +1,22 @@
 {
   "versions": [
     {
-      "id": "0.999",
-      "label": "GS 0.999 (this build)",
+      "id": "1.0",
+      "label": "GS 1.0 (this build)",
       "url": null,
+      "date": "2026-11-12",
+      "changes": [
+        "Every Community grid card has a description section you can edit, including cards that do not have a description yet.",
+        "The 3D scene fills the page after pinch-zoom, rotation, window resizes, and Safari's toolbar showing or hiding.",
+        "The menu header — hamburger, tab name, fullscreen and minimize — stays on one row at narrow widths. A long tab name is cut off with an ellipsis instead of wrapping the buttons onto a second row.",
+        "The Hide UI button is gone. After you minimize, a Show UI button appears in that corner only while the menu is minimized.",
+        "The Claude label and green status dot are gone from the menu header. You can still pick Claude from the Model dropdown."
+      ]
+    },
+    {
+      "id": "0.999",
+      "label": "GS 0.999",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-12",
       "changes": [
         "ammo.js is no longer selected by default in the Dependencies tab. It stays in the list and can still be turned on, and scenes that already use it still load it with gsRequire('ammo')."

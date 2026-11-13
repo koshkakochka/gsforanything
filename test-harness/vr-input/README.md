@@ -4,7 +4,9 @@ Headless checks, using puppeteer-core 24.43.1 and IWER emulating a Meta Quest 3,
 
 1. **Top bar.** Enter VR (or Cardboard VR / VR NOT SUPPORTED) and the **GS vX** version button sit side by side in the window header, above the tabs.
    - Checked at desktop 1600 / 1280 (no WebXR), iPhone 390, Android 360 (WebXR), Android landscape 844×390 and tablet 820.
-   - The bar must not overlap the expand/minimise buttons or Hide UI.
+   - The bar must not overlap the expand/minimise buttons.
+   - The page-level Hide UI button is not shown while the menu is open;
+     minimize hides the menu and Show UI brings it back.
    - Touch targets must be 44px.
    - Nothing may be left at the bottom of the page.
    - The version button still opens the picker.
