@@ -11,7 +11,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let pass = 0, fail = 0;
 const check = (n, ok, d = '') => { ok ? pass++ : fail++; console.log(`${ok ? 'PASS' : 'FAIL'} ${n}${!ok && d !== '' ? '  — ' + (typeof d === 'string' ? d : JSON.stringify(d)) : ''}`); };
 const PHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
-const ALL_TABS = ['chat', 'env', 'scenes', 'files', 'code', 'community', 'controls', 'deps', 'share', 'render', 'technical', 'meta'];
+const ALL_TABS = ['chat', 'env', 'scenes', 'code', 'community', 'controls', 'deps', 'share', 'render', 'technical', 'meta'];
 
 const b = await puppeteer.launch({
 	executablePath: '/usr/bin/google-chrome',

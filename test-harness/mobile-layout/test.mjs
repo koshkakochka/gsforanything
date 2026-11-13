@@ -158,7 +158,7 @@ for (const vp of PHONES) {
     await tab(p, 'share');
     const sh = await p.evaluate(() => ({ tab: document.querySelector('.dchat-tab.active')?.dataset.tab, open: document.getElementById('desktop-chat').classList.contains('gs-tab-menu-open'), label: document.getElementById('gs-menu-current-tab')?.textContent.trim() }));
     ok(`${T} Share is reachable from the hamburger and the menu closes`, sh.tab === 'share' && sh.open === false && /share/i.test(sh.label || ''), JSON.stringify(sh));
-    for (const t of ['env', 'scenes', 'files', 'code', 'community', 'controls', 'deps', 'share']) {
+    for (const t of ['env', 'scenes', 'code', 'community', 'controls', 'deps', 'share']) {
       await tab(p, t);
       const s = await scanTargets(p, [`#dchat-panel-${t}`]);
       ok(`${T} ${t} tab: visible tap targets >= 44px (${s.count})`, s.small.length === 0, JSON.stringify(s.small.slice(0, 8)));
@@ -167,7 +167,7 @@ for (const vp of PHONES) {
     await tapEl(p, '#desktop-chat-more');
     L = await layout(p);
     const tools = await p.evaluate(() => [...document.querySelectorAll('#desktop-chat-tools-row button')].filter(e => e.getBoundingClientRect().height > 0).map(e => { const r = e.getBoundingClientRect(); return Math.round(Math.min(r.width, r.height)); }));
-    ok(`${T} "+" opens attach / files / mic / history (44px)`, tools.length >= 3 && tools.every(x => x >= 44), JSON.stringify(tools));
+    ok(`${T} "+" opens attach / camera / mic / history (44px)`, tools.length >= 3 && tools.every(x => x >= 44), JSON.stringify(tools));
     await tapEl(p, '#desktop-chat-more');
     const closed = await p.evaluate(() => getComputedStyle(document.getElementById('desktop-chat-tools-row')).display);
     ok(`${T} "+" closes them again`, closed === 'none', closed);
