@@ -61,7 +61,7 @@
 		}
 
 		/* Window top bar (#gs-dock, inside #desktop-chat-header, between the
-		   title and the expand / minimize buttons): WebXR Enter VR (and, in a
+		   current tab name and the expand / minimize buttons): WebXR Enter VR (and, in a
 		   session, Exit VR). The GS version and Cardboard VR buttons live in
 		   the Meta Settings tab. The hamburger at the left of the header opens
 		   every tab as a vertical list. main.js moves
@@ -77,7 +77,7 @@
 			align-items: center;
 			justify-content: flex-end;
 			gap: 6px;
-			/* Never squeezed: the (decorative) title gives way instead. */
+			/* Never squeezed: leftover space sits between the tab name and this bar. */
 			flex: 0 0 auto;
 			margin: -4px 8px; /* 32px buttons without making the header taller */
 			box-sizing: border-box;
@@ -526,11 +526,11 @@
 			display: flex;
 			align-items: center;
 			gap: 8px;
-			/* Don't grow/shrink against the title: the current tab name must
-			   stay readable. The decorative title yields space first. */
+			/* Don't shrink: the current tab name must stay readable.
+			   margin-right: auto keeps the dock and window buttons on the right. */
 			flex: 0 0 auto;
 			min-width: 0;
-			margin-right: 8px;
+			margin-right: auto;
 		}
 		#gs-menu-hamburger {
 			flex: 0 0 auto;
@@ -794,29 +794,6 @@
 			font-size: 13px; padding: 6px 8px;
 		}
 		#dchat-nav-type option { background: #1f2030; color: #fff; }
-
-		#desktop-chat-title {
-			/* basis 0: the (wrapping) header never breaks a row for the title;
-			   the top bar only moves to its own row via the container query. */
-			flex: 1 1 0;
-			min-width: 0;
-			overflow: hidden;
-			white-space: nowrap;
-			font-size: 14px;
-			font-weight: 700;
-			letter-spacing: 0.2px;
-			display: flex;
-			align-items: center;
-			gap: 8px;
-		}
-
-		#desktop-chat-title .dot {
-			width: 8px;
-			height: 8px;
-			border-radius: 50%;
-			background: #10b981;
-			flex-shrink: 0;
-		}
 
 		#desktop-chat-header-buttons {
 			display: flex;
@@ -2573,14 +2550,12 @@
 		html.gs-phone #desktop-chat input,
 		html.gs-phone #desktop-chat select,
 		html.gs-phone #desktop-chat textarea { font-size: 16px; } /* no iOS focus zoom */
-		/* Header: the floating Hide UI button sits over the title, so the
-		   (decorative) title gives way; bigger minimize / expand buttons. */
+		/* Header: 96px left padding keeps the hamburger clear of the
+		   page-level Hide UI button (position:fixed in the top-left corner);
+		   bigger minimize / expand buttons. */
 		html.gs-phone #desktop-chat-header {
-			/* 96px left padding keeps the hamburger clear of the page-level
-			   Hide UI button (position:fixed in the top-left corner). */
 			padding: 6px 8px 6px 96px; min-height: 56px; box-sizing: border-box;
 		}
-		html.gs-phone #desktop-chat-title { display: none; }
 		html.gs-phone #desktop-chat-header-buttons { gap: 8px; }
 		html.gs-phone #desktop-chat-header-buttons button { width: 44px; height: 44px; font-size: 16px; border-radius: 10px; }
 		html.gs-phone #ui-toggle {
@@ -2631,8 +2606,8 @@
 		   (see the container query below for when the bar wraps). */
 		html.gs-phone #desktop-chat-header { flex-wrap: wrap; row-gap: 6px; }
 		html.gs-phone #gs-dock { margin: -4px 4px; }
-		/* Portrait phones: Hide UI sits over the title, so the top bar takes
-		   its own row under it. Landscape (wider window) keeps one row. */
+		/* Portrait phones: Hide UI sits over the start of the header, so the
+		   top bar takes its own row under it. Landscape (wider window) keeps one row. */
 		@container gs-chat-header (max-width: 380px) {
 			html.gs-phone #gs-dock { order: 3; flex: 1 0 100%; margin: 0; justify-content: center; flex-wrap: wrap; }
 		}
@@ -2979,7 +2954,6 @@
 				</button>
 				<span id="gs-menu-current-tab">💬 Chat</span>
 			</div>
-			<div id="desktop-chat-title"><span class="dot"></span>Claude</div>
 			<!-- Top bar of the window: three's XRButton (inserted by main.js
 			     before Exit VR) and, only inside a VR session (this window is
 			     the VR menu), a big red Exit VR button. Version and Cardboard

@@ -82,6 +82,12 @@ async function run2d({ name, viewport, ua, xr }) {
 	const { p, errors } = await openPage({ viewport, ua, xr });
 	let s = await menuState(p);
 	check(`${T}: hamburger + current tab visible, list closed`, s.burger.shown && s.current.shown && /chat/i.test(s.label) && !s.open && !s.list?.shown && s.aria === 'false', s);
+	const badge = await p.evaluate(() => ({
+		title: !!document.getElementById('desktop-chat-title'),
+		model: !!document.getElementById('desktop-model-select'),
+		headerHasClaude: /(?:^|\s)Claude(?:\s|$)/.test(document.getElementById('desktop-chat-header')?.innerText || '')
+	}));
+	check(`${T}: no Claude/backend status badge in the header; Model dropdown remains`, !badge.title && !badge.headerHasClaude && badge.model, badge);
 	check(`${T}: version and Cardboard live in Meta Settings, not the dock`, s.verParent === 'meta' && s.cardParent === 'meta', s);
 	if (viewport.hasTouch) check(`${T}: hamburger is a ≥ 44px touch target`, s.burger.w >= 44 && s.burger.h >= 44, s.burger);
 	await shot(p, `${name}-hamburger-closed`, true);

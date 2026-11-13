@@ -122,7 +122,7 @@
 		const byVariant = (v) => { const g = root.querySelector(`.menu-btn[data-id] rect`); return g; };
 
 		// --- panel text ---
-		text('Header title', q('#desktop-chat-header span, #desktop-chat-header .dchat-title, #desktop-chat-header'));
+		text('Header title', q('#gs-menu-current-tab, #desktop-chat-header'));
 		const assistant = q('.dchat-msg.assistant'); text('Assistant message', assistant);
 		const user = q('.dchat-msg.user'); if (user) text('User message', user);
 		text('Section label', q('.dchat-section-label'));
