@@ -250,7 +250,7 @@ const desktopOllamaModelRow = document.getElementById('desktop-ollama-model-row'
 const desktopOllamaModelSelect = document.getElementById('desktop-ollama-model-select');
 const desktopChatMinimizeBtn = document.getElementById('desktop-chat-minimize');
 const desktopChatExpandBtn = document.getElementById('desktop-chat-expand');
-const desktopChatReopenBtn = null; // Show Chat removed — restore via Show UI
+const desktopChatReopenBtn = null; // Show Chat removed — restore via the Show UI button after minimize
 const chatOverlayBar = document.getElementById('chat-overlay');
 const dchatEnvModeMount = document.getElementById('dchat-env-mode');
 const dchatEnvControls = document.getElementById('dchat-env-controls');
@@ -5796,8 +5796,9 @@ function updateStatus(text, className) {
 	}
 }
 
-// Hide/show the VR menu (headset) or the menu window (windowed view). The
-// head-locked Hide/Show UI window stays so the UI can always be brought back.
+// Hide/show the VR menu (headset) or the menu window (windowed view). In a
+// headset the head-locked HUD stays so the UI can always be brought back; in
+// the windowed view a Show UI button appears after minimize and does the same.
 function setUiCollapsed(collapsed) {
 	if (displayOnlyMode) collapsed = true;
 	uiCollapsed = collapsed;
@@ -5817,12 +5818,17 @@ function toggleUi() {
 }
 
 function updateUiToggleDOM() {
-	const label = uiCollapsed ? 'Show UI' : 'Hide UI';
+	// Page-level button: only "Show UI", and only while the menu is hidden.
+	// The menu window's '_' button is what hides it. The in-headset HUD
+	// toggle still switches between Hide UI and Show UI.
 	const btn = document.getElementById('ui-toggle');
-	if (btn) btn.textContent = label;
+	if (btn) {
+		btn.textContent = 'Show UI';
+		btn.hidden = !uiCollapsed || displayOnlyMode;
+	}
 	const vrBtn = document.getElementById('gs-vr-hud-toggle');
 	if (vrBtn) {
-		vrBtn.textContent = label;
+		vrBtn.textContent = uiCollapsed ? 'Show UI' : 'Hide UI';
 		vrBtn.setAttribute('aria-pressed', uiCollapsed ? 'true' : 'false');
 	}
 }
@@ -7044,7 +7050,7 @@ chatInput.addEventListener('keydown', (e) => {
 	}
 });
 
-// Collapse-all-UI: wire the DOM toggle button (windowed view).
+// Restore-UI: the page-level Show UI button (visible only when collapsed).
 const uiToggleBtn = document.getElementById('ui-toggle');
 if (uiToggleBtn) uiToggleBtn.addEventListener('click', toggleUi);
 
@@ -7383,7 +7389,8 @@ if (desktopMicButton) {
 }
 
 if (desktopChatMinimizeBtn) {
-	// Minimize = Hide UI; bring the panel back with Show UI only.
+	// Minimize hides the same chrome the old Hide UI button did. A Show UI
+	// button then appears so the panel can always be brought back.
 	desktopChatMinimizeBtn.addEventListener('click', () => setUiCollapsed(true));
 }
 if (desktopChatExpandBtn) {
@@ -7681,7 +7688,7 @@ document.addEventListener('visibilitychange', () => {
 // ============================================================================
 // html.gs-phone   a touch screen whose short side is <= 600px.
 // html.gs-kb      a text field has focus and the on-screen keyboard is (or is
-//                 about to be) up. Hides the dock, Hide UI, joysticks.
+//                 about to be) up. Hides the dock, Show UI, joysticks.
 // html.gs-kb-chat the field is inside the GS panel: the panel fills the
 //                 visible area above the keyboard (--gs-kb-*) with only the
 //                 messages / editor and the input row, like a messaging app.
@@ -8663,8 +8670,8 @@ function xrSessionActive() {
 	return !!(renderer && renderer.xr && renderer.xr.isPresenting);
 }
 
-// One place for VR window visibility so Hide UI, display-only shares and the
-// keyboard cannot disagree. In a headset the menu is #desktop-chat painted
+// One place for VR window visibility so collapsing the UI, display-only shares
+// and the keyboard cannot disagree. In a headset the menu is #desktop-chat painted
 // into the world (vrWindows.js); outside XR it is the on-screen window.
 function applyXrPanelVisibility(immersive = xrSessionActive()) {
 	const show = immersive && !uiCollapsed && !displayOnlyMode;
@@ -8684,7 +8691,7 @@ function applyXrPanelVisibility(immersive = xrSessionActive()) {
 
 function setImmersiveUiMode(immersive) {
 	// The head-locked hud (Hide/Show-UI window) only makes sense with a headset;
-	// the desktop equivalent is the #ui-toggle button.
+	// the desktop equivalent is the #ui-toggle Show UI button after minimize.
 	hud.visible = immersive && !displayOnlyMode;
 	// Mouse orbit/pan/zoom only makes sense windowed — the headset pose drives
 	// the camera during an XR session.
