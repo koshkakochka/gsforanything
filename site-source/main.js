@@ -307,13 +307,11 @@ const EXIT_XR_BUTTON = [
 ];
 const SCENES_BUTTONS = [
 	{ id: 'importFile', label: 'Import .vrscene.json', action: 'scenes:importFile' },
-	{ id: 'clearScene', label: 'Clear All From Scene', action: 'scenes:clear', variant: 'secondary' },
-	// Share & 3D export (exporter.js): one shortcut to the Share tab (the same
-	// menu is shown in VR, so the Share tab is reachable there too).
-	{ id: 'openShare', label: 'Share & Export 3D Scene and Files', action: 'scenes:openShareTab', variant: 'accent' }
+	{ id: 'clearScene', label: 'Clear All From Scene', action: 'scenes:clear', variant: 'secondary' }
 ];
-// "Export" (save to the server slot) and "Load Saved" stay as handleMenuAction
-// cases for tests and programmatic use; they are no longer buttons on this tab.
+// Share & Export lives on its own menu tab (data-tab="share"). "Export" (save
+// to the server slot) and "Load Saved" stay as handleMenuAction cases for tests
+// and programmatic use; they are not buttons on this tab.
 const COMMUNITY_BUTTONS = [
 	{ id: 'upload', label: 'Upload Current Scene', action: 'community:upload', variant: 'accent' },
 	{ id: 'refresh', label: 'Refresh', action: 'community:refresh' }
@@ -8155,7 +8153,7 @@ document.addEventListener('keydown', (e) => {
 
 // Tabs: opened from the hamburger at the top left of the menu window
 // (Chat / Environment / Scenes / Files / Code / Community / Controls /
-// Dependencies / Share / Render / Technical / Meta Settings).
+// Dependencies / Share & Export / Render / Technical / Meta Settings).
 function tabButtonLabel(btn) {
 	if (!btn) return '';
 	const clone = btn.cloneNode(true);

@@ -180,9 +180,11 @@
 		#gs-dock #XRButton[data-xr-state="unavailable"]::before { display: none; }
 		/* Cardboard VR offered (no WebXR): the "not supported" pill adds nothing. */
 		body:has(#cardboard-btn:not([hidden])) #gs-dock #XRButton[data-xr-state="unavailable"] { display: none !important; }
-		/* A narrow window (desktop min width, small tablets): the top bar gets
-		   its own row at the top of the window instead of overflowing. */
-		#desktop-chat-header { container: gs-chat-header / inline-size; flex-wrap: wrap; row-gap: 6px; }
+		/* Keep hamburger, tab name, VR dock and expand/minimize on one row.
+		   A long name ("Share & Export") ellipsizes; the dock only wraps on
+		   very narrow widths (below) so it cannot push the window buttons
+		   onto a second row. */
+		#desktop-chat-header { container: gs-chat-header / inline-size; flex-wrap: nowrap; row-gap: 6px; }
 		/* Narrow desktop window: compact labels first (no icons, smaller text)... */
 		@container gs-chat-header (max-width: 345px) {
 			html:not(.gs-phone) #gs-dock { gap: 4px; margin: -4px 4px; }
@@ -193,11 +195,13 @@
 		}
 		/* ...and only at the very narrowest the bar takes its own row. */
 		@container gs-chat-header (max-width: 262px) {
+			#desktop-chat-header { flex-wrap: wrap; }
 			#gs-dock { order: 3; flex: 1 0 100%; margin: 0 !important; justify-content: flex-start; flex-wrap: wrap; }
 		}
 		/* In a session the Exit VR button is large; below ~420px it would
 		   push expand / minimize onto a second row. Wrap the dock instead. */
 		@container gs-chat-header (max-width: 420px) {
+			body.gs-xr-presenting #desktop-chat-header { flex-wrap: wrap; }
 			body.gs-xr-presenting #gs-dock {
 				order: 3;
 				flex: 1 0 100%;
@@ -3066,7 +3070,7 @@
 			<button class="dchat-tab" data-tab="community">🌐 Community</button>
 			<button class="dchat-tab" data-tab="controls">🎮 Controls</button>
 			<button class="dchat-tab" data-tab="deps">📦 <span class="dchat-tab-full">Dependencies</span><span class="dchat-tab-short">Deps</span></button>
-			<button class="dchat-tab" data-tab="share">🔗 Share</button>
+			<button class="dchat-tab" data-tab="share">🔗 Share &amp; Export</button>
 			<button class="dchat-tab" data-tab="render" id="dchat-tab-render">🎥 <span class="dchat-tab-full">Render</span><span class="dchat-tab-short">Render</span></button>
 			<button class="dchat-tab" data-tab="technical" id="dchat-tab-technical">🛠 <span class="dchat-tab-full">Technical</span><span class="dchat-tab-short">Tech</span></button>
 			<button class="dchat-tab" data-tab="meta" id="dchat-tab-meta">⚙️ <span class="dchat-tab-full">Meta Settings</span><span class="dchat-tab-short">Meta</span></button>
@@ -3473,7 +3477,7 @@
 			</div>
 		</div>
 
-		<!-- Share: scene link (same as Community → Share) + 3D export; filled by exporter.js -->
+		<!-- Share & Export: scene link, Save to Device (.vrscene.json), embed, 3D export; filled by exporter.js -->
 		<div id="dchat-panel-share" class="dchat-panel">
 			<div id="dchat-share"></div>
 		</div>

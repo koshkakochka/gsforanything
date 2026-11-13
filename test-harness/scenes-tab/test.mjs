@@ -1,4 +1,4 @@
-// Scenes tab: only Import / Clear / Share & Export, with a .vrscene.json download.
+// Scenes tab has only Import / Clear; Share & Export is its own menu tab with a .vrscene.json download.
 // BASE=https://localhost:3588 SHOT_DIR=/workspace/gs-scenes-tab-shots node test.mjs
 import fs from 'fs';
 import os from 'os';
@@ -17,8 +17,7 @@ const check = (n, ok, d = '') => {
 const PHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 const EXPECTED = [
 	{ action: 'scenes:importFile', label: 'Import .vrscene.json' },
-	{ action: 'scenes:clear', label: 'Clear All From Scene' },
-	{ action: 'scenes:openShareTab', label: 'Share & Export 3D Scene and Files' }
+	{ action: 'scenes:clear', label: 'Clear All From Scene' }
 ];
 const FIXTURE = {
 	version: 1,
@@ -107,10 +106,11 @@ function measureButtons() {
 
 async function assertScenesButtons(p, label, { minHeight = 0 } = {}) {
 	const m = await p.evaluate(measureButtons);
-	check(`${label}: exactly three Scenes buttons`, m.btns.length === 3 && m.actions.length === 3, m);
-	check(`${label}: only Import, Clear, and Share & Export actions`,
+	check(`${label}: exactly two Scenes buttons`, m.btns.length === 2 && m.actions.length === 2, m);
+	check(`${label}: only Import and Clear actions`,
 		m.actions.join(',') === EXPECTED.map((e) => e.action).join(',')
-		&& !m.actions.includes('scenes:export') && !m.actions.includes('scenes:loadSaved'), m.actions);
+		&& !m.actions.includes('scenes:export') && !m.actions.includes('scenes:loadSaved')
+		&& !m.actions.includes('scenes:openShareTab'), m.actions);
 	check(`${label}: button labels are exact`, m.labels.join(' | ') === EXPECTED.map((e) => e.label).join(' | '), m.labels);
 	check(`${label}: buttons stay inside the Scenes tab`, !m.anyOverflow, m.btns);
 	if (minHeight) {
@@ -180,22 +180,57 @@ const phone = (w, h, dpr = 2) => ({ width: w, height: h, isMobile: true, hasTouc
 	await assertScenesButtons(p, 'desktop Scenes tab');
 	await p.screenshot({ path: `${SHOT_DIR}/desktop-scenes-tab.png` });
 
-	await p.evaluate(() => document.querySelector('#dchat-scenes-buttons [data-action="scenes:openShareTab"]').click());
-	await sleep(400);
+	const menu = await p.evaluate(() => {
+		const btn = document.querySelector('.dchat-tab[data-tab="share"]');
+		const clone = btn?.cloneNode(true);
+		clone?.querySelectorAll('.dchat-tab-short').forEach((el) => el.remove());
+		return {
+			exists: !!btn,
+			label: (clone?.textContent || '').replace(/\s+/g, ' ').trim()
+		};
+	});
+	check('desktop: hamburger menu has a Share & Export tab', menu.exists && /Share & Export/.test(menu.label), menu);
+
+	await selectTab(p, 'share');
 	const share = await p.evaluate(() => {
 		const panel = document.getElementById('dchat-panel-share');
 		const btn = document.querySelector('#dchat-share [data-share="vrscene"]');
+		const link = document.querySelector('#dchat-share [data-share="link"]');
+		const embed = document.querySelector('#dchat-share [data-share="embed"]');
+		const formats = [...document.querySelectorAll('#dchat-share [data-share-format]')].map((b) => b.dataset.shareFormat);
 		const s = btn ? getComputedStyle(btn) : null;
+		const header = (document.getElementById('gs-menu-current-tab')?.textContent || '').replace(/\s+/g, ' ').trim();
 		return {
 			shareActive: document.querySelector('.dchat-tab[data-tab="share"]')?.classList.contains('active') || false,
 			panelShown: !!(panel && getComputedStyle(panel).display !== 'none'),
+			header,
 			btnText: (btn?.textContent || '').replace(/\s+/g, ' ').trim(),
-			btnVisible: !!(btn && s && s.display !== 'none' && s.visibility !== 'hidden' && btn.getBoundingClientRect().height > 0)
+			btnVisible: !!(btn && s && s.display !== 'none' && s.visibility !== 'hidden' && btn.getBoundingClientRect().height > 0),
+			hasLink: !!(link && link.getBoundingClientRect().height > 0),
+			hasEmbed: !!(embed && embed.getBoundingClientRect().height > 0),
+			formats
 		};
 	});
-	check('desktop: Share & Export opens the Share tab', share.shareActive && share.panelShown, share);
-	check('desktop: Share tab has a Download .vrscene.json button', share.btnText === 'Download .vrscene.json' && share.btnVisible, share);
-	await p.screenshot({ path: `${SHOT_DIR}/desktop-share-download.png` });
+	check('desktop: Share & Export tab is its own menu tab', share.shareActive && share.panelShown && /Share & Export/.test(share.header), share);
+	check('desktop: Share & Export tab has share link, Save to Device / Download .vrscene.json, embed and 3D formats',
+		share.btnText === 'Download .vrscene.json' && share.btnVisible && share.hasLink && share.hasEmbed
+		&& ['glb', 'gltf', 'fbx', 'obj', 'blender'].every((id) => share.formats.includes(id)), share);
+	const headerRow = await p.evaluate(() => {
+		const box = (s) => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return { t: r.top, b: r.bottom, h: r.height, r: r.right, l: r.left }; };
+		const header = box('#desktop-chat-header'), burger = box('#gs-menu-hamburger'), title = box('#gs-menu-current-tab'), expand = box('#desktop-chat-expand'), mini = box('#desktop-chat-minimize');
+		const buttons = [burger, expand, mini].filter(Boolean);
+		const band = Math.max(...buttons.map((x) => x.b)) - Math.min(...buttons.map((x) => x.t));
+		const tallest = Math.max(...buttons.map((x) => x.h));
+		return {
+			label: (document.getElementById('gs-menu-current-tab')?.textContent || '').trim(),
+			oneRow: buttons.length >= 2 && band <= tallest + 4,
+			titleOverflow: !!(title && header && (title.r > header.r + 1 || title.l < header.l - 1)),
+			titleOverButtons: !!(title && expand && title.r > expand.l + 1),
+			band, tallest, header, burger, title, expand, mini
+		};
+	});
+	check('desktop: Share & Export header stays one row (hamburger, expand, minimize)', headerRow.oneRow && !headerRow.titleOverflow && !headerRow.titleOverButtons, headerRow);
+	await p.screenshot({ path: `${SHOT_DIR}/desktop-share-export-tab.png` });
 	check('desktop: no page errors', p._errors.length === 0, p._errors.slice(0, 3).join(' | '));
 	await p.close();
 }
@@ -208,22 +243,27 @@ const phone = (w, h, dpr = 2) => ({ width: w, height: h, isMobile: true, hasTouc
 	check('phone 390x844: long labels wrap or fit without overflowing the tab', !m.anyOverflow && m.btns.every((b) => b.w > 40), m.btns);
 	await p.screenshot({ path: `${SHOT_DIR}/phone-390x844-scenes-tab.png` });
 
-	await p.evaluate(() => document.querySelector('#dchat-scenes-buttons [data-action="scenes:openShareTab"]').click());
-	await sleep(400);
+	await selectTab(p, 'share');
 	const share = await p.evaluate(() => {
 		const btn = document.querySelector('#dchat-share [data-share="vrscene"]');
 		const tab = document.getElementById('dchat-panel-share') || document.getElementById('dchat-share');
+		const headerEl = document.getElementById('gs-menu-current-tab');
+		const headerBox = headerEl?.getBoundingClientRect();
+		const chatHeader = document.getElementById('desktop-chat-header')?.getBoundingClientRect();
 		const br = btn?.getBoundingClientRect();
 		const tr = tab?.getBoundingClientRect();
 		return {
+			header: (headerEl?.textContent || '').replace(/\s+/g, ' ').trim(),
+			headerOneRow: !!(chatHeader && headerBox && headerBox.right <= chatHeader.right + 1 && chatHeader.height <= 64),
 			btnText: (btn?.textContent || '').replace(/\s+/g, ' ').trim(),
 			visible: !!(br && br.height > 0),
 			overflows: !!(br && tr && (br.left < tr.left - 1 || br.right > tr.right + 1)),
 			h: br ? Math.round(br.height) : 0
 		};
 	});
-	check('phone 390x844: Share tab shows Download .vrscene.json and it fits', share.btnText === 'Download .vrscene.json' && share.visible && !share.overflows, share);
-	await p.screenshot({ path: `${SHOT_DIR}/phone-390x844-share-download.png` });
+	check('phone 390x844: Share & Export header title fits on one row', /Share & Export/.test(share.header) && share.headerOneRow, share);
+	check('phone 390x844: Share & Export tab shows Download .vrscene.json and it fits', share.btnText === 'Download .vrscene.json' && share.visible && !share.overflows && share.h >= 44 - 0.5, share);
+	await p.screenshot({ path: `${SHOT_DIR}/phone-390x844-share-export-tab.png` });
 	check('phone 390x844: no page errors', p._errors.length === 0, p._errors.slice(0, 3).join(' | '));
 	await p.close();
 }

@@ -1,9 +1,9 @@
-# Scenes tab buttons + .vrscene.json download
+# Scenes tab + Share & Export tab
 
-The Scenes tab shows only three buttons (Import .vrscene.json, Clear All From
-Scene, Share & Export 3D Scene and Files). The Share tab has a button that
-downloads the current scene as a `.vrscene.json` file, the same JSON format
-Import accepts.
+The Scenes tab shows only two buttons (Import .vrscene.json and Clear All From
+Scene). Share, Save to Device (.vrscene.json) and 3D model export live on their
+own **Share & Export** menu tab, reachable from the hamburger on desktop, phone
+and in the VR menu.
 
     BASE=https://localhost:3588 SHOT_DIR=/workspace/gs-scenes-tab-shots node test.mjs
 

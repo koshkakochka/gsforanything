@@ -2,7 +2,7 @@
   "name": "gs-scenes-tab-tests",
   "private": true,
   "type": "module",
-  "description": "Scenes tab has only Import / Clear / Share & Export, and Share downloads a .vrscene.json file",
+  "description": "Scenes tab has only Import / Clear; Share & Export is its own tab with a .vrscene.json download",
   "scripts": {
     "test": "node test.mjs"
   }
