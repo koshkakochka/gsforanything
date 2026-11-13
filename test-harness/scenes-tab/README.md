@@ -1,9 +1,10 @@
 # Scenes tab + Share & Export tab
 
 The Scenes tab shows only two buttons (Import .vrscene.json and Clear All From
-Scene). Share, Save to Device (.vrscene.json) and 3D model export live on their
-own **Share & Export** menu tab, reachable from the hamburger on desktop, phone
-and in the VR menu.
+Scene). Share link, embed and 3D model export live on their own **Share &
+Export** menu tab, reachable from the hamburger on desktop, phone and in the
+VR menu. There is no Download .vrscene.json / Save to Device section on that
+tab.
 
     BASE=https://localhost:3588 SHOT_DIR=/workspace/gs-scenes-tab-shots node test.mjs
 

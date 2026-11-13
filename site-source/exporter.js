@@ -1104,15 +1104,13 @@ export function initSceneExport(opts) {
 
 	/**
 	 * Fills the Share & Export tab: the scene link (main.js passes
-	 * shareCurrentScene, which reuses the Community share flow), a
-	 * Save to Device / Download .vrscene.json button (the same JSON format
-	 * Import accepts), the five 3D export formats, each opening the export
-	 * dialog preselected, plus the Embed section (main.js passes
-	 * embedCurrentScene) and the "Allow others to export" choice used when
-	 * the scene is uploaded.
+	 * shareCurrentScene, which reuses the Community share flow), the five
+	 * 3D export formats, each opening the export dialog preselected, plus
+	 * the Embed section (main.js passes embedCurrentScene) and the
+	 * "Allow others to export" choice used when the scene is uploaded.
 	 * refreshShareTab() re-reads canExport() / the allow choice.
 	 */
-	function mountShareTab(container, { onShareLink, onEmbed, onDownloadScene = null, allowExport = null } = {}) {
+	function mountShareTab(container, { onShareLink, onEmbed, allowExport = null } = {}) {
 		if (!container || container.dataset.gsShareMounted) return;
 		container.dataset.gsShareMounted = '1';
 		addCss();
@@ -1131,11 +1129,6 @@ export function initSceneExport(opts) {
 					<button type="button" class="gs-share-link-btn" data-share="embed">&lt;/&gt; Embed this scene on a website</button>
 					<p class="gs-share-hint">HTML code for an &lt;iframe&gt; showing the scene, view only, with an optional Enter VR button. Uses the Community copy of the scene (uploaded first if needed).</p>
 				</div>
-				${onDownloadScene ? `<div class="gs-share-section">
-					<h4>Save to Device</h4>
-					<button type="button" class="gs-share-link-btn" data-share="vrscene">Download .vrscene.json</button>
-					<p class="gs-share-hint">Saves the current scene to your device as a .vrscene.json file — the same format Import .vrscene.json accepts (code, name and creation context), so you can load it back in later.</p>
-				</div>` : ''}
 				<div class="gs-share-section">
 					<h4>Export 3D model</h4>
 					<div class="gs-share-formats">
@@ -1150,18 +1143,13 @@ export function initSceneExport(opts) {
 			if (!canExport()) { onBlocked(); return; }
 			if (onEmbed) onEmbed();
 		});
-		const vrsceneBtn = container.querySelector('[data-share="vrscene"]');
-		if (vrsceneBtn) vrsceneBtn.addEventListener('click', () => {
-			if (!canExport()) { onBlocked(); return; }
-			if (onDownloadScene) onDownloadScene();
-		});
 		container.querySelectorAll('[data-share-format]').forEach((b) => b.addEventListener('click', () => open(b.dataset.shareFormat)));
 		const allowBox = container.querySelector('[data-share="allow-export"]');
 		if (allowBox && allowExport) allowBox.addEventListener('change', () => allowExport.set(allowBox.checked));
 		shareTabRefresh = () => {
 			const locked = !canExport();
 			container.querySelector('.gs-share').classList.toggle('gs-exports-locked', locked);
-			container.querySelectorAll('[data-share-format], [data-share="embed"], [data-share="vrscene"]').forEach((b) => {
+			container.querySelectorAll('[data-share-format], [data-share="embed"]').forEach((b) => {
 				b.disabled = locked;
 				b.title = locked ? 'The creator of this scene turned off exports' : '';
 			});

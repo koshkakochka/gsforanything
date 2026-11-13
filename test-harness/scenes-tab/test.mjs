@@ -1,4 +1,4 @@
-// Scenes tab has only Import / Clear; Share & Export is its own menu tab with a .vrscene.json download.
+// Scenes tab has only Import / Clear; Share & Export is its own menu tab (link, embed, 3D export).
 // BASE=https://localhost:3588 SHOT_DIR=/workspace/gs-scenes-tab-shots node test.mjs
 import fs from 'fs';
 import os from 'os';
@@ -194,26 +194,30 @@ const phone = (w, h, dpr = 2) => ({ width: w, height: h, isMobile: true, hasTouc
 	await selectTab(p, 'share');
 	const share = await p.evaluate(() => {
 		const panel = document.getElementById('dchat-panel-share');
-		const btn = document.querySelector('#dchat-share [data-share="vrscene"]');
+		const vrscene = document.querySelector('#dchat-share [data-share="vrscene"]');
+		const saveHead = [...document.querySelectorAll('#dchat-share h4')].map((h) => (h.textContent || '').trim());
 		const link = document.querySelector('#dchat-share [data-share="link"]');
 		const embed = document.querySelector('#dchat-share [data-share="embed"]');
 		const formats = [...document.querySelectorAll('#dchat-share [data-share-format]')].map((b) => b.dataset.shareFormat);
-		const s = btn ? getComputedStyle(btn) : null;
+		const text = (document.getElementById('dchat-share')?.innerText || '');
 		const header = (document.getElementById('gs-menu-current-tab')?.textContent || '').replace(/\s+/g, ' ').trim();
 		return {
 			shareActive: document.querySelector('.dchat-tab[data-tab="share"]')?.classList.contains('active') || false,
 			panelShown: !!(panel && getComputedStyle(panel).display !== 'none'),
 			header,
-			btnText: (btn?.textContent || '').replace(/\s+/g, ' ').trim(),
-			btnVisible: !!(btn && s && s.display !== 'none' && s.visibility !== 'hidden' && btn.getBoundingClientRect().height > 0),
+			hasVrsceneBtn: !!vrscene,
+			headings: saveHead,
+			hasDownloadCopy: /Download \.vrscene\.json|Save to Device/i.test(text),
 			hasLink: !!(link && link.getBoundingClientRect().height > 0),
 			hasEmbed: !!(embed && embed.getBoundingClientRect().height > 0),
 			formats
 		};
 	});
 	check('desktop: Share & Export tab is its own menu tab', share.shareActive && share.panelShown && /Share & Export/.test(share.header), share);
-	check('desktop: Share & Export tab has share link, Save to Device / Download .vrscene.json, embed and 3D formats',
-		share.btnText === 'Download .vrscene.json' && share.btnVisible && share.hasLink && share.hasEmbed
+	check('desktop: Share & Export tab has no Download .vrscene.json / Save to Device section',
+		!share.hasVrsceneBtn && !share.headings.some((h) => /Save to Device|Download/i.test(h)) && !share.hasDownloadCopy, share);
+	check('desktop: Share & Export tab still has share link, embed and 3D formats',
+		share.hasLink && share.hasEmbed
 		&& ['glb', 'gltf', 'fbx', 'obj', 'blender'].every((id) => share.formats.includes(id)), share);
 	const headerRow = await p.evaluate(() => {
 		const box = (s) => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return { t: r.top, b: r.bottom, h: r.height, r: r.right, l: r.left }; };
@@ -230,7 +234,7 @@ const phone = (w, h, dpr = 2) => ({ width: w, height: h, isMobile: true, hasTouc
 		};
 	});
 	check('desktop: Share & Export header stays one row (hamburger, expand, minimize)', headerRow.oneRow && !headerRow.titleOverflow && !headerRow.titleOverButtons, headerRow);
-	await p.screenshot({ path: `${SHOT_DIR}/desktop-share-export-tab.png` });
+	await p.screenshot({ path: `${SHOT_DIR}/desktop-share-export-tab-no-download.png` });
 	check('desktop: no page errors', p._errors.length === 0, p._errors.slice(0, 3).join(' | '));
 	await p.close();
 }
@@ -245,30 +249,33 @@ const phone = (w, h, dpr = 2) => ({ width: w, height: h, isMobile: true, hasTouc
 
 	await selectTab(p, 'share');
 	const share = await p.evaluate(() => {
-		const btn = document.querySelector('#dchat-share [data-share="vrscene"]');
+		const vrscene = document.querySelector('#dchat-share [data-share="vrscene"]');
 		const tab = document.getElementById('dchat-panel-share') || document.getElementById('dchat-share');
 		const headerEl = document.getElementById('gs-menu-current-tab');
 		const headerBox = headerEl?.getBoundingClientRect();
 		const chatHeader = document.getElementById('desktop-chat-header')?.getBoundingClientRect();
-		const br = btn?.getBoundingClientRect();
+		const link = document.querySelector('#dchat-share [data-share="link"]');
+		const lr = link?.getBoundingClientRect();
 		const tr = tab?.getBoundingClientRect();
+		const text = (document.getElementById('dchat-share')?.innerText || '');
 		return {
 			header: (headerEl?.textContent || '').replace(/\s+/g, ' ').trim(),
 			headerOneRow: !!(chatHeader && headerBox && headerBox.right <= chatHeader.right + 1 && chatHeader.height <= 64),
-			btnText: (btn?.textContent || '').replace(/\s+/g, ' ').trim(),
-			visible: !!(br && br.height > 0),
-			overflows: !!(br && tr && (br.left < tr.left - 1 || br.right > tr.right + 1)),
-			h: br ? Math.round(br.height) : 0
+			hasVrsceneBtn: !!vrscene,
+			hasDownloadCopy: /Download \.vrscene\.json|Save to Device/i.test(text),
+			hasLink: !!(lr && lr.height > 0),
+			linkOverflows: !!(lr && tr && (lr.left < tr.left - 1 || lr.right > tr.right + 1))
 		};
 	});
 	check('phone 390x844: Share & Export header title fits on one row', /Share & Export/.test(share.header) && share.headerOneRow, share);
-	check('phone 390x844: Share & Export tab shows Download .vrscene.json and it fits', share.btnText === 'Download .vrscene.json' && share.visible && !share.overflows && share.h >= 44 - 0.5, share);
-	await p.screenshot({ path: `${SHOT_DIR}/phone-390x844-share-export-tab.png` });
+	check('phone 390x844: Share & Export tab has no Download .vrscene.json / Save to Device section', !share.hasVrsceneBtn && !share.hasDownloadCopy, share);
+	check('phone 390x844: share link is still visible and fits', share.hasLink && !share.linkOverflows, share);
+	await p.screenshot({ path: `${SHOT_DIR}/phone-390x844-share-export-tab-no-download.png` });
 	check('phone 390x844: no page errors', p._errors.length === 0, p._errors.slice(0, 3).join(' | '));
 	await p.close();
 }
 
-// ---------- Round-trip: import -> download .vrscene.json -> clear -> import restores ----------
+// ---------- Round-trip: import -> programmatic downloadVrsceneJson -> clear -> import restores ----------
 {
 	const p = await openPage({ width: 1280, height: 800 });
 	await selectTab(p, 'scenes');
@@ -277,9 +284,9 @@ const phone = (w, h, dpr = 2) => ({ width: w, height: h, isMobile: true, hasTouc
 	const card = await p.evaluate(() => document.getElementById('dchat-current-scene')?.innerText || '');
 	check('import shows the fixture scene name', /Roundtrip Cubes/.test(card), card);
 
-	await selectTab(p, 'share');
-	const dl = await captureDownload(p, () => document.querySelector('#dchat-share [data-share="vrscene"]').click());
-	check('download filename ends with .vrscene.json', /\.vrscene\.json$/.test(dl.filename || '') && /Roundtrip_Cubes|Roundtrip Cubes/.test(dl.filename || ''), dl.filename);
+	// No Share-tab button; serialize is still available via gsChatPanel.action.
+	const dl = await captureDownload(p, () => window.gsChatPanel.action('scenes:downloadVrscene'));
+	check('programmatic download filename ends with .vrscene.json', /\.vrscene\.json$/.test(dl.filename || '') && /Roundtrip_Cubes|Roundtrip Cubes/.test(dl.filename || ''), dl.filename);
 	check('download is the same JSON format Import accepts',
 		!!dl.json && dl.json.version === 1 && Array.isArray(dl.json.codeBlocks) && dl.json.codeBlocks.length >= 1
 		&& /rtCube/.test(JSON.stringify(dl.json.codeBlocks)) && dl.json.name === 'Roundtrip Cubes',

@@ -371,6 +371,8 @@ function handleMenuAction(action) {
 			document.querySelector('.dchat-tab[data-tab="share"]')?.click();
 			break;
 		case 'scenes:downloadVrscene':
+			// Programmatic only: the Share & Export tab no longer has a
+			// Download .vrscene.json button.
 			downloadVrsceneJson();
 			break;
 		case 'scenes:importFile':
@@ -2332,7 +2334,6 @@ window.gsSceneExport = sceneModelExport;
 sceneModelExport.mountShareTab(document.getElementById('dchat-share'), {
 	onShareLink: () => shareCurrentScene(),
 	onEmbed: () => embedCurrentScene(),
-	onDownloadScene: () => downloadVrsceneJson(),
 	allowExport: { get: () => uploadAllowExport, set: (v) => setUploadAllowExport(v) }
 });
 const embedUi = initEmbedUi({
