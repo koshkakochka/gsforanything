@@ -34,4 +34,11 @@ node gen-prompts.mjs
 npx wrangler deploy
 ```
 
+Prefer the repo-root scripts, which also smoke-check the result:
+
+- `../scripts/deploy-dev.sh` — deploys **`gs-dev`** (`--env dev`) to https://dev.gsforanything.com and https://gs-dev.krossruiz.workers.dev, with its own KV namespace. Never touches production.
+- `../scripts/deploy-prod.sh --confirm` — deploys **`gs`** (this Worker) from a clean `origin/main` only.
+
+See [../DEPLOYING.md](../DEPLOYING.md) for the environment map, secrets, and the optional Community-scene seed into dev KV.
+
 Local test: `npx wrangler dev --local --port 8787 --local-upstream 127.0.0.1:8787 --persist-to /tmp/gs-kv` (needs secrets in `.dev.vars` for chat; everything else works without them). Keep `--local-upstream`: with the custom-domain `routes` in `wrangler.jsonc`, `wrangler dev` otherwise presents requests as `gsforanything.com`, so share links made locally point at the live site.

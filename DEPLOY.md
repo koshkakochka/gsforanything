@@ -1,5 +1,7 @@
 # Deploying GS
 
+Cloudflare now has two environments: production Worker `gs` and dev Worker `gs-dev`. Vercel (`vrclaudeinterface`) stays the backup and still auto-deploys from `main`. See **[DEPLOYING.md](DEPLOYING.md)** for the env map, `scripts/deploy-dev.sh`, `scripts/deploy-prod.sh --confirm`, and the dev GitHub Action. Keep reading this file for the version-number rule, the `sync-public.sh` file list, and version-log steps.
+
 Agents: **read this file before every deploy.** Do not invent a version number.
 
 ## Version number (required)
