@@ -23,7 +23,7 @@ import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { initSceneExport } from './exporter.js';
 import { createTwinSticks } from './twinSticks.js';
 import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, ORBIT_TARGET, DEFAULT_CAMERA_POSITION, isTextEntry } from './cameraControls.js';
-import { sanitizeDescription, DESCRIPTION_MAX_CHARS } from './sceneDescription.js';
+import { sanitizeDescription, DESCRIPTION_MAX_CHARS, DESCRIPTION_PLACEHOLDER } from './sceneDescription.js';
 import { THUMB_WIDTH, THUMB_HEIGHT, THUMB_MAX_BYTES } from './sceneThumbnail.js';
 import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
 import { createSceneFit, DOME_MARGIN, FAR_MARGIN, isDomeObject } from './sceneFit.js';
@@ -3486,9 +3486,9 @@ function autosizeCommunityDesc(ta) {
 	ta.style.height = Math.min(max, Math.max(min, ta.scrollHeight)) + 'px';
 }
 
-/** Creator-only: save a Community scene's description (PATCH with the owner key). */
+/** Save a Community scene's description (PATCH). Same as rename: no owner key required. The key is still sent when this browser has it. */
 async function setCommunitySceneDescription(cs, description) {
-	if (!cs?.id || !ownerKeyFor(cs.id)) return false;
+	if (!cs?.id) return false;
 	const text = sanitizeDescription(description);
 	try {
 		const res = await fetch(`/api/community-scenes/${encodeURIComponent(cs.id)}`, {
@@ -3508,15 +3508,15 @@ async function setCommunitySceneDescription(cs, description) {
 	}
 }
 
-function bindCommunityDescription(wrap, cs, owned) {
+function bindCommunityDescription(wrap, cs) {
 	const initial = typeof cs.description === 'string' ? cs.description : '';
-	if (!owned && !initial) return;
 	const ta = document.createElement('textarea');
 	ta.className = 'dchat-community-desc';
 	ta.setAttribute('data-gs-wrap', '');
 	ta.rows = 2;
 	ta.maxLength = DESCRIPTION_MAX_CHARS;
 	ta.spellcheck = false;
+	ta.placeholder = DESCRIPTION_PLACEHOLDER;
 	ta.value = initial;
 	ta.setAttribute('aria-label', `Description of ${cs.name || 'scene'}`);
 	// Don't let a tile-level click (thumb / title load) fire from the field.
@@ -3525,65 +3525,110 @@ function bindCommunityDescription(wrap, cs, owned) {
 		wrap.addEventListener(ev, stop);
 		ta.addEventListener(ev, stop);
 	}
-	if (!owned) {
-		ta.readOnly = true;
-		ta.classList.add('is-readonly');
-		ta.placeholder = '';
-		wrap.appendChild(ta);
-		queueMicrotask(() => autosizeCommunityDesc(ta));
-		return;
-	}
-	ta.placeholder = 'Add a description…';
-	let saved = initial;
-	let saving = false;
+
+	const btnRow = document.createElement('div');
+	btnRow.className = 'dchat-community-desc-actions';
+
+	const editBtn = document.createElement('button');
+	editBtn.type = 'button';
+	editBtn.className = 'dchat-btn dchat-community-desc-edit';
+	editBtn.textContent = 'Edit';
+	editBtn.setAttribute('aria-label', 'Edit description');
+
 	const saveBtn = document.createElement('button');
 	saveBtn.type = 'button';
 	saveBtn.className = 'dchat-btn dchat-community-desc-save';
 	saveBtn.textContent = 'Save';
-	saveBtn.hidden = true;
 	saveBtn.setAttribute('aria-label', 'Save description');
-	const setDirty = () => {
-		const dirty = ta.value !== saved;
-		saveBtn.hidden = !dirty;
-		wrap.classList.toggle('is-dirty', dirty);
+
+	const cancelBtn = document.createElement('button');
+	cancelBtn.type = 'button';
+	cancelBtn.className = 'dchat-btn secondary dchat-community-desc-cancel';
+	cancelBtn.textContent = 'Cancel';
+	cancelBtn.setAttribute('aria-label', 'Cancel description edit');
+
+	let saved = initial;
+	let saving = false;
+	let editing = false;
+
+	const applyView = () => {
+		editing = false;
+		ta.readOnly = true;
+		ta.classList.add('is-readonly');
+		ta.classList.toggle('is-empty', !saved);
+		ta.value = saved;
+		editBtn.hidden = false;
+		saveBtn.hidden = true;
+		cancelBtn.hidden = true;
+		wrap.classList.remove('is-dirty', 'is-editing');
+		autosizeCommunityDesc(ta);
+		if (document.activeElement === ta) ta.blur();
 	};
-	const restore = () => { ta.value = saved; autosizeCommunityDesc(ta); setDirty(); };
+
+	const applyEdit = () => {
+		if (editing) return;
+		editing = true;
+		ta.readOnly = false;
+		ta.classList.remove('is-readonly', 'is-empty');
+		editBtn.hidden = true;
+		saveBtn.hidden = false;
+		cancelBtn.hidden = false;
+		wrap.classList.add('is-editing');
+		setDirty();
+		autosizeCommunityDesc(ta);
+		if (document.activeElement !== ta) ta.focus();
+	};
+
+	const setDirty = () => {
+		wrap.classList.toggle('is-dirty', ta.value !== saved);
+	};
+
+	const restore = () => {
+		ta.value = saved;
+		applyView();
+	};
+
 	const persist = async () => {
-		if (saving || ta.value === saved) { setDirty(); return; }
+		if (saving) return false;
+		if (ta.value === saved) { applyView(); return true; }
 		saving = true;
 		saveBtn.disabled = true;
+		cancelBtn.disabled = true;
 		const ok = await setCommunitySceneDescription(cs, ta.value);
 		saving = false;
 		saveBtn.disabled = false;
+		cancelBtn.disabled = false;
 		if (ok) {
 			saved = sanitizeDescription(ta.value);
 			ta.value = saved;
-		} else {
-			restore();
+			applyView();
+			return true;
 		}
-		setDirty();
-		autosizeCommunityDesc(ta);
+		return false;
 	};
-	ta.addEventListener('input', () => { autosizeCommunityDesc(ta); setDirty(); });
+
+	editBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); applyEdit(); });
+	saveBtn.addEventListener('mousedown', (e) => e.preventDefault());
+	cancelBtn.addEventListener('mousedown', (e) => e.preventDefault());
+	saveBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); persist(); });
+	cancelBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); restore(); });
+	ta.addEventListener('input', () => { if (!editing) applyEdit(); autosizeCommunityDesc(ta); setDirty(); });
+	ta.addEventListener('focus', () => { if (!editing && !saving) applyEdit(); });
 	ta.addEventListener('keydown', (e) => {
+		if (!editing) return;
 		if (e.key === 'Escape') {
 			e.preventDefault();
 			e.stopPropagation();
 			restore();
-			ta.blur();
 		} else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
 			e.preventDefault();
-			persist().then(() => ta.blur());
+			persist();
 		}
 	});
-	ta.addEventListener('blur', (e) => {
-		if (e.relatedTarget === saveBtn) return;
-		persist();
-	});
-	saveBtn.addEventListener('mousedown', (e) => e.preventDefault());
-	saveBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); persist(); });
-	wrap.append(ta, saveBtn);
-	queueMicrotask(() => autosizeCommunityDesc(ta));
+
+	btnRow.append(editBtn, saveBtn, cancelBtn);
+	wrap.append(ta, btnRow);
+	queueMicrotask(() => applyView());
 }
 
 function communityThumbUrl(cs) {
@@ -3700,7 +3745,7 @@ function renderCommunitySceneList(scenes) {
 			actions.appendChild(toggle);
 		}
 		GSMerge.decorateCommunityRow(actions, cs); // "Merge" pick button
-		bindCommunityDescription(descWrap, cs, owned);
+		bindCommunityDescription(descWrap, cs);
 		body.append(nameRow, descWrap, actions);
 		item.append(thumbWrap, body);
 		dchatCommunityList.appendChild(item);

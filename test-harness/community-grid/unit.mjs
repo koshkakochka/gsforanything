@@ -5,7 +5,11 @@ import { dirname, join } from 'path';
 import {
   parseThumbnailPayload, listThumbFields, thumbStub, THUMB_ACCEPT_MAX_BYTES, publicThumbnailField
 } from '../../site-source/sceneThumbnail.js';
-import { sanitizeDescription, DESCRIPTION_MAX_CHARS } from '../../site-source/sceneDescription.js';
+import {
+  sanitizeDescription, DESCRIPTION_MAX_CHARS, DESCRIPTION_RAW_MAX_CHARS,
+  DESCRIPTION_PLACEHOLDER, descriptionPayloadTooLarge, createRateLimiter,
+  clientIpFromHeaders
+} from '../../site-source/sceneDescription.js';
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const jpeg = readFileSync(join(dir, 'sample.jpg'));
@@ -27,6 +31,20 @@ ok('strips control chars, keeps text', sanitizeDescription('ok\x00x\x07y') === '
 ok('caps at max', sanitizeDescription('x'.repeat(DESCRIPTION_MAX_CHARS + 50)).length === DESCRIPTION_MAX_CHARS);
 ok('keeps angle brackets as text', sanitizeDescription('<script>alert(1)</script>') === '<script>alert(1)</script>');
 ok('keeps unicode', sanitizeDescription('café 🌸') === 'café 🌸');
+ok('placeholder wording', DESCRIPTION_PLACEHOLDER === 'No description yet');
+ok('raw payload under cap is allowed', descriptionPayloadTooLarge('z'.repeat(DESCRIPTION_MAX_CHARS)) === false);
+ok('raw payload over cap is too large', descriptionPayloadTooLarge('z'.repeat(DESCRIPTION_RAW_MAX_CHARS + 1)) === true);
+ok('null payload is not too large', descriptionPayloadTooLarge(null) === false);
+
+const lim = createRateLimiter({ windowMs: 60_000, max: 3 });
+ok('limiter allows first bursts', lim('a') && lim('a') && lim('a'));
+ok('limiter blocks the next in the window', lim('a') === false);
+ok('limiter is per-key', lim('b') === true);
+
+ok('CF-Connecting-IP wins', clientIpFromHeaders({ 'CF-Connecting-IP': '1.2.3.4', 'X-Forwarded-For': '9.9.9.9' }) === '1.2.3.4');
+ok('XFF first hop', clientIpFromHeaders({ 'X-Forwarded-For': ' 8.8.8.8, 1.1.1.1' }) === '8.8.8.8');
+ok('headers.get form', clientIpFromHeaders(new Headers({ 'CF-Connecting-IP': '5.5.5.5' })) === '5.5.5.5');
+ok('fallback when missing', clientIpFromHeaders({}, 'local') === 'local');
 
 // --- thumbnails ---
 const jpgUrl = toData(jpeg, 'image/jpeg');

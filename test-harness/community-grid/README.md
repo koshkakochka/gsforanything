@@ -14,10 +14,11 @@ the scene's initial camera pose), and editable per-scene descriptions.
 - `test.mjs` (puppeteer-core + Chrome, swiftshader): grid layout at desktop
   (expanded, several columns) and phone (one column) widths; saving after
   moving the camera produces a thumbnail of the *initial* pose, served by
-  the endpoint; description blank by default, edit + persist + reload,
-  multiline and escaping, Esc cancels, non-owners are read-only.
+  the endpoint; every tile has a description section (empty ones show
+  "No description yet" plus Edit); edit + save/cancel + persist + reload,
+  multiline and escaping, Esc/Cancel restores, guests can edit too.
   `/api/chat` is stubbed. `SHOTS=/dir` saves screenshots (desktop grid, phone
-  grid, a VR-menu htmlInCanvas paint, a sample thumbnail).
+  grid, placeholder/edit states, a VR-menu htmlInCanvas paint, a sample thumbnail).
 
 ```bash
 node unit.mjs
