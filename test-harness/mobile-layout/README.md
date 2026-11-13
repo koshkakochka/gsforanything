@@ -21,7 +21,7 @@ Checks, per phone and keyboard style:
   page-level Hide UI button is gone; minimize hides the menu and Show UI
   brings it back (44px).
 - The nine tabs are one horizontally scrollable row; the last one is reachable.
-- "+" opens and closes attach / files / mic / history (44px).
+- "+" opens and closes attach / camera / mic / history (44px).
 - Keyboard up in the chat input: compact layout, the input and Send are fully
   inside the visible area and at its bottom, nothing covers them, the dock /
   tabs are hidden, recent messages are visible, typing works.

@@ -105,7 +105,7 @@ Three moving parts:
   API. `/api/fix-code` sends the same note as `sceneContext`. This works on
   hosts whose system prompt has not been updated yet.
 - **Phones** (`html.gs-phone`: touch screen, short side <= 600px; set in
-  main.js): 44px tap targets, one scrollable tab row, attach / files / mic /
+  main.js): 44px tap targets, one scrollable tab row, attach / camera / mic /
   history behind a "+" button, landscape panel on the left with the dock on
   the right. While the on-screen keyboard is up (`html.gs-kb` / `gs-kb-chat`,
   detected from `visualViewport`), the panel fills the area above the keyboard
