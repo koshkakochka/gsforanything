@@ -62,9 +62,8 @@
 			overscroll-behavior: contain;
 			-webkit-overflow-scrolling: touch;
 		}
-		/* #dchat-env holds the brightness range slider. pan-y on an ancestor
-		   intersects away pan-x and would freeze that slider, so only contain
-		   overscroll here. */
+		/* #dchat-env is a vertical scroller (origin gizmo, HDRI, etc.). Only
+		   contain overscroll here so a flick does not chain into a page pan. */
 		#dchat-env {
 			overscroll-behavior: contain;
 			-webkit-overflow-scrolling: touch;
@@ -952,31 +951,53 @@
 		   with a live SVG - see ENV_MODE_BUTTONS in main.js. Its buttons carry
 		   their own colors via the shared button-variant system. */
 
-		.dchat-color-row { display: flex; align-items: center; gap: 10px; }
+		.dchat-color-row { display: flex; align-items: stretch; }
+
+		/* Wide "Select Color" bar: the native color input is an invisible
+		   overlay so a click (desktop, phone, or VR-menu ray) opens the same
+		   picker the old left-hand square did. Opacity 0 keeps htmlInCanvas
+		   from painting the swatch over the label text. */
+		#dchat-color-preview {
+			position: relative;
+			flex: 1;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			min-height: 44px;
+			height: 44px;
+			border-radius: 10px;
+			border: 1px solid rgba(255, 255, 255, 0.18);
+			background: #5a5f68;
+			color: #fff;
+			cursor: pointer;
+			user-select: none;
+			-webkit-user-select: none;
+			overflow: hidden;
+		}
+
+		#dchat-color-preview-text {
+			position: relative;
+			z-index: 1;
+			pointer-events: none;
+			font-size: 13px;
+			font-weight: 700;
+			letter-spacing: 0.02em;
+			text-shadow: 0 0 4px rgba(0, 0, 0, 0.9), 0 1px 2px rgba(0, 0, 0, 0.85);
+		}
 
 		#dchat-color-picker {
-			width: 44px;
-			height: 44px;
+			position: absolute;
+			inset: 0;
+			width: 100%;
+			height: 100%;
+			margin: 0;
 			padding: 0;
 			border: none;
-			border-radius: 10px;
-			background: none;
+			border-radius: inherit;
+			opacity: 0;
 			cursor: pointer;
-		}
-
-		#dchat-color-preview {
-			flex: 1;
-			height: 44px;
-			border-radius: 10px;
-			border: 1px solid rgba(255, 255, 255, 0.1);
-		}
-
-		/* The native colour dialog cannot open in a headset; hue/saturation/
-		   brightness sliders replace the old VR colour wheel. */
-		body.gs-xr-presenting #dchat-color-picker { display: none; }
-		#dchat-brightness, .dchat-env-range {
-			width: 100%;
-			accent-color: #7c3aed;
+			-webkit-appearance: none;
+			appearance: none;
 		}
 
 		.dchat-disabled-note {
@@ -3185,20 +3206,10 @@
 				<div id="dchat-env-controls">
 					<div class="dchat-section-label" style="margin-bottom:8px">Background Color</div>
 					<div class="dchat-color-row">
-						<input type="color" id="dchat-color-picker" value="#6366f1" />
-						<div id="dchat-color-preview"></div>
-					</div>
-					<div style="margin-top:12px">
-						<div class="dchat-section-label" style="margin-bottom:8px">Hue</div>
-						<input type="range" id="dchat-hue" class="dchat-env-range" min="0" max="360" value="220" />
-					</div>
-					<div style="margin-top:12px">
-						<div class="dchat-section-label" style="margin-bottom:8px">Saturation</div>
-						<input type="range" id="dchat-saturation" class="dchat-env-range" min="0" max="100" value="15" />
-					</div>
-					<div style="margin-top:12px">
-						<div class="dchat-section-label" style="margin-bottom:8px">Brightness</div>
-						<input type="range" id="dchat-brightness" class="dchat-env-range" min="2" max="95" value="50" />
+						<label id="dchat-color-preview" for="dchat-color-picker">
+							<span id="dchat-color-preview-text">Select Color</span>
+							<input type="color" id="dchat-color-picker" value="#5a5f68" aria-label="Select Color" />
+						</label>
 					</div>
 					<div class="dchat-disabled-note" style="margin-top:8px;display:none">Background color is unavailable while AR/VR mode is active.</div>
 				</div>

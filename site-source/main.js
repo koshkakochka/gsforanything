@@ -256,9 +256,6 @@ const dchatEnvModeMount = document.getElementById('dchat-env-mode');
 const dchatEnvControls = document.getElementById('dchat-env-controls');
 const dchatColorPicker = document.getElementById('dchat-color-picker');
 const dchatColorPreview = document.getElementById('dchat-color-preview');
-const dchatBrightness = document.getElementById('dchat-brightness');
-const dchatHue = document.getElementById('dchat-hue');
-const dchatSaturation = document.getElementById('dchat-saturation');
 const dchatResetCameraBtn = document.getElementById('dchat-reset-camera');
 const dchatNavType = document.getElementById('dchat-nav-type');
 const dchatScenesButtonsMount = document.getElementById('dchat-scenes-buttons');
@@ -2170,6 +2167,23 @@ function hslToHex(h, s, l) {
 	return '#' + c.getHexString();
 }
 
+// Black or white label text on the Background Color bar, by relative luminance
+// (WCAG-style sRGB). A text-shadow in CSS covers the in-between greys.
+function contrastTextOn(hex) {
+	const c = new THREE.Color(hex);
+	const lin = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+	const L = 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+	return L > 0.55 ? '#111111' : '#ffffff';
+}
+
+function syncBgColorPreview(hex) {
+	if (dchatColorPicker) dchatColorPicker.value = hex;
+	if (dchatColorPreview) {
+		dchatColorPreview.style.background = hex;
+		dchatColorPreview.style.color = contrastTextOn(hex);
+	}
+}
+
 // Environment tab: AR/VR toggle (+ Exit VR while in a headset or phone XR)
 // and the background colour controls. Safe to call before the DOM exists.
 function renderDomEnv() {
@@ -2196,18 +2210,15 @@ function renderDomEnv() {
 			? ''
 			: 'Background color is unavailable while a VR session is active.';
 	}
-	const hex = hslToHex(vrBgHue, vrBgSat, vrBgLight);
-	if (dchatColorPicker) dchatColorPicker.value = hex;
-	if (dchatColorPreview) dchatColorPreview.style.background = hex;
-	if (dchatBrightness) dchatBrightness.value = Math.round(vrBgLight * 100);
-	if (dchatHue) dchatHue.value = Math.round(vrBgHue);
-	if (dchatSaturation) dchatSaturation.value = Math.round(vrBgSat * 100);
+	syncBgColorPreview(hslToHex(vrBgHue, vrBgSat, vrBgLight));
 }
 
 /**
- * Background colour controls work on desktop, phone and in the headset (the
- * same menu is shown there; hue/saturation/brightness sliders stand in for the
- * native colour dialog). Phone cardboard/AR has no menu on screen.
+ * Background colour controls work on desktop and phone via the "Select Color"
+ * bar (a native <input type=color>). The same menu is painted in the headset
+ * (htmlInCanvas.js / vrWindows.js); a ray click on the bar is forwarded to the
+ * color input. The OS colour dialog itself cannot appear inside a WebXR
+ * session. Phone cardboard/AR has no menu on screen.
  */
 function envColorControlsEnabled() {
 	if (typeof mobileXRMode !== 'undefined' && mobileXRMode) return false;
@@ -8653,9 +8664,10 @@ if (dchatCodeEditor && dchatCodeHighlight) {
 }
 
 // Environment tab: VR mode (shared button spec, see ENV_MODE_BUTTONS/
-// handleMenuAction), color picker, hue/saturation/brightness sliders. The toggle buttons
-// themselves are (re)mounted by renderDomEnv() since their active/inactive
-// styling depends on isVRMode.
+// handleMenuAction) and the "Select Color" bar (native color input overlaid
+// on the active-color preview). The toggle buttons themselves are
+// (re)mounted by renderDomEnv() since their active/inactive styling depends
+// on isVRMode.
 dchatColorPicker.addEventListener('input', () => {
 	const hex = dchatColorPicker.value;
 	const c = new THREE.Color(hex);
@@ -8664,21 +8676,6 @@ dchatColorPicker.addEventListener('input', () => {
 	vrBgHue = hsl.h * 360;
 	vrBgSat = hsl.s;
 	vrBgLight = hsl.l;
-	applyEnvironmentMode();
-	renderDomEnv();
-});
-dchatBrightness.addEventListener('input', () => {
-	vrBgLight = Math.max(0.02, Math.min(0.95, Number(dchatBrightness.value) / 100));
-	applyEnvironmentMode();
-	renderDomEnv();
-});
-if (dchatHue) dchatHue.addEventListener('input', () => {
-	vrBgHue = Math.max(0, Math.min(360, Number(dchatHue.value)));
-	applyEnvironmentMode();
-	renderDomEnv();
-});
-if (dchatSaturation) dchatSaturation.addEventListener('input', () => {
-	vrBgSat = Math.max(0, Math.min(1, Number(dchatSaturation.value) / 100));
 	applyEnvironmentMode();
 	renderDomEnv();
 });

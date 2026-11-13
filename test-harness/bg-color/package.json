@@ -1,0 +1,9 @@
+{
+  "name": "gs-bg-select-color-tests",
+  "private": true,
+  "type": "module",
+  "description": "Environment tab Background Color: Select Color bar opens the native picker; hue/saturation/brightness sliders are gone",
+  "scripts": {
+    "test": "node test.mjs"
+  }
+}
