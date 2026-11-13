@@ -1,0 +1,9 @@
+{
+  "name": "gs-canvas-resize-tests",
+  "private": true,
+  "type": "module",
+  "description": "Render canvas fills the viewport after resize, zoom, and devicePixelRatio changes",
+  "scripts": {
+    "test": "node test.mjs"
+  }
+}
