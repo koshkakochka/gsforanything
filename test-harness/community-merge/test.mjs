@@ -166,7 +166,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 900 }, { name: 'phone'
   // Reopen the merged scene in a fresh page
   const v = await newPage(vp);
   await tab(v, 'community'); await sleep(1500);
-  await v.evaluate((id) => { const row = [...document.querySelectorAll('#dchat-community-list .dchat-community-scene')].find(r => r.querySelector('.dchat-scene-name').title.includes(id)); row.querySelector('.dchat-btn').click(); }, mergedId);
+  await v.evaluate((id) => { const row = [...document.querySelectorAll('#dchat-community-list .dchat-community-scene')].find(r => r.querySelector('.dchat-scene-name').title.includes(id)); row.querySelector('.dchat-community-scene-actions-row .dchat-btn').click(); }, mergedId);
   await sleep(3000);
   const vchat = await chatText(v);
   const vrun = await v.evaluate((b64) => ({ ok: window.mergeOk, cat: window.catFiles?.['assets/cat.png']?.base64 === b64, fixedLen: window.fixedLen }), B64);

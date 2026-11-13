@@ -200,11 +200,39 @@ function moreBlueThanRed(c) { return c.b > c.r + 25 && c.b > 40; }
   ok('[desktop] seeded thumbs appear as images', g.thumbImgs >= 3, String(g.thumbImgs));
   ok('[desktop] scenes without thumbs keep a placeholder', g.placeholders >= 1, String(g.placeholders));
   ok('[desktop] Load / Share / Merge still present', g.hasLoad && g.hasShare && g.hasMerge >= 2, JSON.stringify({ load: g.hasLoad, share: g.hasShare, merge: g.hasMerge }));
-  // Pre-written description is visible (read-only: we didn't upload these, no owner key).
+  // Every tile has a description section, including scenes with no description.
   const written = g.descs.find((d) => d && d.value.includes('Already written'));
   ok('[desktop] existing description shown', !!(written && written.value.includes('second line')), JSON.stringify(written));
-  ok('[desktop] empty descriptions have no stored value (non-owner: hidden or empty)', g.descs.filter((d) => d && d.value === '').length + g.descs.filter((d) => d == null).length >= 1);
+  ok('[desktop] every tile has a description section', g.descs.length === g.tileCount && g.descs.every((d) => d), JSON.stringify(g.descs));
+  const emptyDescs = g.descs.filter((d) => d && d.value === '');
+  ok('[desktop] empty descriptions show a placeholder', emptyDescs.length >= 1 && emptyDescs.every((d) => /no description yet/i.test(d.placeholder || '')), JSON.stringify(emptyDescs));
+  const editButtons = await p.evaluate(() => document.querySelectorAll('#dchat-community-list .dchat-community-desc-edit').length);
+  ok('[desktop] every tile has an Edit affordance', editButtons === g.tileCount, String(editButtons));
   await p.screenshot({ path: join(SHOTS, 'desktop-grid.png'), fullPage: false });
+  // Placeholder + edit-state shots (an empty tile).
+  const editShot = await p.evaluate(() => {
+    const tiles = [...document.querySelectorAll('#dchat-community-list .dchat-community-scene')];
+    const empty = tiles.find((t) => {
+      const ta = t.querySelector('.dchat-community-desc');
+      return ta && ta.value === '';
+    });
+    if (!empty) return { ok: false };
+    empty.querySelector('.dchat-community-desc-edit')?.click();
+    const ta = empty.querySelector('.dchat-community-desc');
+    return {
+      ok: true,
+      editing: empty.querySelector('.dchat-community-desc-wrap')?.classList.contains('is-editing'),
+      readonly: !!(ta && ta.readOnly),
+      placeholder: ta?.placeholder || '',
+      hasSave: !!empty.querySelector('.dchat-community-desc-save:not([hidden])'),
+      hasCancel: !!empty.querySelector('.dchat-community-desc-cancel:not([hidden])')
+    };
+  });
+  ok('[desktop] Edit opens save/cancel on an empty description', !!(editShot.ok && editShot.editing && !editShot.readonly && editShot.hasSave && editShot.hasCancel && /no description yet/i.test(editShot.placeholder)), JSON.stringify(editShot));
+  await p.screenshot({ path: join(SHOTS, 'desktop-edit-empty.png'), fullPage: false });
+  await p.evaluate(() => {
+    document.querySelector('#dchat-community-list .dchat-community-desc-cancel:not([hidden])')?.click();
+  });
   // VR-menu-sized paint (600×700, same DOM htmlInCanvas draws).
   const vrPaint = await p.evaluate(() => {
     const src = document.getElementById('desktop-chat');
@@ -240,6 +268,8 @@ function moreBlueThanRed(c) { return c.b > c.r + 25 && c.b > 40; }
   ok('[phone] tiles nearly full width', g.widths.every((w) => w >= g.listW * 0.8), JSON.stringify({ widths: g.widths, listW: g.listW }));
   ok('[phone] tiles are tall (not collapsed)', g.heights.every((h) => h >= 180), JSON.stringify(g.heights));
   ok('[phone] Load still present', g.hasLoad);
+  ok('[phone] every tile has a description section', g.descs.length === g.tileCount && g.descs.every((d) => d), JSON.stringify(g.descs));
+  ok('[phone] empty descriptions show a placeholder', g.descs.filter((d) => d && d.value === '').every((d) => /no description yet/i.test(d.placeholder || '')), JSON.stringify(g.descs));
   await p.screenshot({ path: join(SHOTS, 'phone-grid.png') });
   await p.browserContext().close();
 }
@@ -316,9 +346,8 @@ function moreBlueThanRed(c) { return c.b > c.r + 25 && c.b > 40; }
     const url = document.getElementById('share-url')?.value || '';
     const m = url.match(/\/e\/([A-Za-z0-9_-]+)/) || url.match(/\/s\/([A-Za-z0-9_-]+)/);
     if (m) return m[1];
-    // Owner tiles have a description textarea that is not readonly.
-    const ta = document.querySelector('#dchat-community-list .dchat-community-desc:not([readonly])');
-    return ta?.closest('.dchat-community-scene')?.dataset.sceneId || '';
+    const toggle = document.querySelector('#dchat-community-list [data-community-export-toggle]');
+    return toggle?.closest('.dchat-community-scene')?.dataset.sceneId || '';
   });
   ok('uploaded scene id', !!uploadedId, String(uploadedId));
 
@@ -336,14 +365,20 @@ function moreBlueThanRed(c) { return c.b > c.r + 25 && c.b > 40; }
     const alias = await fetch(`${BASE}/api/scenes/${uploadedId}/thumb`);
     ok('/api/scenes/:id/thumb alias serves the same bytes', alias.ok && Buffer.from(await alias.arrayBuffer()).equals(thumbBuf), String(alias.status));
 
-    // Description: blank by default for the owner, editable.
+    // Description: blank by default, section present, Edit affordance visible.
     const descInfo = await p.evaluate((id) => {
       const tile = document.querySelector(`.dchat-community-scene[data-scene-id="${id}"]`);
       const ta = tile?.querySelector('.dchat-community-desc');
-      return ta ? { value: ta.value, readonly: ta.readOnly, placeholder: ta.placeholder, hasSave: !!tile.querySelector('.dchat-community-desc-save') } : null;
+      return ta ? {
+        value: ta.value,
+        readonly: ta.readOnly,
+        placeholder: ta.placeholder,
+        hasEdit: !!tile.querySelector('.dchat-community-desc-edit:not([hidden])'),
+        hasSave: !!tile.querySelector('.dchat-community-desc-save')
+      } : null;
     }, uploadedId);
-    ok('new scene description is blank with placeholder', descInfo && descInfo.value === '' && !descInfo.readonly && /description/i.test(descInfo.placeholder || ''), JSON.stringify(descInfo));
-    ok('Save button is present for the owner', !!(descInfo && descInfo.hasSave));
+    ok('new scene description is blank with placeholder', descInfo && descInfo.value === '' && /no description yet/i.test(descInfo.placeholder || ''), JSON.stringify(descInfo));
+    ok('Edit affordance is present on a new scene', !!(descInfo && descInfo.hasEdit));
 
     // Clicking / typing in the description does not load / navigate.
     const beforeClick = await p.evaluate(() => location.href);
@@ -355,47 +390,65 @@ function moreBlueThanRed(c) { return c.b > c.r + 25 && c.b > 40; }
     const afterClick = await p.evaluate(() => location.href);
     ok('clicking the description does not navigate', beforeClick === afterClick);
 
-    // Esc cancels.
+    // Esc / Cancel restores the previous value and leaves edit mode.
     await p.evaluate((id) => {
-      const ta = document.querySelector(`.dchat-community-scene[data-scene-id="${id}"] .dchat-community-desc`);
+      const tile = document.querySelector(`.dchat-community-scene[data-scene-id="${id}"]`);
+      tile?.querySelector('.dchat-community-desc-edit')?.click();
+      const ta = tile?.querySelector('.dchat-community-desc');
       ta.value = 'should not be saved';
       ta.dispatchEvent(new Event('input', { bubbles: true }));
-      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     }, uploadedId);
-    const afterEsc = await p.evaluate((id) => document.querySelector(`.dchat-community-scene[data-scene-id="${id}"] .dchat-community-desc`)?.value, uploadedId);
-    ok('Esc cancels an unsaved description', afterEsc === '', JSON.stringify(afterEsc));
+    const afterEsc = await p.evaluate((id) => {
+      const tile = document.querySelector(`.dchat-community-scene[data-scene-id="${id}"]`);
+      const ta = tile?.querySelector('.dchat-community-desc');
+      return {
+        value: ta?.value,
+        editing: tile?.querySelector('.dchat-community-desc-wrap')?.classList.contains('is-editing'),
+        hasEdit: !!tile?.querySelector('.dchat-community-desc-edit:not([hidden])')
+      };
+    }, uploadedId);
+    ok('Esc cancels an unsaved description', afterEsc.value === '' && afterEsc.editing === false && afterEsc.hasEdit, JSON.stringify(afterEsc));
 
-    // Edit + persist (Ctrl+Enter) with multiline and HTML-looking text.
+    // Edit + persist (Save) with multiline and HTML-looking text; UI re-renders.
     const DESC = 'Line one\n<script>alert(1)</script>\nLine three & "quotes"';
     await p.evaluate((id, text) => {
-      const ta = document.querySelector(`.dchat-community-scene[data-scene-id="${id}"] .dchat-community-desc`);
+      const tile = document.querySelector(`.dchat-community-scene[data-scene-id="${id}"]`);
+      tile?.querySelector('.dchat-community-desc-edit')?.click();
+      const ta = tile?.querySelector('.dchat-community-desc');
       ta.focus();
       ta.value = text;
       ta.dispatchEvent(new Event('input', { bubbles: true }));
     }, uploadedId, DESC);
+    await p.screenshot({ path: join(SHOTS, 'desktop-edit-filled.png'), fullPage: false });
     await p.evaluate((id) => {
-      const ta = document.querySelector(`.dchat-community-scene[data-scene-id="${id}"] .dchat-community-desc`);
+      const tile = document.querySelector(`.dchat-community-scene[data-scene-id="${id}"]`);
+      const ta = tile?.querySelector('.dchat-community-desc');
       ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
-      const btn = document.querySelector(`.dchat-community-scene[data-scene-id="${id}"] .dchat-community-desc-save`);
+      const btn = tile?.querySelector('.dchat-community-desc-save');
       if (btn && !btn.hidden) btn.click();
     }, uploadedId);
     await p.waitForFunction((id, text) => {
-      // After a successful save the Save button hides (not dirty).
       const tile = document.querySelector(`.dchat-community-scene[data-scene-id="${id}"]`);
       const ta = tile?.querySelector('.dchat-community-desc');
-      const btn = tile?.querySelector('.dchat-community-desc-save');
-      return ta && ta.value === text && (!btn || btn.hidden);
+      const save = tile?.querySelector('.dchat-community-desc-save');
+      const edit = tile?.querySelector('.dchat-community-desc-edit');
+      return ta && ta.value === text && ta.readOnly && (!save || save.hidden) && edit && !edit.hidden;
     }, { timeout: 10000 }, uploadedId, DESC).catch(() => {});
     const savedUi = await p.evaluate((id) => {
       const tile = document.querySelector(`.dchat-community-scene[data-scene-id="${id}"]`);
       const ta = tile?.querySelector('.dchat-community-desc');
       return {
         value: ta?.value,
+        readonly: !!(ta && ta.readOnly),
+        editing: tile?.querySelector('.dchat-community-desc-wrap')?.classList.contains('is-editing'),
+        hasEdit: !!tile?.querySelector('.dchat-community-desc-edit:not([hidden])'),
         scriptNodes: tile ? tile.querySelectorAll('script').length : -1,
         html: tile ? tile.innerHTML.includes('<script>alert') : false
       };
     }, uploadedId);
     ok('description saved in the UI (multiline preserved)', savedUi.value === DESC, JSON.stringify(savedUi));
+    ok('save leaves view mode and re-renders the text', savedUi.readonly && savedUi.editing === false && savedUi.hasEdit, JSON.stringify(savedUi));
     ok('description is escaped (no HTML injection)', savedUi.scriptNodes === 0 && savedUi.html === false, JSON.stringify(savedUi));
 
     const recRes = await fetch(`${BASE}/api/community-scenes/${uploadedId}`);
@@ -417,7 +470,7 @@ function moreBlueThanRed(c) { return c.b > c.r + 25 && c.b > 40; }
     await p.screenshot({ path: join(SHOTS, 'desktop-grid-after-save.png') });
   }
 
-  // A fresh context (no owner key) sees the description as read-only.
+  // A fresh context (no owner key) still sees the description and can edit it.
   {
     const q = await newPage({ width: 1280, height: 860 });
     await openCommunity(q, { expand: true });
@@ -425,9 +478,35 @@ function moreBlueThanRed(c) { return c.b > c.r + 25 && c.b > 40; }
       const guest = await q.evaluate((id) => {
         const tile = document.querySelector(`.dchat-community-scene[data-scene-id="${id}"]`);
         const ta = tile?.querySelector('.dchat-community-desc');
-        return { value: ta?.value, readonly: !!(ta && ta.readOnly), hasSave: !!tile?.querySelector('.dchat-community-desc-save:not([hidden])'), exists: !!tile };
+        return {
+          value: ta?.value,
+          readonly: !!(ta && ta.readOnly),
+          hasEdit: !!tile?.querySelector('.dchat-community-desc-edit:not([hidden])'),
+          exists: !!tile
+        };
       }, uploadedId);
-      ok('[guest] description visible and read-only', guest.exists && guest.readonly && guest.value.includes('Line one') && guest.value.includes('<script>'), JSON.stringify(guest));
+      ok('[guest] description visible with an Edit affordance', guest.exists && guest.hasEdit && guest.value.includes('Line one') && guest.value.includes('<script>'), JSON.stringify(guest));
+      const GUEST_DESC = 'Guest added this description.';
+      const guestSaved = await q.evaluate(async (id, text) => {
+        const tile = document.querySelector(`.dchat-community-scene[data-scene-id="${id}"]`);
+        tile?.querySelector('.dchat-community-desc-edit')?.click();
+        const ta = tile?.querySelector('.dchat-community-desc');
+        ta.value = text;
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        tile?.querySelector('.dchat-community-desc-save')?.click();
+        const start = Date.now();
+        while (Date.now() - start < 8000) {
+          const save = tile?.querySelector('.dchat-community-desc-save');
+          if (ta && ta.value === text && ta.readOnly && (!save || save.hidden)) {
+            return { ok: true, value: ta.value, readonly: ta.readOnly };
+          }
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        return { ok: false, value: ta?.value, readonly: ta?.readOnly };
+      }, uploadedId, GUEST_DESC);
+      ok('[guest] can edit and persist a description', guestSaved.ok && guestSaved.value === GUEST_DESC, JSON.stringify(guestSaved));
+      const recGuest = await fetch(`${BASE}/api/community-scenes/${uploadedId}`).then((r) => r.json());
+      ok('[guest] description persisted on the server', recGuest.description === GUEST_DESC, JSON.stringify(recGuest.description ?? recGuest));
     }
     await q.browserContext().close();
   }

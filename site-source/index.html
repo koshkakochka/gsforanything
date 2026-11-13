@@ -2131,7 +2131,24 @@
 			color: rgba(255, 255, 255, 0.82);
 			max-height: 120px;
 		}
-		.dchat-community-desc-save {
+		.dchat-community-desc.is-empty.is-readonly,
+		.dchat-community-desc.is-empty:read-only {
+			border: 1px dashed rgba(255, 255, 255, 0.22);
+			background: rgba(0, 0, 0, 0.18);
+			padding: 7px 9px;
+			font-style: italic;
+			color: rgba(255, 255, 255, 0.42);
+			min-height: 44px;
+		}
+		.dchat-community-desc-actions {
+			display: flex;
+			flex-wrap: wrap;
+			justify-content: flex-end;
+			gap: 6px;
+		}
+		.dchat-community-desc-edit,
+		.dchat-community-desc-save,
+		.dchat-community-desc-cancel {
 			align-self: flex-end;
 			height: 28px !important;
 			min-height: 28px !important;

@@ -1,8 +1,10 @@
 import { environmentHdriForRecord, HDRI_FILE_MAX_BYTES, hdriContentType } from "../site-source/sceneHdri.js";
 import { allowExportFromBody, embedUnavailableHtml, exportAllowed, isSceneOwner, newOwnerKey, OWNER_KEY_HEADER, ownerKeyHash, publicSceneRecord } from "../site-source/sceneExportPolicy.js";
 import { listThumbFields, parseThumbnailPayload, publicThumbnailField, thumbKey, thumbStub } from "../site-source/sceneThumbnail.js";
-import { descriptionForList, sanitizeDescription } from "../site-source/sceneDescription.js";
+import { descriptionForList, sanitizeDescription, descriptionPayloadTooLarge, createRateLimiter, clientIpFromHeaders } from "../site-source/sceneDescription.js";
 import { CHAT_PROMPT_REQUIRED, FIX_CODE_PROMPT, MAX_CUSTOM_PROMPT_CHARS, SYSTEM_PROMPT, THEME_SYSTEM_PROMPT } from "./prompts.js";
+
+const descriptionPatchLimit = createRateLimiter();
 
 // Hosted Worker for Carl Junior. Local-only HTTPS / self-signed certs / port
 // binding from site-source/server.js are intentionally not included: Workers
@@ -578,12 +580,18 @@ async function handleApi(request, env) {
     if (!record) return json({ error: "Scene not found" }, 404);
     if (body == null || (body.name == null && body.allowExport == null && body.description == null)) return json({ error: "Missing name" }, 400);
     const isOwner = await isSceneOwner(record, request.headers.get(OWNER_KEY_HEADER));
-    // Only the uploader (owner key) can change the export setting or the description.
+    // Only the uploader (owner key) can change the export setting.
+    // Descriptions are editable by anyone, same as rename; sanitize + rate/size-guard them.
     if (body.allowExport != null && !isOwner) {
       return json({ error: "Only the scene's creator can change its export setting" }, 403);
     }
-    if (body.description != null && !isOwner) {
-      return json({ error: "Only the scene's creator can change its description" }, 403);
+    if (body.description != null) {
+      if (descriptionPayloadTooLarge(body.description)) {
+        return json({ error: "Description is too large" }, 413);
+      }
+      if (!descriptionPatchLimit(clientIpFromHeaders(request.headers))) {
+        return json({ error: "Too many description updates, try again in a minute" }, 429);
+      }
     }
     const name = body.name != null ? sanitizeSceneName(body.name) : sanitizeSceneName(record.name);
     record.name = name;

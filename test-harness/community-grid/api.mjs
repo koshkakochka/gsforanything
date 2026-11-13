@@ -100,25 +100,30 @@ async function runHost(H, fetchFn) {
     ok(`${H} ${path} has cache-control`, /max-age|immutable|public/i.test(cc), cc);
   }
 
-  // --- description PATCH, ownership ---
+  // --- description PATCH (open like rename; export settings stay owner-only) ---
   const ownerKey = described.ownerKey;
   ok(`${H} ownerKey returned once`, typeof ownerKey === 'string' && ownerKey.length > 8);
   const escaped = 'Hello\n<script>alert(1)</script>\n& "quotes"';
-  const denied = await patch(described.id, { description: escaped });
-  ok(`${H} description PATCH without owner key is 403`, denied.status === 403, JSON.stringify(denied).slice(0, 200));
-  const still = await get(described.id);
-  ok(`${H} description unchanged after 403`, still.description === 'A red tile.\nSecond line.');
-  const saved = await patch(described.id, { description: escaped }, { 'x-gs-owner-key': ownerKey });
-  ok(`${H} owner can PATCH description`, saved.status === 200 && saved.description === escaped, JSON.stringify(saved).slice(0, 250));
+  const saved = await patch(described.id, { description: escaped });
+  ok(`${H} description PATCH without owner key succeeds`, saved.status === 200 && saved.description === escaped, JSON.stringify(saved).slice(0, 250));
   const after = await get(described.id);
   ok(`${H} multiline + brackets persist on GET`, after.description === escaped);
   const listed = (await list()).scenes.find((s) => s.id === described.id);
   ok(`${H} list shows updated description`, listed && listed.description === escaped);
-  const cleared = await patch(described.id, { description: '   ' }, { 'x-gs-owner-key': ownerKey });
+  const second = 'Updated by the owner key path.';
+  const savedOwner = await patch(described.id, { description: second }, { 'x-gs-owner-key': ownerKey });
+  ok(`${H} PATCH with owner key still works`, savedOwner.status === 200 && savedOwner.description === second, JSON.stringify(savedOwner).slice(0, 200));
+  const exportDenied = await patch(described.id, { allowExport: false });
+  ok(`${H} export setting PATCH without owner key is still 403`, exportDenied.status === 403, JSON.stringify(exportDenied).slice(0, 200));
+  const cleared = await patch(described.id, { description: '   ' });
   ok(`${H} whitespace clears description`, cleared.status === 200 && (cleared.description === '' || cleared.description == null), JSON.stringify(cleared).slice(0, 200));
   const long = 'z'.repeat(5000);
-  const capped = await patch(described.id, { description: long }, { 'x-gs-owner-key': ownerKey });
+  const capped = await patch(described.id, { description: long });
   ok(`${H} overlong description is capped`, capped.status === 200 && (capped.description || '').length === 2000, String((capped.description || '').length));
+  const tooBig = await patch(described.id, { description: 'z'.repeat(8193) });
+  ok(`${H} oversized raw description is 413`, tooBig.status === 413, JSON.stringify(tooBig).slice(0, 200));
+  const stillCapped = await get(described.id);
+  ok(`${H} 413 did not change the stored description`, (stillCapped.description || '').length === 2000, String((stillCapped.description || '').length));
 
   // name-only PATCH still works (existing, no owner required)
   const renamed = await patch(described.id, { name: 'renamed-thumb' });

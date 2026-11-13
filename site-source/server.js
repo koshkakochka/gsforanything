@@ -11,7 +11,13 @@ import { randomBytes } from 'crypto';
 import { environmentHdriForRecord, HDRI_FILE_MAX_BYTES, hdriContentType } from './sceneHdri.js';
 import { allowExportFromBody, embedUnavailableHtml, exportAllowed, isSceneOwner, newOwnerKey, OWNER_KEY_HEADER, ownerKeyHash, publicSceneRecord } from './sceneExportPolicy.js';
 import { listThumbFields, parseThumbnailPayload, publicThumbnailField, THUMB_PREFIX, thumbPathname, thumbStub } from './sceneThumbnail.js';
-import { descriptionForList, sanitizeDescription } from './sceneDescription.js';
+import { descriptionForList, sanitizeDescription, descriptionPayloadTooLarge, createRateLimiter, clientIpFromHeaders } from './sceneDescription.js';
+
+const descriptionPatchLimit = createRateLimiter();
+function requestClientIp(req) {
+	return clientIpFromHeaders(req.headers, req.ip || req.socket?.remoteAddress || 'unknown');
+}
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1235,12 +1241,18 @@ app.patch('/api/community-scenes/:id', async (req, res) => {
 		const record = await readCommunitySceneRecord(meta);
 		if (meta.allowExport === false) record.allowExport = false;
 		const isOwner = await isSceneOwner(record, req.get(OWNER_KEY_HEADER));
-		// Only the uploader (owner key) can change the export setting or the description.
+		// Only the uploader (owner key) can change the export setting.
+		// Descriptions are editable by anyone, same as rename; sanitize + rate/size-guard them.
 		if (req.body.allowExport != null && !isOwner) {
 			return res.status(403).json({ error: 'Only the scene\'s creator can change its export setting' });
 		}
-		if (req.body.description != null && !isOwner) {
-			return res.status(403).json({ error: 'Only the scene\'s creator can change its description' });
+		if (req.body.description != null) {
+			if (descriptionPayloadTooLarge(req.body.description)) {
+				return res.status(413).json({ error: 'Description is too large' });
+			}
+			if (!descriptionPatchLimit(requestClientIp(req))) {
+				return res.status(429).json({ error: 'Too many description updates, try again in a minute' });
+			}
 		}
 		const name = req.body.name != null ? sanitizeSceneName(req.body.name) : sanitizeSceneName(record.name);
 		record.name = name;
