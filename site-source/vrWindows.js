@@ -276,36 +276,54 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			};
 		};
 
-		// Smallest visible box under the point (later nodes win ties). Checks
-		// the cheap box first, reads computed style only for boxes containing
-		// the point, and skips the inside of clipping boxes the point is not in.
+		// Smallest visible box under the point. Positioned ancestors with a
+		// numeric z-index (the hamburger list is z-index 40) outrank in-flow
+		// content underneath, matching CSS stacking; at the same stack level,
+		// later / smaller nodes still win. Checks the cheap box first, reads
+		// computed style only for boxes containing the point, and skips the
+		// inside of clipping boxes the point is not in.
 		win.elementAt = (x, y) => {
 			let best = null;
 			let bestArea = Infinity;
-			const visit = (el) => {
+			let bestZ = -Infinity;
+			const stackZ = (style, inheritedZ) => {
+				if (style && style.position !== 'static' && style.zIndex !== 'auto') {
+					const z = parseInt(style.zIndex, 10);
+					if (!Number.isNaN(z)) return z;
+				}
+				return inheritedZ;
+			};
+			const visit = (el, inheritedZ) => {
 				for (const child of el.children) {
 					const r = child.getBoundingClientRect();
 					const inside = r.width > 0 && r.height > 0 && x >= r.left && y >= r.top && x <= r.right && y <= r.bottom;
 					let style = null;
+					let z = inheritedZ;
 					if (inside) {
 						style = getComputedStyle(child);
+						z = stackZ(style, inheritedZ);
 						if (style.display !== 'none' && style.visibility !== 'hidden') {
 							const area = r.width * r.height;
-							if (area <= bestArea) {
+							if (z > bestZ || (z === bestZ && area <= bestArea)) {
 								best = child;
 								bestArea = area;
+								bestZ = z;
 							}
 						}
 					}
 					if (child.children.length === 0) continue;
 					if (!inside && r.width > 0 && r.height > 0) {
 						style = style || getComputedStyle(child);
+						z = stackZ(style, inheritedZ);
 						if (style.overflowX !== 'visible' && style.overflowY !== 'visible') continue;
+					} else if (!inside) {
+						style = style || getComputedStyle(child);
+						z = stackZ(style, inheritedZ);
 					}
-					visit(child);
+					visit(child, z);
 				}
 			};
-			visit(source);
+			visit(source, 0);
 			return best;
 		};
 

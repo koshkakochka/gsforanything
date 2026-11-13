@@ -94,7 +94,8 @@ const CUSTOM_LINE = '\n\n## House style\nAlways add a small brass plaque that re
   await p.evaluate(() => localStorage.removeItem('gs.customChatPrompt.v1'));
   await p.reload({ waitUntil: 'networkidle2' }); await p.waitForFunction(() => window.GSChatPrompt?.getDefaults()); await sleep(600);
   const tabs = await p.$$eval('#dchat-chat-subtabs .dchat-subtab', bs => bs.map(b => b.textContent.trim()));
-  ok(`${H} Chat has Scene | Theme | Prompt subtabs (top tabs unchanged)`, tabs.join('|') === 'Scene|Theme|Prompt' && (await p.$$eval('.dchat-tab', t => t.length)) === 12, tabs.join('|'));
+  const tabCount = await p.$$eval('.dchat-tab', t => t.length);
+  ok(`${H} Chat has Scene | Theme | Prompt subtabs (11 top tabs, Files tab removed)`, tabs.join('|') === 'Scene|Theme|Prompt' && tabCount === 11, `${tabs.join('|')} tabs=${tabCount}`);
   let s = await st(p);
   ok(`${H} no custom prompt: no pill, no dot`, !s.pill && !s.dot && !/gs-custom-prompt/.test(s.cls));
   await click(p, '[data-chat-section="prompt"]'); await sleep(300);

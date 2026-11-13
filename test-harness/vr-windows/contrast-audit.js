@@ -162,8 +162,15 @@
 		const input = q('#desktop-chat-input'); text('Chat input text', input); placeholder('Chat input placeholder', input); boundary('Chat input boundary', input);
 		const code = q('#dchat-code-editor'); if (code) placeholder('Code editor placeholder', code);
 		const sel = q('#dchat-nav-type'); if (sel) { text('Select text', sel); boundary('Select boundary', sel); }
-		// --- shared SVG menu buttons (menuSystem.js) ---
-		svgButton('Menu button (Scenes)', q('#dchat-scenes-buttons') || q('[id$="-buttons"] svg')?.parentElement);
+		// --- Scenes tab actions (HTML buttons since the Import / Clear labels wrap) ---
+		const scenesMount = q('#dchat-scenes-buttons');
+		const scenesBtn = scenesMount && scenesMount.querySelector('button');
+		if (scenesBtn) {
+			text('Menu button (Scenes) label', scenesBtn);
+			boundary('Menu button (Scenes) boundary', scenesBtn);
+		} else {
+			svgButton('Menu button (Scenes)', scenesMount || q('[id$="-buttons"] svg')?.parentElement);
+		}
 		const envMount = q('#dchat-env-mode'); if (envMount) svgButton('Menu toggle (Environment)', envMount);
 		// --- ray hover / focus ring ---
 		if (opts.hoverProbe !== false) {

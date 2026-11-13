@@ -190,8 +190,16 @@
 			html:not(.gs-phone) #gs-dock #XRButton::before,
 			html:not(.gs-phone) #gs-dock .gs-dock-btn:not(#gs-exit-vr-btn)::before { display: none; }
 		}
-		/* ...and only at the very narrowest the bar takes its own row. */
+		/* ...and only at the very narrowest the bar takes its own row.
+		   Also query the window container: at the 280px min-width the
+		   header content box may stay above 262px, so a header-self
+		   query would not wrap and the expand/minimize buttons would
+		   overlap the hamburger. The 380px default stays one row. */
 		@container gs-chat-header (max-width: 262px) {
+			#desktop-chat-header { flex-wrap: wrap; }
+			#gs-dock { order: 3; flex: 1 0 100%; margin: 0 !important; justify-content: flex-start; flex-wrap: wrap; }
+		}
+		@container desktop-chat (max-width: 280px) {
 			#desktop-chat-header { flex-wrap: wrap; }
 			#gs-dock { order: 3; flex: 1 0 100%; margin: 0 !important; justify-content: flex-start; flex-wrap: wrap; }
 		}
