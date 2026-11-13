@@ -160,7 +160,7 @@ for (const [hostName, base] of HOSTS) {
     await v.evaluate((sid) => {
       const rows = [...document.querySelectorAll('#dchat-community-list .dchat-community-scene')];
       const row = rows.find(r => r.querySelector('.dchat-scene-name').title.includes(sid));
-      row.querySelector('.dchat-btn').click();
+      row.querySelector('.dchat-community-scene-actions-row .dchat-btn').click();
     }, sceneId);
     await sleep(2500);
   };
