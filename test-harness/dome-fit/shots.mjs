@@ -9,7 +9,7 @@ const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', hea
 const p = await b.newPage(); await p.setViewport({ width: 1280, height: 800 });
 await p.goto(BASE + '/', { waitUntil: 'networkidle2' }); await sleep(3000);
 await p.evaluate(() => {
-  gsControls.setMode('off'); document.querySelector('#hide-ui-btn, [id*=hide-ui]')?.click();
+  gsControls.setMode('off'); document.getElementById('desktop-chat-minimize')?.click();
   const c = document.createElement('canvas'); c.width = 512; c.height = 256; const g = c.getContext('2d');
   const gr = g.createLinearGradient(0, 0, 0, 256); gr.addColorStop(0, '#1e3a8a'); gr.addColorStop(0.5, '#93c5fd'); gr.addColorStop(0.5, '#65a30d'); gr.addColorStop(1, '#365314'); g.fillStyle = gr; g.fillRect(0, 0, 512, 256);
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;

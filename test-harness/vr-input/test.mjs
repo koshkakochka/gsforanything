@@ -89,7 +89,39 @@ for (const vp of [
 	else if (!vp.viewport.isMobile) check(`${T}: "VR NOT SUPPORTED" still shown (compact status pill)`, g.xr.shown && /not supported/i.test(g.xr.text), g.xr.text);
 	else check(`${T}: no Cardboard or Enter VR in the top bar (they're in Meta Settings)`, !g.cardboard.shown && !g.xr.shown, { xr: g.xr, cardboard: g.cardboard });
 	check(`${T}: dock inside the window, not overflowing`, !g.overflow && g.dock.l >= g.chat.l && g.dock.r <= g.chat.r + 0.5, { dock: [g.dock.l, g.dock.r], chat: [g.chat.l, g.chat.r] });
-	check(`${T}: no overlap with the expand / minimize buttons or Hide UI`, !overlaps(g.burger, g.hb) && !overlaps(g.burger, g.ui) && (!vrBtn || (!overlaps(vrBtn, g.hb) && !overlaps(vrBtn, g.ui) && !overlaps(vrBtn, g.burger))), { vr: vrBtn, burger: g.burger, hb: g.hb, ui: g.ui });
+	check(`${T}: no overlap with the expand / minimize buttons`, !overlaps(g.burger, g.hb) && (!vrBtn || (!overlaps(vrBtn, g.hb) && !overlaps(vrBtn, g.burger))), { vr: vrBtn, burger: g.burger, hb: g.hb });
+	check(`${T}: Hide UI button is not shown while the menu is open`, !g.ui.shown, g.ui);
+	await p.click('#desktop-chat-minimize');
+	await sleep(250);
+	const hid = await p.evaluate(() => {
+		const chat = document.getElementById('desktop-chat');
+		const btn = document.getElementById('ui-toggle');
+		const cs = btn && getComputedStyle(btn);
+		const r = btn && btn.getBoundingClientRect();
+		return {
+			chatHidden: chat.classList.contains('hidden') || getComputedStyle(chat).display === 'none',
+			showShown: !!(btn && !btn.hidden && cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0),
+			label: (btn && btn.textContent || '').trim(),
+			w: r ? Math.round(r.width) : 0,
+			h: r ? Math.round(r.height) : 0
+		};
+	});
+	check(`${T}: minimize hides the menu and shows Show UI`, hid.chatHidden && hid.showShown && /show ui/i.test(hid.label), hid);
+	const short = Math.min(vp.viewport.width, vp.viewport.height);
+	if (short <= 600) check(`${T}: Show UI is at least 44px`, hid.w >= 44 && hid.h >= 44, hid);
+	await p.click('#ui-toggle');
+	await sleep(250);
+	const restored = await p.evaluate(() => {
+		const chat = document.getElementById('desktop-chat');
+		const btn = document.getElementById('ui-toggle');
+		const cs = btn && getComputedStyle(btn);
+		const r = btn && btn.getBoundingClientRect();
+		return {
+			chatShown: !chat.classList.contains('hidden') && getComputedStyle(chat).display !== 'none',
+			toggleHidden: !btn || btn.hidden || cs.display === 'none' || r.width === 0
+		};
+	});
+	check(`${T}: Show UI brings the menu back and hides itself`, restored.chatShown && restored.toggleHidden, restored);
 	if (vp.viewport.hasTouch) check(`${T}: 44px hamburger`, g.burger.h >= 44 && g.burger.w >= 44, { burger: g.burger.h });
 	check(`${T}: Exit VR hidden outside VR`, !g.exit.shown);
 	check(`${T}: nothing left at the bottom of the page`, g.bottomStuff.length === 0, g.bottomStuff);

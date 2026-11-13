@@ -1792,7 +1792,8 @@
 			display: none;
 		}
 
-		/* Status indicator */
+		/* Shown only after the menu is minimized, so the UI can be brought
+		   back. While the menu is open the '_' button does the hiding. */
 		#ui-toggle {
 			position: fixed;
 			top: 20px;
@@ -1808,6 +1809,7 @@
 			cursor: pointer;
 			pointer-events: auto;
 		}
+		#ui-toggle[hidden] { display: none !important; }
 
 		/* Status text is still updated by updateStatus(), but the pill is not shown. */
 		#status {
@@ -2573,12 +2575,11 @@
 		html.gs-phone #desktop-chat input,
 		html.gs-phone #desktop-chat select,
 		html.gs-phone #desktop-chat textarea { font-size: 16px; } /* no iOS focus zoom */
-		/* Header: the floating Hide UI button sits over the title, so the
-		   (decorative) title gives way; bigger minimize / expand buttons. */
+		/* Header: the decorative title gives way; bigger minimize / expand
+		   buttons. No extra left padding — the old page-level Hide UI
+		   button that sat over the start of the header is gone. */
 		html.gs-phone #desktop-chat-header {
-			/* 96px left padding keeps the hamburger clear of the page-level
-			   Hide UI button (position:fixed in the top-left corner). */
-			padding: 6px 8px 6px 96px; min-height: 56px; box-sizing: border-box;
+			padding: 6px 8px; min-height: 56px; box-sizing: border-box;
 		}
 		html.gs-phone #desktop-chat-title { display: none; }
 		html.gs-phone #desktop-chat-header-buttons { gap: 8px; }
@@ -2627,17 +2628,18 @@
 		/* Window top bar: 44px buttons; the greyed "VR not supported" pill is
 		   only status, so phones without WebXR drop it to make room. */
 		html.gs-phone #gs-dock { gap: 6px; }
-		/* Phones: the floating Hide UI button covers the start of the header
-		   (see the container query below for when the bar wraps). */
+		/* Phones: the header may wrap on very narrow widths (see the
+		   container query below). */
 		html.gs-phone #desktop-chat-header { flex-wrap: wrap; row-gap: 6px; }
 		html.gs-phone #gs-dock { margin: -4px 4px; }
-		/* Portrait phones: Hide UI sits over the title, so the top bar takes
-		   its own row under it. Landscape (wider window) keeps one row. */
+		/* Portrait phones: if the header is too narrow for hamburger, dock
+		   and window buttons, the dock takes its own row. Landscape (wider
+		   window) keeps one row. */
 		@container gs-chat-header (max-width: 380px) {
 			html.gs-phone #gs-dock { order: 3; flex: 1 0 100%; margin: 0; justify-content: center; flex-wrap: wrap; }
 		}
 		/* Landscape phones (one row): compact labels so the header keeps a
-		   bare stretch to drag the window by between Hide UI and the bar. */
+		   bare stretch to drag the window by. */
 		@container gs-chat-header (min-width: 381px) {
 			html.gs-phone #gs-dock { gap: 4px; }
 			html.gs-phone #gs-dock #XRButton,
@@ -2885,7 +2887,7 @@
 	<!-- DOM Overlay elements for VR -->
 	<div id="overlay-root">
 		<div id="status" hidden></div>
-		<button id="ui-toggle">Hide UI</button>
+		<button id="ui-toggle" type="button" hidden>Show UI</button>
 		<!-- VR-only windows (vrWindows.js): parked off-screen and painted into the headset. -->
 		<div id="gs-vr-hud" aria-hidden="true"><button id="gs-vr-hud-toggle" type="button" aria-pressed="false">Hide UI</button><span id="gs-vr-hud-mic" hidden></span></div>
 		<div id="gs-vr-keyboard" aria-hidden="true"></div>

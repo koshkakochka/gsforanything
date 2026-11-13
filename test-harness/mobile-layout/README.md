@@ -16,19 +16,21 @@ keyboard is simulated two ways, sliding up over a few frames:
 Checks, per phone and keyboard style:
 
 - `html.gs-phone` is on; every visible tap target in the panel, dock and
-  Hide UI (all nine tabs' panels) is at least 44x44, and nothing covers one.
+  the panel (all nine tabs) is at least 44x44, and nothing covers one. The
+  page-level Hide UI button is gone; minimize hides the menu and Show UI
+  brings it back (44px).
 - The nine tabs are one horizontally scrollable row; the last one is reachable.
 - "+" opens and closes attach / files / mic / history (44px).
 - Keyboard up in the chat input: compact layout, the input and Send are fully
   inside the visible area and at its bottom, nothing covers them, the dock /
-  Hide UI / tabs are hidden, recent messages are visible, typing works.
+  tabs are hidden, recent messages are visible, typing works.
 - Send with the keyboard up: the message goes out, the field keeps focus, and
   the newest reply is in view.
 - Android: the canvas is not resized while the keyboard animates, and matches
   the window again after it closes.
 - Keyboard dismissed while the field keeps focus: the full layout and the
   panel's previous size come back; tapping the field again brings it back.
-- Blur restores the tabs, dock and Hide UI.
+- Blur restores the hamburger, dock and header.
 - Theme chat input and the Code editor (caret line in view, Apply reachable)
   also stay above the keyboard.
 - No console errors.
