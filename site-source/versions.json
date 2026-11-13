@@ -1,9 +1,20 @@
 {
   "versions": [
     {
-      "id": "1.0",
-      "label": "GS 1.0 (this build)",
+      "id": "1.01",
+      "label": "GS 1.01 (this build)",
       "url": null,
+      "date": "2026-11-13",
+      "changes": [
+        "The Scenes tab has only Import .vrscene.json and Clear All From Scene. Share & Export is its own menu tab, with the share link, the setting that lets others export, the embed code, and 3D model exports (GLB, glTF, FBX, OBJ, and Blender). There is no Download .vrscene.json button.",
+        "The Environment tab's background color control is a wide Select Color bar that opens the color picker when you click it. The small color square and the hue, saturation, and brightness sliders are gone.",
+        "The Files tab is gone. Context files attach in the chat window (paperclip, drag, or paste) and show as thumbnails: photos show a preview, PDFs show their first page, text files show their first few lines, and audio shows a playable waveform with its length."
+      ]
+    },
+    {
+      "id": "1.0",
+      "label": "GS 1.0",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-12",
       "changes": [
         "Every Community grid card has a description section you can edit, including cards that do not have a description yet.",
