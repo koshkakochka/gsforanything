@@ -23,5 +23,25 @@
       "binding": "SCENES",
       "id": "0e333b55e246449e9f97cb7e90d32f7a"
     }
-  ]
+  ],
+  // Dev is a separate Worker (`gs-dev`) with its own KV namespace
+  // (`gs-dev-scenes`). `routes` are inheritable, so they MUST be overridden
+  // here: otherwise `wrangler deploy --env dev` would attach the production
+  // custom domains to the dev Worker. The SCENES binding is not inheritable
+  // and is pointed at the dev KV only — never the production id.
+  "env": {
+    "dev": {
+      "name": "gs-dev",
+      "workers_dev": true,
+      "routes": [
+        { "pattern": "dev.gsforanything.com", "custom_domain": true }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "SCENES",
+          "id": "07dcdd515d524614b1d3e2ff0c2faa3a"
+        }
+      ]
+    }
+  }
 }
