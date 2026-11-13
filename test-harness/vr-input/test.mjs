@@ -65,7 +65,9 @@ const topBar = (p) => p.evaluate(() => {
 		header: R('#desktop-chat-header'), chat: R('#desktop-chat'), tabs: R('#desktop-chat-tabs'), dock: R('#gs-dock'), xr: R('#XRButton'), ver: R('#gs-version-btn'),
 		cardboard: R('#cardboard-btn'), exit: R('#gs-exit-vr-btn'), hb: R('#desktop-chat-header-buttons'), ui: R('#ui-toggle'),
 		burger: R('#gs-menu-hamburger'), current: R('#gs-menu-current-tab'),
-		overflow: dock.scrollWidth > dock.clientWidth + 1, bottomStuff, innerHeight
+		overflow: dock.scrollWidth > dock.clientWidth + 1, bottomStuff, innerHeight,
+		backendBadge: !!document.getElementById('desktop-chat-title'),
+		modelSelect: !!document.getElementById('desktop-model-select')
 	};
 });
 const overlaps = (a, b) => a && b && a.shown && b.shown && a.l < b.r - 1 && b.l < a.r - 1 && a.t < b.b - 1 && b.t < a.b - 1;
@@ -84,6 +86,7 @@ for (const vp of [
 	const T = vp.name;
 	check(`${T}: hamburger + Enter VR live in the window header; version is in Meta Settings`, g.dockInHeader && g.xrInDock && g.burgerInHeader && !g.verInDock && g.verInMeta, { dockInHeader: g.dockInHeader, xrInDock: g.xrInDock, burgerInHeader: g.burgerInHeader, verInDock: g.verInDock, verInMeta: g.verInMeta });
 	check(`${T}: hamburger and current tab name are at the left of the header`, g.burger.shown && g.current.shown && /chat/i.test(g.current.text) && g.burger.t >= g.chat.t && g.burger.b <= g.header.b + 1, { burger: g.burger, current: g.current.text });
+	check(`${T}: no Claude/backend status badge in the header; Model dropdown remains`, !g.backendBadge && g.modelSelect, { backendBadge: g.backendBadge, modelSelect: g.modelSelect });
 	const vrBtn = g.xr.shown ? g.xr : null;
 	if (vp.xr) check(`${T}: Enter VR shown in the dock`, vrBtn && vrBtn.shown && /enter vr|vr not supported/i.test(vrBtn.text), g.order);
 	else if (!vp.viewport.isMobile) check(`${T}: "VR NOT SUPPORTED" still shown (compact status pill)`, g.xr.shown && /not supported/i.test(g.xr.text), g.xr.text);
@@ -158,16 +161,12 @@ for (const vp of [
 	// The header is still a drag handle outside the hamburger / dock (desktop).
 	if (!vp.viewport.isMobile) {
 		const dragFrom = await p.evaluate(() => {
-			const title = document.getElementById('desktop-chat-title');
-			const cs = title && getComputedStyle(title);
-			if (title && cs.display !== 'none' && title.getBoundingClientRect().width > 20) {
-				const r = title.getBoundingClientRect();
-				return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-			}
 			const h = document.getElementById('desktop-chat-header').getBoundingClientRect();
 			const nav = document.getElementById('gs-menu-nav').getBoundingClientRect();
 			const dock = document.getElementById('gs-dock').getBoundingClientRect();
-			return { x: (nav.right + dock.left) / 2, y: h.top + h.height / 2 };
+			const hb = document.getElementById('desktop-chat-header-buttons').getBoundingClientRect();
+			const right = dock.width > 0 ? dock.left : hb.left;
+			return { x: (nav.right + right) / 2, y: h.top + h.height / 2 };
 		});
 		await p.mouse.move(dragFrom.x, dragFrom.y); await p.mouse.down(); await p.mouse.move(dragFrom.x + 120, dragFrom.y + 60, { steps: 6 }); await p.mouse.up(); await sleep(200);
 		const moved = await p.evaluate(() => document.getElementById('desktop-chat').getBoundingClientRect().toJSON());

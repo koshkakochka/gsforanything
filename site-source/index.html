@@ -76,7 +76,7 @@
 		}
 
 		/* Window top bar (#gs-dock, inside #desktop-chat-header, between the
-		   title and the expand / minimize buttons): WebXR Enter VR (and, in a
+		   current tab name and the expand / minimize buttons): WebXR Enter VR (and, in a
 		   session, Exit VR). The GS version and Cardboard VR buttons live in
 		   the Meta Settings tab. The hamburger at the left of the header opens
 		   every tab as a vertical list. main.js moves
@@ -92,7 +92,7 @@
 			align-items: center;
 			justify-content: flex-end;
 			gap: 6px;
-			/* Never squeezed: the (decorative) title gives way instead. */
+			/* Never squeezed: leftover space sits between the tab name and this bar. */
 			flex: 0 0 auto;
 			margin: -4px 8px; /* 32px buttons without making the header taller */
 			box-sizing: border-box;
@@ -556,11 +556,12 @@
 			/* Content-sized so leftover header stays a drag handle
 			   (#gs-menu-nav is not a drag target). max-width reserves
 			   the expand / minimize buttons so a long tab name
-			   ellipsizes instead of wrapping them to a second row. */
+			   ellipsizes instead of wrapping them to a second row.
+			   margin-right: auto keeps the dock and window buttons on the right. */
 			flex: 0 1 auto;
 			min-width: 0;
 			max-width: calc(100% - 108px);
-			margin-right: 8px;
+			margin-right: auto;
 		}
 		/* Phones also reserve a bare stretch (margin on the buttons)
 		   to drag the window by, because the decorative title is hidden. */
@@ -830,29 +831,6 @@
 			font-size: 13px; padding: 6px 8px;
 		}
 		#dchat-nav-type option { background: #1f2030; color: #fff; }
-
-		#desktop-chat-title {
-			/* basis 0: the (wrapping) header never breaks a row for the title;
-			   the top bar only moves to its own row via the container query. */
-			flex: 1 1 0;
-			min-width: 0;
-			overflow: hidden;
-			white-space: nowrap;
-			font-size: 14px;
-			font-weight: 700;
-			letter-spacing: 0.2px;
-			display: flex;
-			align-items: center;
-			gap: 8px;
-		}
-
-		#desktop-chat-title .dot {
-			width: 8px;
-			height: 8px;
-			border-radius: 50%;
-			background: #10b981;
-			flex-shrink: 0;
-		}
 
 		#desktop-chat-header-buttons {
 			display: flex;
@@ -2657,7 +2635,7 @@
 		/* Very narrow phone / VR-menu widths: keep the hamburger, tab
 		   name, expand and minimize on one row by tightening gaps. */
 		@container gs-chat-header (max-width: 380px) {
-			#gs-menu-nav { gap: 4px; margin-right: 4px; }
+			#gs-menu-nav { gap: 4px; margin-right: auto; }
 			#desktop-chat-header-buttons { gap: 4px; }
 			html.gs-phone #desktop-chat-header-buttons { gap: 4px; margin-left: 24px; }
 		}
@@ -3048,7 +3026,6 @@
 				</button>
 				<span id="gs-menu-current-tab">💬 Chat</span>
 			</div>
-			<div id="desktop-chat-title"><span class="dot"></span>Claude</div>
 			<!-- Top bar of the window: three's XRButton (inserted by main.js
 			     before Exit VR) and, only inside a VR session (this window is
 			     the VR menu), a big red Exit VR button. Version and Cardboard
