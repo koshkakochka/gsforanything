@@ -190,7 +190,8 @@ for (const [hostName, base] of HOSTS) {
   // .vrscene Save to Device
   const vr = await v.evaluate(async () => {
     const blobs = []; const orig = URL.createObjectURL; URL.createObjectURL = (bl) => { blobs.push(bl); return orig.call(URL, bl); };
-    document.querySelector('#dchat-scenes-buttons [data-action="scenes:export"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    // Export / Save to Device lives on the export modal; the Scenes tab no longer has an Export button.
+    window.gsChatPanel.action('scenes:export');
     const name = document.getElementById('export-name').value;
     document.getElementById('export-download-btn').click();
     await new Promise(r => setTimeout(r, 1500));

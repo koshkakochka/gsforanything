@@ -50,7 +50,11 @@ async function send(p, text) {
   return p._chatBodies.at(-1);
 }
 async function action(p, mountSel, act) {
-  await p.evaluate((sel, a) => { const el = document.querySelector(`${sel} [data-action="${a}"]`); el.dispatchEvent(new MouseEvent('click', { bubbles: true })); }, mountSel, act);
+  await p.evaluate((sel, a) => {
+    const el = document.querySelector(`${sel} [data-action="${a}"]`);
+    if (el) el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    else window.gsChatPanel.action(a);
+  }, mountSel, act);
 }
 async function chatText(p) { return p.evaluate(() => [...document.querySelectorAll('#desktop-chat-messages .dchat-msg')].map(e => ({ cls: e.className, t: e.textContent }))); }
 

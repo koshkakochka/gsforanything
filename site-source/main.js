@@ -306,14 +306,14 @@ const EXIT_XR_BUTTON = [
 	{ id: 'exitXr', label: 'Exit VR', action: 'env:exit', variant: 'warning' }
 ];
 const SCENES_BUTTONS = [
-	{ id: 'export', label: 'Export', action: 'scenes:export', variant: 'accent' },
-	{ id: 'importFile', label: 'Import File', action: 'scenes:importFile' },
-	{ id: 'loadSaved', label: 'Load Saved', action: 'scenes:loadSaved', variant: 'success' },
-	{ id: 'clearScene', label: 'Clear scene', action: 'scenes:clear', variant: 'secondary' },
+	{ id: 'importFile', label: 'Import .vrscene.json', action: 'scenes:importFile' },
+	{ id: 'clearScene', label: 'Clear All From Scene', action: 'scenes:clear', variant: 'secondary' },
 	// Share & 3D export (exporter.js): one shortcut to the Share tab (the same
 	// menu is shown in VR, so the Share tab is reachable there too).
-	{ id: 'openShare', label: 'Share & Export 3D', action: 'scenes:openShareTab', variant: 'accent' }
+	{ id: 'openShare', label: 'Share & Export 3D Scene and Files', action: 'scenes:openShareTab', variant: 'accent' }
 ];
+// "Export" (save to the server slot) and "Load Saved" stay as handleMenuAction
+// cases for tests and programmatic use; they are no longer buttons on this tab.
 const COMMUNITY_BUTTONS = [
 	{ id: 'upload', label: 'Upload Current Scene', action: 'community:upload', variant: 'accent' },
 	{ id: 'refresh', label: 'Refresh', action: 'community:refresh' }
@@ -371,6 +371,9 @@ function handleMenuAction(action) {
 			break;
 		case 'scenes:openShareTab':
 			document.querySelector('.dchat-tab[data-tab="share"]')?.click();
+			break;
+		case 'scenes:downloadVrscene':
+			downloadVrsceneJson();
 			break;
 		case 'scenes:importFile':
 			fileInput.click();
@@ -2331,6 +2334,7 @@ window.gsSceneExport = sceneModelExport;
 sceneModelExport.mountShareTab(document.getElementById('dchat-share'), {
 	onShareLink: () => shareCurrentScene(),
 	onEmbed: () => embedCurrentScene(),
+	onDownloadScene: () => downloadVrsceneJson(),
 	allowExport: { get: () => uploadAllowExport, set: (v) => setUploadAllowExport(v) }
 });
 const embedUi = initEmbedUi({
@@ -3020,6 +3024,24 @@ async function doExport() {
 	hideExportModal();
 }
 
+function downloadSceneBlob(sceneData, filename) {
+	const blob = new Blob([JSON.stringify(sceneData, null, 2)], { type: 'application/json' });
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = filename;
+	a.rel = 'noopener';
+	document.body.appendChild(a);
+	a.click();
+	a.remove();
+	setTimeout(() => URL.revokeObjectURL(url), 30000);
+	return blob;
+}
+
+function sceneFileStem(name) {
+	return String(name || 'Untitled').replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'Untitled';
+}
+
 // Downloads the current scene as a local file (a real save-to-disk, unlike
 // "Export" above which only saves to this server's single scene slot).
 async function doDownloadExport() {
@@ -3029,18 +3051,23 @@ async function doDownloadExport() {
 	sceneFileExtension = ext;
 
 	const sceneData = await GSContext.withCreationContext(buildSceneData(name));
-	const blob = new Blob([JSON.stringify(sceneData, null, 2)], { type: 'application/json' });
-	const url = URL.createObjectURL(blob);
-	const a = document.createElement('a');
-	a.href = url;
-	a.download = `${name.replace(/[\\/:*?"<>|]+/g, '_')}.${ext}`;
-	document.body.appendChild(a);
-	a.click();
-	a.remove();
-	URL.revokeObjectURL(url);
+	const filename = `${sceneFileStem(name)}.${ext}`;
+	downloadSceneBlob(sceneData, filename);
 
 	updateStatus(`Saved "${name}" to your device`, 'connected');
 	hideExportModal();
+}
+
+// Share tab: download the current scene as a .vrscene.json file, the same
+// JSON format Import .vrscene.json accepts (code, name, creation context).
+async function downloadVrsceneJson() {
+	if (!sceneExportsAllowed()) { showExportsBlocked(); return; }
+	const name = activeScene?.name || 'Untitled';
+	const sceneData = await GSContext.withCreationContext(buildSceneData(name));
+	const filename = `${sceneFileStem(name)}.vrscene.json`;
+	downloadSceneBlob(sceneData, filename);
+	updateStatus(`Saved "${filename}" to your device`, 'connected');
+	return { filename, sceneData };
 }
 
 // Loads a scene record (file import, the server-saved slot, Community, share
@@ -3099,7 +3126,7 @@ function loadSceneFile(file) {
 			updateStatus(`Load error: ${err.message}`, 'error');
 			return;
 		}
-		loadSceneData(data, file.name.replace(/\.[^.]+$/, '')).then(reportSceneLoaded).catch(err => {
+		loadSceneData(data, file.name.replace(/\.(vrscene\.json|vrscene|json)$/i, '')).then(reportSceneLoaded).catch(err => {
 			console.error('Error loading scene file:', err);
 			updateStatus(`Load error: ${err.message}`, 'error');
 		});
@@ -4430,7 +4457,7 @@ function renderDomSceneList() {
 	if (!sc && total === 0) {
 		const empty = document.createElement('div');
 		empty.className = 'dchat-scene-empty';
-		empty.textContent = 'Empty scene. Chat to build one, or use Import File, Load Saved or Community. Loading a scene replaces this one.';
+		empty.textContent = 'Empty scene. Chat to build one, or use Import .vrscene.json or Community. Loading a scene replaces this one.';
 		dchatCurrentScene.appendChild(empty);
 		return;
 	}
@@ -8659,8 +8686,10 @@ if (dchatSaturation) dchatSaturation.addEventListener('input', () => {
 dchatResetCameraBtn.addEventListener('click', resetCameraView);
 
 // Scenes / Community tabs: shared button specs (SCENES_BUTTONS,
-// COMMUNITY_BUTTONS) mounted once - their content never changes.
-mountButtonsToDOM(dchatScenesButtonsMount, SCENES_BUTTONS, { width: 384, height: phoneMenuButtonHeight(44, 384), gap: 8, minWidth: 100, fontSize: 12 }, handleMenuAction);
+// COMMUNITY_BUTTONS) mounted once as HTML buttons - their content never
+// changes. HTML (not SVG) lets the long Scenes labels wrap on a phone, and
+// htmlInCanvas / vrWindows still paints the same DOM into the VR menu.
+mountHtmlActionButtons(dchatScenesButtonsMount, SCENES_BUTTONS);
 renderCommunityDesktopButtons();
 if (dchatThemesButtonsMount) {
 	mountButtonsToDOM(dchatThemesButtonsMount, THEME_BUTTONS, { width: 384, height: phoneMenuButtonHeight(44, 384), gap: 8, perRow: 3, fontSize: 11 }, handleMenuAction);
