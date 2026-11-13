@@ -54,17 +54,14 @@
 		   the end of the list from chaining into a page pan. */
 		#desktop-chat-messages,
 		#dchat-theme-chat-messages,
-		#dchat-files-list,
 		#dchat-community-list,
-		#dchat-themes-list,
-		#files-picker-list {
+		#dchat-themes-list {
 			touch-action: pan-y;
 			overscroll-behavior: contain;
 			-webkit-overflow-scrolling: touch;
 		}
-		/* #dchat-env holds the brightness range slider. pan-y on an ancestor
-		   intersects away pan-x and would freeze that slider, so only contain
-		   overscroll here. */
+		/* #dchat-env is a vertical scroller (origin gizmo, HDRI, etc.). Only
+		   contain overscroll here so a flick does not chain into a page pan. */
 		#dchat-env {
 			overscroll-behavior: contain;
 			-webkit-overflow-scrolling: touch;
@@ -180,9 +177,11 @@
 		#gs-dock #XRButton[data-xr-state="unavailable"]::before { display: none; }
 		/* Cardboard VR offered (no WebXR): the "not supported" pill adds nothing. */
 		body:has(#cardboard-btn:not([hidden])) #gs-dock #XRButton[data-xr-state="unavailable"] { display: none !important; }
-		/* A narrow window (desktop min width, small tablets): the top bar gets
-		   its own row at the top of the window instead of overflowing. */
-		#desktop-chat-header { container: gs-chat-header / inline-size; flex-wrap: wrap; row-gap: 6px; }
+		/* Keep hamburger, tab name, VR dock and expand/minimize on one row.
+		   A long name ("Share & Export") ellipsizes; the dock only wraps on
+		   very narrow widths (below) so it cannot push the window buttons
+		   onto a second row. */
+		#desktop-chat-header { container: gs-chat-header / inline-size; flex-wrap: nowrap; row-gap: 6px; }
 		/* Narrow desktop window: compact labels first (no icons, smaller text)... */
 		@container gs-chat-header (max-width: 345px) {
 			html:not(.gs-phone) #gs-dock { gap: 4px; margin: -4px 4px; }
@@ -191,13 +190,23 @@
 			html:not(.gs-phone) #gs-dock #XRButton::before,
 			html:not(.gs-phone) #gs-dock .gs-dock-btn:not(#gs-exit-vr-btn)::before { display: none; }
 		}
-		/* ...and only at the very narrowest the bar takes its own row. */
+		/* ...and only at the very narrowest the bar takes its own row.
+		   Also query the window container: at the 280px min-width the
+		   header content box may stay above 262px, so a header-self
+		   query would not wrap and the expand/minimize buttons would
+		   overlap the hamburger. The 380px default stays one row. */
 		@container gs-chat-header (max-width: 262px) {
+			#desktop-chat-header { flex-wrap: wrap; }
+			#gs-dock { order: 3; flex: 1 0 100%; margin: 0 !important; justify-content: flex-start; flex-wrap: wrap; }
+		}
+		@container desktop-chat (max-width: 280px) {
+			#desktop-chat-header { flex-wrap: wrap; }
 			#gs-dock { order: 3; flex: 1 0 100%; margin: 0 !important; justify-content: flex-start; flex-wrap: wrap; }
 		}
 		/* In a session the Exit VR button is large; below ~420px it would
 		   push expand / minimize onto a second row. Wrap the dock instead. */
 		@container gs-chat-header (max-width: 420px) {
+			body.gs-xr-presenting #desktop-chat-header { flex-wrap: wrap; }
 			body.gs-xr-presenting #gs-dock {
 				order: 3;
 				flex: 1 0 100%;
@@ -948,31 +957,53 @@
 		   with a live SVG - see ENV_MODE_BUTTONS in main.js. Its buttons carry
 		   their own colors via the shared button-variant system. */
 
-		.dchat-color-row { display: flex; align-items: center; gap: 10px; }
+		.dchat-color-row { display: flex; align-items: stretch; }
+
+		/* Wide "Select Color" bar: the native color input is an invisible
+		   overlay so a click (desktop, phone, or VR-menu ray) opens the same
+		   picker the old left-hand square did. Opacity 0 keeps htmlInCanvas
+		   from painting the swatch over the label text. */
+		#dchat-color-preview {
+			position: relative;
+			flex: 1;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			min-height: 44px;
+			height: 44px;
+			border-radius: 10px;
+			border: 1px solid rgba(255, 255, 255, 0.18);
+			background: #5a5f68;
+			color: #fff;
+			cursor: pointer;
+			user-select: none;
+			-webkit-user-select: none;
+			overflow: hidden;
+		}
+
+		#dchat-color-preview-text {
+			position: relative;
+			z-index: 1;
+			pointer-events: none;
+			font-size: 13px;
+			font-weight: 700;
+			letter-spacing: 0.02em;
+			text-shadow: 0 0 4px rgba(0, 0, 0, 0.9), 0 1px 2px rgba(0, 0, 0, 0.85);
+		}
 
 		#dchat-color-picker {
-			width: 44px;
-			height: 44px;
+			position: absolute;
+			inset: 0;
+			width: 100%;
+			height: 100%;
+			margin: 0;
 			padding: 0;
 			border: none;
-			border-radius: 10px;
-			background: none;
+			border-radius: inherit;
+			opacity: 0;
 			cursor: pointer;
-		}
-
-		#dchat-color-preview {
-			flex: 1;
-			height: 44px;
-			border-radius: 10px;
-			border: 1px solid rgba(255, 255, 255, 0.1);
-		}
-
-		/* The native colour dialog cannot open in a headset; hue/saturation/
-		   brightness sliders replace the old VR colour wheel. */
-		body.gs-xr-presenting #dchat-color-picker { display: none; }
-		#dchat-brightness, .dchat-env-range {
-			width: 100%;
-			accent-color: #7c3aed;
+			-webkit-appearance: none;
+			appearance: none;
 		}
 
 		.dchat-disabled-note {
@@ -1022,7 +1053,7 @@
 		}
 
 		/* --- Share tab (content built by exporter.js) --- */
-		#dchat-share { overflow-y: auto; padding: 14px 16px; font-size: 13px; overscroll-behavior: contain; }
+		#dchat-share { overflow-y: auto; padding: 14px 16px; font-size: 13px; overscroll-behavior: contain; flex: 1; min-height: 0; }
 
 		/* --- Dependencies tab (page libraries: THREE.js / ammo.js / p5.js) --- */
 		#dchat-deps {
@@ -1146,123 +1177,180 @@
 		body.gs-camera-locked canvas { cursor: crosshair; }
 
 		/* --- Scenes tab (export / load / manage saved scenes) --- */
-		#dchat-scenes, #dchat-community, #dchat-files { padding: 14px; gap: 10px; overflow: hidden; }
+		#dchat-scenes, #dchat-community { padding: 14px; gap: 10px; overflow: hidden; }
 
-		#dchat-files {
-			display: flex;
-			flex-direction: column;
-			flex: 1;
-			min-height: 0;
-		}
-		#dchat-files-hint {
-			font-size: 12px;
-			color: rgba(255,255,255,0.72);
-			line-height: 1.4;
-			margin: 0 0 10px;
-		}
-		#dchat-files-toolbar {
-			display: flex;
-			gap: 8px;
-			flex-shrink: 0;
-			flex-wrap: wrap;
-		}
-		#dchat-files-list {
-			flex: 1;
-			overflow-y: auto;
-			display: flex;
-			flex-direction: column;
-			gap: 6px;
-			min-height: 0;
-			margin-top: 10px;
-		}
-		#dchat-files-list::-webkit-scrollbar { width: 8px; }
-		#dchat-files-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
-		.dchat-file-item {
-			display: flex;
-			align-items: center;
-			gap: 8px;
-			padding: 8px 10px;
-			border-radius: 10px;
-			background: rgba(255,255,255,0.06);
-			border: 1px solid rgba(255,255,255,0.08);
-		}
-		.dchat-file-item .meta { flex: 1; min-width: 0; }
-		.dchat-file-item .name {
-			font-size: 13px; font-weight: 600;
-			white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-		}
-		.dchat-file-item .sub {
-			font-size: 11px; color: rgba(255,255,255,0.72); margin-top: 2px;
+		#dchat-theme-attachments {
+			display: flex; flex-wrap: wrap; gap: 8px; padding: 0 0 4px;
 		}
 
-		#desktop-files-picker-button,
-		#theme-files-picker-button {
+		#theme-attach-button {
 			width: 36px; height: 36px; border: none; border-radius: 10px;
 			background: #3a3c4e; color: #fff; font-size: 15px;
 			cursor: pointer; flex-shrink: 0;
 			display: flex; align-items: center; justify-content: center;
 		}
-		#desktop-files-picker-button:hover,
-		#theme-files-picker-button:hover { background: #4e5168; }
-		#dchat-theme-chat-row #theme-files-picker-button { width: 34px; height: 34px; }
-		#dchat-theme-attachments {
-			display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 4px;
+		#theme-attach-button:hover { background: #4e5168; }
+		#dchat-theme-chat-row #theme-attach-button { width: 34px; height: 34px; }
+
+		/* Staged / sent context-file thumbnails in the chat window. */
+		#desktop-attachments {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 8px;
+			padding: 0 12px 8px;
+			flex-shrink: 0;
+		}
+		#desktop-chat.gs-attach-drop,
+		#dchat-panel-chat.gs-attach-drop {
+			outline: 2px dashed rgba(129, 140, 248, 0.9);
+			outline-offset: -3px;
+			background-image: linear-gradient(180deg, rgba(99, 102, 241, 0.16), rgba(99, 102, 241, 0.05));
+		}
+		.dchat-attach-strip {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 8px;
+			margin-top: 8px;
+		}
+		.dchat-attach-thumb {
+			position: relative;
+			width: 112px;
+			background: rgba(255, 255, 255, 0.08);
+			border: 1px solid rgba(255, 255, 255, 0.12);
+			border-radius: 10px;
+			overflow: hidden;
+			display: flex;
+			flex-direction: column;
+			flex-shrink: 0;
+		}
+		.dchat-msg .dchat-attach-strip { white-space: normal; }
+		.dchat-msg .dchat-attach-thumb { width: 96px; flex-shrink: 0; background: rgba(0, 0, 0, 0.28); }
+		.dchat-attach-preview { flex-shrink: 0; }
+		.dchat-attach-preview {
+			position: relative;
+			height: 76px;
+			background: #161724;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			overflow: hidden;
+		}
+		.dchat-attach-preview img,
+		.dchat-attach-preview canvas {
+			width: 100%;
+			height: 100%;
+			object-fit: cover;
+			display: block;
+		}
+		.dchat-attach-preview pre {
+			margin: 0;
+			padding: 6px 7px;
+			font-size: 8px;
+			line-height: 1.3;
+			color: rgba(255, 255, 255, 0.88);
+			white-space: pre-wrap;
+			word-break: break-word;
+			width: 100%;
+			height: 100%;
+			overflow: hidden;
+			font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		}
+		.dchat-attach-icon {
+			font-size: 28px;
+			line-height: 1;
+		}
+		.dchat-attach-pdf-badge {
+			position: absolute;
+			left: 4px;
+			top: 4px;
+			background: #dc2626;
+			color: #fff;
+			font-size: 9px;
+			font-weight: 700;
+			letter-spacing: 0.04em;
+			padding: 1px 4px;
+			border-radius: 3px;
+			z-index: 1;
+		}
+		.dchat-attach-audio {
+			position: relative;
+			width: 100%;
+			height: 100%;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			justify-content: center;
+			background: linear-gradient(180deg, #312e81, #1e1b4b);
+		}
+		.dchat-attach-wave {
+			width: 100%;
+			height: 36px;
+			display: block;
+		}
+		.dchat-attach-play {
+			position: absolute;
+			right: 4px;
+			bottom: 4px;
+			border: none;
+			background: rgba(0, 0, 0, 0.5);
+			color: #fff;
+			width: 28px;
+			height: 28px;
+			border-radius: 50%;
+			cursor: pointer;
+			font-size: 12px;
+			line-height: 28px;
+			padding: 0;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+		.dchat-attach-play:hover { background: rgba(0, 0, 0, 0.72); }
+		html.gs-phone .dchat-attach-play {
+			width: 44px; height: 44px; min-width: 44px; min-height: 44px;
+			line-height: 44px; font-size: 16px;
+		}
+		.dchat-attach-meta {
+			padding: 4px 6px 6px;
+			min-width: 0;
+		}
+		.dchat-attach-meta .dchat-attachment-name {
+			display: block;
+			font-size: 11px;
+			font-weight: 600;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		.dchat-attach-sub {
+			font-size: 10px;
+			color: rgba(255, 255, 255, 0.7);
+			margin-top: 1px;
 		}
 
-		#files-picker-modal {
-			display: none; position: fixed; inset: 0; z-index: 2000;
-			background: rgba(0,0,0,0.55);
-			align-items: center; justify-content: center; padding: 16px;
-		}
-		#files-picker-modal.open { display: flex; }
-		#files-picker-inner {
-			width: min(420px, 100%); max-height: min(70vh, 520px);
-			background: #1a1b28; border: 1px solid rgba(255,255,255,0.12);
-			border-radius: 14px; box-shadow: 0 16px 48px rgba(0,0,0,0.5);
-			display: flex; flex-direction: column; overflow: hidden;
-		}
-		#files-picker-inner h3 { margin: 0; padding: 14px 16px 8px; font-size: 16px; }
-		#files-picker-hint {
-			padding: 0 16px 10px; font-size: 12px; color: rgba(255,255,255,0.72); line-height: 1.35;
-		}
-		#files-picker-list {
-			flex: 1; overflow-y: auto; padding: 0 12px 8px;
-			display: flex; flex-direction: column; gap: 6px; min-height: 80px;
-		}
-		.files-picker-row {
-			display: flex; align-items: center; gap: 10px; padding: 8px 10px;
-			border-radius: 10px; background: rgba(255,255,255,0.05);
-			cursor: pointer; border: 1px solid transparent;
-		}
-		.files-picker-row:hover { background: rgba(255,255,255,0.09); }
-		.files-picker-row.selected {
-			border-color: rgba(99,102,241,0.7); background: rgba(99,102,241,0.18);
-		}
-		.files-picker-row input { accent-color: #6366f1; width: 16px; height: 16px; flex-shrink: 0; }
-		.files-picker-row .label { flex: 1; min-width: 0; }
-		.files-picker-row .label .name {
-			font-size: 13px; font-weight: 600;
-			white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-		}
-		.files-picker-row .label .sub { font-size: 11px; color: rgba(255,255,255,0.72); margin-top: 2px; }
-		#files-picker-actions {
-			display: flex; gap: 8px; justify-content: flex-end;
-			padding: 12px 16px 14px; border-top: 1px solid rgba(255,255,255,0.08);
-		}
-		#files-picker-actions button {
-			border: none; border-radius: 10px; padding: 10px 14px;
-			font-size: 13px; font-weight: 600; cursor: pointer; color: #fff;
-		}
-		#files-picker-actions .btn-secondary { background: rgba(255,255,255,0.12); }
-		#files-picker-actions .btn-primary {
-			background: linear-gradient(135deg, #4f46e5, #6d28d9);
-		}
-
-
-		/* #dchat-scenes-buttons still SVG via menuSystem; Community desktop
-		   header uses HTML .dchat-btn rows (see renderCommunityDesktopButtons)
-		   so wide panels / high DPI cannot scale an SVG and crush the list. */
+		/* Scenes and Community desktop headers use HTML .dchat-btn rows (see
+		   mountHtmlActionButtons) so wide panels / high DPI cannot scale an
+		   SVG and crush the list, and so long Scenes labels can wrap. */
 		#dchat-scenes-buttons, #dchat-community-buttons { flex-shrink: 0; }
+		#dchat-scenes-buttons {
+			display: flex;
+			flex-direction: column;
+			gap: 8px;
+			flex: 0 0 auto;
+		}
+		#dchat-scenes-buttons .dchat-btn {
+			width: 100%;
+			box-sizing: border-box;
+			min-height: 44px;
+			height: auto;
+			padding: 10px 12px;
+			font-size: 13px;
+			font-weight: 700;
+			line-height: 1.25;
+			white-space: normal;
+			overflow-wrap: anywhere;
+			text-align: center;
+		}
 		/* SVG menu chips (env/scene/theme toggles, etc.) ship a translucent
 		   fill from VARIANT_COLORS. Inside this window only, those rgba fills
 		   become an opaque chip. Gradient fills stay solid. */
@@ -1465,7 +1553,7 @@
 		#desktop-chat-input::placeholder { color: rgba(255, 255, 255, 0.72); }
 		#desktop-chat-input:focus { background: rgba(255, 255, 255, 0.15); }
 
-		#desktop-mic-button, #desktop-send-button, #desktop-attach-button, #desktop-files-picker-button {
+		#desktop-mic-button, #desktop-send-button, #desktop-attach-button {
 			border: none;
 			border-radius: 11px;
 			color: #fff;
@@ -1476,32 +1564,12 @@
 			flex-shrink: 0;
 		}
 
-		#desktop-mic-button, #desktop-attach-button, #desktop-files-picker-button {
+		#desktop-mic-button, #desktop-attach-button {
 			background: #3a3c4e;
 			padding: 10px 12px;
 		}
 
 		#desktop-attach-button:hover { background: #4e5168; }
-
-		/* Staged file/image attachments, shown above the input row until sent. */
-		#desktop-attachments {
-			display: flex;
-			flex-wrap: wrap;
-			gap: 6px;
-			padding: 0 12px 8px;
-			flex-shrink: 0;
-		}
-
-		.dchat-attachment-chip {
-			display: flex;
-			align-items: center;
-			gap: 5px;
-			background: rgba(255, 255, 255, 0.1);
-			border-radius: 8px;
-			padding: 4px 6px 4px 8px;
-			font-size: 12px;
-			max-width: 160px;
-		}
 
 		.dchat-attachment-name {
 			overflow: hidden;
@@ -2645,7 +2713,7 @@
 		html.gs-phone #dchat-prompt-actions .dchat-btn { min-height: 44px; }
 		html.gs-phone #dchat-custom-prompt-pill { min-height: 44px; }
 		html.gs-phone #desktop-model-row { padding: 6px 12px; }
-		/* Chat input: attach / files / mic / history go behind a "More" (+)
+		/* Chat input: attach / camera / mic / history go behind a "More" (+)
 		   button, so the compose row is just [+] [message] [Send]. */
 		#desktop-chat-more { display: none; }
 		html.gs-phone #desktop-chat-more {
@@ -2940,7 +3008,7 @@
 		<!-- Scene file input (hidden). Note: "*" is not a valid accept value and
 		     made Chrome's file picker filter out everything, appearing to show
 		     only folders - only list real extensions/MIME types here. -->
-		<input type="file" id="scene-file-input" accept=".vrscene,.json,application/json" />
+		<input type="file" id="scene-file-input" accept=".vrscene.json,.vrscene,.json,application/json" />
 
 		<!-- Export modal -->
 		<div id="export-modal">
@@ -2995,19 +3063,6 @@
 			</div>
 		</div>
 
-		<!-- Pick context files from the Files library for the next chat prompt -->
-		<div id="files-picker-modal" aria-hidden="true">
-			<div id="files-picker-inner" role="dialog" aria-labelledby="files-picker-title">
-				<h3 id="files-picker-title">Add files to prompt</h3>
-				<div id="files-picker-hint">Select files from your Files library. They’ll attach to the next message.</div>
-				<div id="files-picker-list"></div>
-				<div id="files-picker-actions">
-					<button type="button" id="files-picker-cancel" class="btn-secondary">Cancel</button>
-					<button type="button" id="files-picker-confirm" class="btn-primary">Add to prompt</button>
-				</div>
-			</div>
-		</div>
-
 		<div id="chat-overlay">
 			<div id="chat-input-container">
 				<input type="text" id="chat-input" placeholder="Ask Claude something..." autocomplete="off" />
@@ -3042,12 +3097,11 @@
 			<button class="dchat-tab active" data-tab="chat">💬 Chat</button>
 			<button class="dchat-tab" data-tab="env">🎨 <span class="dchat-tab-full">Environment</span><span class="dchat-tab-short">Env</span></button>
 			<button class="dchat-tab" data-tab="scenes">📁 Scenes</button>
-			<button class="dchat-tab" data-tab="files">📄 Files</button>
 			<button class="dchat-tab" data-tab="code">📝 Code</button>
 			<button class="dchat-tab" data-tab="community">🌐 Community</button>
 			<button class="dchat-tab" data-tab="controls">🎮 Controls</button>
 			<button class="dchat-tab" data-tab="deps">📦 <span class="dchat-tab-full">Dependencies</span><span class="dchat-tab-short">Deps</span></button>
-			<button class="dchat-tab" data-tab="share">🔗 Share</button>
+			<button class="dchat-tab" data-tab="share">🔗 Share &amp; Export</button>
 			<button class="dchat-tab" data-tab="render" id="dchat-tab-render">🎥 <span class="dchat-tab-full">Render</span><span class="dchat-tab-short">Render</span></button>
 			<button class="dchat-tab" data-tab="technical" id="dchat-tab-technical">🛠 <span class="dchat-tab-full">Technical</span><span class="dchat-tab-short">Tech</span></button>
 			<button class="dchat-tab" data-tab="meta" id="dchat-tab-meta">⚙️ <span class="dchat-tab-full">Meta Settings</span><span class="dchat-tab-short">Meta</span></button>
@@ -3075,11 +3129,10 @@
 				<div id="gs-camera-panel" hidden></div>
 				<div id="desktop-attachments" hidden></div>
 				<div id="desktop-chat-input-row">
-					<input type="file" id="desktop-attach-input" multiple accept="image/*,.txt,.md,.markdown,.json,.js,.jsx,.ts,.tsx,.py,.csv,.html,.htm,.css,.xml,.yaml,.yml,.log,.c,.cpp,.h,.hpp,.java,.go,.rs,.sh,.sql,.ini,.toml" hidden />
+					<input type="file" id="desktop-attach-input" multiple accept="image/*,audio/*,.pdf,application/pdf,.txt,.md,.markdown,.json,.js,.jsx,.ts,.tsx,.py,.csv,.html,.htm,.css,.xml,.yaml,.yml,.log,.c,.cpp,.h,.hpp,.java,.go,.rs,.sh,.sql,.ini,.toml,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm" hidden />
 					<div id="desktop-chat-tools-row">
-						<button id="desktop-attach-button" title="Attach images or text files">📎</button>
+						<button id="desktop-attach-button" title="Attach context files (images, text, PDF, audio)">📎</button>
 						<button type="button" id="desktop-camera-button" title="Take a photo with the camera" aria-label="Take a photo" aria-pressed="false" aria-controls="gs-camera-panel">📷</button>
-						<button type="button" id="desktop-files-picker-button" title="Choose from Files library">📄</button>
 						<button id="desktop-mic-button" title="Toggle always-on voice input">🎤</button>
 					</div>
 					<div id="gs-mic-status" role="status" aria-live="polite" hidden></div>
@@ -3131,7 +3184,8 @@
 					</div>
 					<div id="dchat-theme-attachments" hidden></div>
 					<div id="dchat-theme-chat-row">
-						<button type="button" id="theme-files-picker-button" title="Choose from Files library">📄</button>
+						<input type="file" id="theme-attach-input" multiple accept="image/*,audio/*,.pdf,application/pdf,.txt,.md,.markdown,.json,.js,.jsx,.ts,.tsx,.py,.csv,.html,.htm,.css,.xml,.yaml,.yml,.log,.c,.cpp,.h,.hpp,.java,.go,.rs,.sh,.sql,.ini,.toml,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm" hidden />
+						<button type="button" id="theme-attach-button" title="Attach context files">📎</button>
 						<textarea id="dchat-theme-chat-input" class="gs-chat-textarea" rows="1" placeholder="e.g. dark emerald glass, soft rounded tabs..." autocomplete="off" enterkeyhint="send" aria-label="Theme request" data-gs-wrap data-gs-history="#dchat-theme-chat-messages"></textarea>
 						<button type="button" id="dchat-theme-chat-send">Send</button>
 					</div>
@@ -3162,20 +3216,10 @@
 				<div id="dchat-env-controls">
 					<div class="dchat-section-label" style="margin-bottom:8px">Background Color</div>
 					<div class="dchat-color-row">
-						<input type="color" id="dchat-color-picker" value="#6366f1" />
-						<div id="dchat-color-preview"></div>
-					</div>
-					<div style="margin-top:12px">
-						<div class="dchat-section-label" style="margin-bottom:8px">Hue</div>
-						<input type="range" id="dchat-hue" class="dchat-env-range" min="0" max="360" value="220" />
-					</div>
-					<div style="margin-top:12px">
-						<div class="dchat-section-label" style="margin-bottom:8px">Saturation</div>
-						<input type="range" id="dchat-saturation" class="dchat-env-range" min="0" max="100" value="15" />
-					</div>
-					<div style="margin-top:12px">
-						<div class="dchat-section-label" style="margin-bottom:8px">Brightness</div>
-						<input type="range" id="dchat-brightness" class="dchat-env-range" min="2" max="95" value="50" />
+						<label id="dchat-color-preview" for="dchat-color-picker">
+							<span id="dchat-color-preview-text">Select Color</span>
+							<input type="color" id="dchat-color-picker" value="#5a5f68" aria-label="Select Color" />
+						</label>
 					</div>
 					<div class="dchat-disabled-note" style="margin-top:8px;display:none">Background color is unavailable while AR/VR mode is active.</div>
 				</div>
@@ -3247,19 +3291,6 @@
 			</div>
 		</div>
 
-
-		<div id="dchat-panel-files" class="dchat-panel">
-			<div id="dchat-files">
-				<div class="dchat-section-label">Context files</div>
-				<p id="dchat-files-hint">Upload images or text files here to reuse as prompt context. In Chat, tap 📄 to pick from this library.</p>
-				<div id="dchat-files-toolbar">
-					<input type="file" id="dchat-files-input" multiple accept="image/*,.txt,.md,.markdown,.json,.js,.jsx,.ts,.tsx,.py,.csv,.html,.htm,.css,.xml,.yaml,.yml,.log,.c,.cpp,.h,.hpp,.java,.go,.rs,.sh,.sql,.ini,.toml" hidden />
-					<button type="button" id="dchat-files-upload" class="dchat-btn accent">Upload files</button>
-					<button type="button" id="dchat-files-clear" class="dchat-btn secondary">Clear all</button>
-				</div>
-				<div id="dchat-files-list"></div>
-			</div>
-		</div>
 
 		<div id="dchat-panel-code" class="dchat-panel">
 			<div id="dchat-code">
@@ -3454,7 +3485,7 @@
 			</div>
 		</div>
 
-		<!-- Share: scene link (same as Community → Share) + 3D export; filled by exporter.js -->
+		<!-- Share & Export: scene link, embed, 3D export; filled by exporter.js -->
 		<div id="dchat-panel-share" class="dchat-panel">
 			<div id="dchat-share"></div>
 		</div>

@@ -1,0 +1,9 @@
+{
+  "name": "gs-chat-files-test",
+  "private": true,
+  "type": "module",
+  "description": "Headless checks for moving context-file upload into the chat window, removing the Files tab, and thumbnails for text, PDF, photo, and audio attachments.",
+  "dependencies": {
+    "puppeteer-core": "24.43.1"
+  }
+}

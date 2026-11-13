@@ -202,22 +202,30 @@ function settingsSnapshot() {
 }
 
 function rememberFile(att, origin = null) {
-	const kind = att.kind === 'image' ? 'image' : 'text';
-	const content = kind === 'image' ? (att.base64 || '') : (att.text || '');
+	const kind = ['image', 'text', 'pdf', 'audio', 'file'].includes(att.kind)
+		? att.kind
+		: (att.base64 && String(att.mediaType || '').startsWith('image/') ? 'image' : 'text');
+	const content = kind === 'image' ? (att.base64 || '')
+		: kind === 'audio' ? `${att.name}|${att.duration || 0}|${att.size || 0}`
+		: (att.text || att.base64 || '');
 	const id = 'f' + fnv1a(`${att.name}|${kind}|${content.length}|${content.slice(0, 4096)}|${content.slice(-4096)}`);
 	if (!files.has(id)) {
-		files.set(id, {
+		const rec = {
 			id,
 			name: String(att.name || 'file'),
 			kind,
-			mediaType: att.mediaType || (kind === 'image' ? 'image/*' : 'text/plain'),
-			size: kind === 'image' ? Math.round(content.length * 0.75) : (att.size || new Blob([content]).size),
-			...(kind === 'image' ? { base64: content } : { text: content }),
-			...(att.truncated ? { truncated: true, note: att.note } : {}),
-			...(att.omitted ? { omitted: true, note: att.note } : {}),
+			mediaType: att.mediaType || (kind === 'image' ? 'image/*' : kind === 'pdf' ? 'application/pdf' : kind === 'audio' ? 'audio/*' : 'text/plain'),
+			size: att.size || (kind === 'image' ? Math.round((att.base64 || '').length * 0.75) : new Blob([att.text || '']).size),
 			addedAt: att.addedAt || nowIso(),
 			origin
-		});
+		};
+		if (kind === 'image') rec.base64 = att.base64 || '';
+		else if (kind === 'audio') rec.duration = att.duration || 0;
+		else rec.text = att.text || '';
+		if (kind === 'pdf' && att.pageCount) rec.pageCount = att.pageCount;
+		if (att.truncated) { rec.truncated = true; rec.note = att.note; }
+		if (att.omitted) { rec.omitted = true; rec.note = att.note; }
+		files.set(id, rec);
 	}
 	return id;
 }
@@ -791,8 +799,8 @@ function injectUi() {
 			'aria-label': 'Creation history',
 			onclick: () => openViewer()
 		}, '📜');
-		// Match the look of the 📎 / 📄 buttons next to it.
-		const ref = document.getElementById('desktop-files-picker-button');
+		// Match the look of the 📎 button next to it.
+		const ref = document.getElementById('desktop-attach-button');
 		if (ref) btn.className = ref.className;
 		btn.style.cssText = 'border:none;border-radius:10px;padding:8px 10px;background:#3e4154;color:#fff;cursor:pointer;font-size:15px;';
 		tools.appendChild(btn);

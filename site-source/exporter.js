@@ -1103,10 +1103,10 @@ export function initSceneExport(opts) {
 	}
 
 	/**
-	 * Fills the desktop Share tab: the scene link (main.js passes
-	 * shareCurrentScene, which reuses the Community share flow) and the five
-	 * export formats, each opening the export dialog preselected, plus the
-	 * Embed section (main.js passes embedCurrentScene) and the
+	 * Fills the Share & Export tab: the scene link (main.js passes
+	 * shareCurrentScene, which reuses the Community share flow), the five
+	 * 3D export formats, each opening the export dialog preselected, plus
+	 * the Embed section (main.js passes embedCurrentScene) and the
 	 * "Allow others to export" choice used when the scene is uploaded.
 	 * refreshShareTab() re-reads canExport() / the allow choice.
 	 */

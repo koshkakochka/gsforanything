@@ -14,8 +14,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => { cond ? pass++ : fail++; console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${!cond && detail !== '' ? '  — ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) : ''}`); };
 const BOX = "const m = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.4,0.4), new THREE.MeshStandardMaterial({color:0xff5533})); m.name='dlgBox'; m.position.set(0,1.2,-2.5); scene.add(m);";
-const TXT = '/tmp/gs-dialogs-file.txt';
-fs.writeFileSync(TXT, 'hello from the in-app dialogs harness');
 const SRC = new URL('../../site-source/', import.meta.url);
 
 // ---------------------------------------------------------------- static scan
@@ -123,22 +121,6 @@ if (want('desktop')) {
   await p.mouse.click(20, 780); await sleep(250);
   ok(`${H} clicking the backdrop doesn't answer the question`, !!(await dlg(p)) && await hasBox(p));
   await p.keyboard.press('Escape'); await sleep(200);
-
-  // Files library: Clear all asks; Cancel keeps the files, OK removes them.
-  await tabTo(p, 'files'); await sleep(300);
-  const fileInput = await p.$('#dchat-files-input');
-  await fileInput.uploadFile(TXT); await sleep(1200);
-  const nFiles = () => p.evaluate(() => document.querySelectorAll('.dchat-file-item').length);
-  const files0 = await nFiles();
-  ok(`${H} a file was added to the Files library`, files0 >= 1, files0);
-  await p.click('#dchat-files-clear'); await sleep(250);
-  d = await dlg(p);
-  ok(`${H} Files → Clear all opens the in-app confirm`, d && d.kind === 'confirm' && /Remove all 1 files/.test(d.message) && d.okText === 'Remove all', d);
-  await p.click('#gs-dialog [data-gs-dialog="cancel"]'); await sleep(400);
-  ok(`${H} Cancel keeps the files`, (await nFiles()) === files0);
-  await p.click('#dchat-files-clear'); await sleep(250);
-  await p.click('#gs-dialog [data-gs-dialog="ok"]'); await sleep(800);
-  ok(`${H} Remove all empties the library (IndexedDB too)`, (await nFiles()) === 0 && await p.evaluate(() => new Promise((res) => { const r = indexedDB.open('gs-context-library'); r.onsuccess = () => { try { const db = r.result; const names = [...db.objectStoreNames]; if (!names.length) return res(true); const tx = db.transaction(names[0], 'readonly'); const c = tx.objectStore(names[0]).count(); c.onsuccess = () => res(c.result === 0); c.onerror = () => res(true); } catch { res(true); } }; r.onerror = () => res(true); })));
 
   // Theme upload: prompt with the current name, typed name + Enter uploads, Cancel doesn't.
   await action(p, 'themes:upload'); await sleep(300);

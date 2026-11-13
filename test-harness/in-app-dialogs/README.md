@@ -9,7 +9,7 @@ in an immersive session. Every page in this suite fails if a native dialog fires
   sandboxed `alert` shim excepted); the Scene / required / fix prompts tell the
   AI to use `gsAlert` / `gsConfirm` / `gsPrompt`; `worker/prompts.js` is
   regenerated; `gsDialog.js` ships to the Worker and Vercel.
-- **desktop** (1280x800): Clear scene, Files → Clear all, Upload theme
+- **desktop** (1280x800): Clear scene, Upload theme
   (prompt, mocked `/api/community-themes`), Chat → Prompt → Reset. Escape,
   Tab + Enter, click, backdrop (ignored), focus trap, keys don't reach the
   camera, scene-code `alert()` / `confirm()` / `gsPrompt` queueing, text-only

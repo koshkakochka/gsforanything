@@ -234,17 +234,9 @@ const desktopMicButton = document.getElementById('desktop-mic-button');
 const desktopAttachButton = document.getElementById('desktop-attach-button');
 const desktopAttachInput = document.getElementById('desktop-attach-input');
 const desktopAttachmentsRow = document.getElementById('desktop-attachments');
-const desktopFilesPickerButton = document.getElementById('desktop-files-picker-button');
-const themeFilesPickerButton = document.getElementById('theme-files-picker-button');
+const themeAttachButton = document.getElementById('theme-attach-button');
+const themeAttachInput = document.getElementById('theme-attach-input');
 const dchatThemeAttachmentsRow = document.getElementById('dchat-theme-attachments');
-const dchatFilesList = document.getElementById('dchat-files-list');
-const dchatFilesInput = document.getElementById('dchat-files-input');
-const dchatFilesUpload = document.getElementById('dchat-files-upload');
-const dchatFilesClear = document.getElementById('dchat-files-clear');
-const filesPickerModal = document.getElementById('files-picker-modal');
-const filesPickerList = document.getElementById('files-picker-list');
-const filesPickerCancel = document.getElementById('files-picker-cancel');
-const filesPickerConfirm = document.getElementById('files-picker-confirm');
 const desktopModelSelect = document.getElementById('desktop-model-select');
 const desktopOllamaModelRow = document.getElementById('desktop-ollama-model-row');
 const desktopOllamaModelSelect = document.getElementById('desktop-ollama-model-select');
@@ -256,9 +248,6 @@ const dchatEnvModeMount = document.getElementById('dchat-env-mode');
 const dchatEnvControls = document.getElementById('dchat-env-controls');
 const dchatColorPicker = document.getElementById('dchat-color-picker');
 const dchatColorPreview = document.getElementById('dchat-color-preview');
-const dchatBrightness = document.getElementById('dchat-brightness');
-const dchatHue = document.getElementById('dchat-hue');
-const dchatSaturation = document.getElementById('dchat-saturation');
 const dchatResetCameraBtn = document.getElementById('dchat-reset-camera');
 const dchatNavType = document.getElementById('dchat-nav-type');
 const dchatScenesButtonsMount = document.getElementById('dchat-scenes-buttons');
@@ -306,14 +295,12 @@ const EXIT_XR_BUTTON = [
 	{ id: 'exitXr', label: 'Exit VR', action: 'env:exit', variant: 'warning' }
 ];
 const SCENES_BUTTONS = [
-	{ id: 'export', label: 'Export', action: 'scenes:export', variant: 'accent' },
-	{ id: 'importFile', label: 'Import File', action: 'scenes:importFile' },
-	{ id: 'loadSaved', label: 'Load Saved', action: 'scenes:loadSaved', variant: 'success' },
-	{ id: 'clearScene', label: 'Clear scene', action: 'scenes:clear', variant: 'secondary' },
-	// Share & 3D export (exporter.js): one shortcut to the Share tab (the same
-	// menu is shown in VR, so the Share tab is reachable there too).
-	{ id: 'openShare', label: 'Share & Export 3D', action: 'scenes:openShareTab', variant: 'accent' }
+	{ id: 'importFile', label: 'Import .vrscene.json', action: 'scenes:importFile' },
+	{ id: 'clearScene', label: 'Clear All From Scene', action: 'scenes:clear', variant: 'secondary' }
 ];
+// Share & Export lives on its own menu tab (data-tab="share"). "Export" (save
+// to the server slot) and "Load Saved" stay as handleMenuAction cases for tests
+// and programmatic use; they are not buttons on this tab.
 const COMMUNITY_BUTTONS = [
 	{ id: 'upload', label: 'Upload Current Scene', action: 'community:upload', variant: 'accent' },
 	{ id: 'refresh', label: 'Refresh', action: 'community:refresh' }
@@ -372,6 +359,11 @@ function handleMenuAction(action) {
 		case 'scenes:openShareTab':
 			document.querySelector('.dchat-tab[data-tab="share"]')?.click();
 			break;
+		case 'scenes:downloadVrscene':
+			// Programmatic only: the Share & Export tab no longer has a
+			// Download .vrscene.json button.
+			downloadVrsceneJson();
+			break;
 		case 'scenes:importFile':
 			fileInput.click();
 			break;
@@ -380,12 +372,6 @@ function handleMenuAction(action) {
 			break;
 		case 'scenes:clear':
 			clearSceneContent();
-			break;
-		case 'files:upload':
-			dchatFilesInput?.click();
-			break;
-		case 'files:clear':
-			clearContextLibrary();
 			break;
 		case 'code:toggleLive':
 			if (dchatCodeLive) {
@@ -513,11 +499,8 @@ function thinkingStatusText() {
 }
 let selectedOllamaModel = null; // e.g. 'llama3.2:latest' - set once the Ollama model list loads
 let cachedPrompts = null; // { systemPrompt, fixCodePrompt, themePrompt } - fetched once from /api/prompts
-let pendingAttachments = []; // files staged via the 📎 / Files picker, sent with the next scene message - see buildUserContent()
-let pendingThemeAttachments = []; // Files-library picks staged for theme chat
-let contextLibrary = []; // persisted Files-tab library (IndexedDB)
-let filesPickerTarget = 'scene'; // 'scene' | 'theme'
-let filesPickerSelected = new Set();
+let pendingAttachments = []; // files staged via 📎 / drag-drop / paste, sent with the next scene message - see buildUserContent()
+let pendingThemeAttachments = []; // files staged for theme chat
 
 // Ollama always runs on the SAME machine as the browser (this is what makes
 // it "local"), regardless of whether this page itself was loaded from
@@ -666,7 +649,7 @@ let activeScene = null;
 // fetches, chat replies) started for an older scene checks it and drops out.
 let sceneEpoch = 0;
 let sceneFileExtension = 'vrscene';
-let scenePanelSubTab = 'scenes'; // 'scenes' | 'files' | 'code' | 'community' - see SCENE_PANEL_SUB_TABS
+let scenePanelSubTab = 'scenes'; // 'scenes' | 'code' | 'community' - see SCENE_PANEL_SUB_TABS
 let communityScenesCache = []; // last-fetched list
 let communityThemesCache = [];
 let communitySection = 'scenes'; // Community tab: 'scenes' | 'themes'
@@ -1095,7 +1078,6 @@ function isArUiTouchTarget(target) {
 		target.closest('#mobile-xr-walk') ||
 		target.closest('#mobile-xr-gizmo-bar') ||
 		target.closest('#desktop-chat') ||
-		target.closest('#files-picker-modal') ||
 		target.closest('#export-modal') ||
 		target.closest('#share-modal') ||
 		target.closest('#rename-modal') ||
@@ -1423,7 +1405,16 @@ function renderDomChat() {
 	for (const msg of displayMessages) {
 		const bubble = document.createElement('div');
 		bubble.className = 'dchat-msg ' + (msg.role === 'user' ? 'user' : 'assistant');
-		bubble.textContent = msg.content;
+		const text = document.createElement('div');
+		text.className = 'dchat-msg-text';
+		text.textContent = msg.content;
+		bubble.appendChild(text);
+		if (msg.attachments && msg.attachments.length) {
+			const strip = document.createElement('div');
+			strip.className = 'dchat-attach-strip';
+			for (const att of msg.attachments) strip.appendChild(renderAttachmentThumb(att, { removable: false }));
+			bubble.appendChild(strip);
+		}
 		if (msg.history) GSContext.decorateBubble(bubble, msg); // restored creation history
 		desktopChatMessages.appendChild(bubble);
 	}
@@ -2167,6 +2158,23 @@ function hslToHex(h, s, l) {
 	return '#' + c.getHexString();
 }
 
+// Black or white label text on the Background Color bar, by relative luminance
+// (WCAG-style sRGB). A text-shadow in CSS covers the in-between greys.
+function contrastTextOn(hex) {
+	const c = new THREE.Color(hex);
+	const lin = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+	const L = 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+	return L > 0.55 ? '#111111' : '#ffffff';
+}
+
+function syncBgColorPreview(hex) {
+	if (dchatColorPicker) dchatColorPicker.value = hex;
+	if (dchatColorPreview) {
+		dchatColorPreview.style.background = hex;
+		dchatColorPreview.style.color = contrastTextOn(hex);
+	}
+}
+
 // Environment tab: AR/VR toggle (+ Exit VR while in a headset or phone XR)
 // and the background colour controls. Safe to call before the DOM exists.
 function renderDomEnv() {
@@ -2193,18 +2201,15 @@ function renderDomEnv() {
 			? ''
 			: 'Background color is unavailable while a VR session is active.';
 	}
-	const hex = hslToHex(vrBgHue, vrBgSat, vrBgLight);
-	if (dchatColorPicker) dchatColorPicker.value = hex;
-	if (dchatColorPreview) dchatColorPreview.style.background = hex;
-	if (dchatBrightness) dchatBrightness.value = Math.round(vrBgLight * 100);
-	if (dchatHue) dchatHue.value = Math.round(vrBgHue);
-	if (dchatSaturation) dchatSaturation.value = Math.round(vrBgSat * 100);
+	syncBgColorPreview(hslToHex(vrBgHue, vrBgSat, vrBgLight));
 }
 
 /**
- * Background colour controls work on desktop, phone and in the headset (the
- * same menu is shown there; hue/saturation/brightness sliders stand in for the
- * native colour dialog). Phone cardboard/AR has no menu on screen.
+ * Background colour controls work on desktop and phone via the "Select Color"
+ * bar (a native <input type=color>). The same menu is painted in the headset
+ * (htmlInCanvas.js / vrWindows.js); a ray click on the bar is forwarded to the
+ * color input. The OS colour dialog itself cannot appear inside a WebXR
+ * session. Phone cardboard/AR has no menu on screen.
  */
 function envColorControlsEnabled() {
 	if (typeof mobileXRMode !== 'undefined' && mobileXRMode) return false;
@@ -2919,7 +2924,7 @@ function clearUserObjects() {
 }
 
 /** Clear scene = start a new blank scene: every user-placed object, the
- *  loaded scene and its chat history go. Files library and Community uploads
+ *  loaded scene and its chat history go. Community uploads
  *  are not affected. */
 async function clearSceneContent() {
 	if (!activeScene && userContentRoots().length === 0 && executedCodeBlocks.length === 0 && messages.length === 0) {
@@ -2928,7 +2933,7 @@ async function clearSceneContent() {
 		return;
 	}
 	if (!await gsConfirm(
-		'Clear the scene? All objects and this scene\'s chat history are removed. Files library and Community uploads are not affected.',
+		'Clear the scene? All objects and this scene\'s chat history are removed. Community uploads are not affected.',
 		{ title: 'Clear scene', okLabel: 'Clear scene', danger: true }
 	)) return;
 
@@ -3020,6 +3025,24 @@ async function doExport() {
 	hideExportModal();
 }
 
+function downloadSceneBlob(sceneData, filename) {
+	const blob = new Blob([JSON.stringify(sceneData, null, 2)], { type: 'application/json' });
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = filename;
+	a.rel = 'noopener';
+	document.body.appendChild(a);
+	a.click();
+	a.remove();
+	setTimeout(() => URL.revokeObjectURL(url), 30000);
+	return blob;
+}
+
+function sceneFileStem(name) {
+	return String(name || 'Untitled').replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'Untitled';
+}
+
 // Downloads the current scene as a local file (a real save-to-disk, unlike
 // "Export" above which only saves to this server's single scene slot).
 async function doDownloadExport() {
@@ -3029,18 +3052,23 @@ async function doDownloadExport() {
 	sceneFileExtension = ext;
 
 	const sceneData = await GSContext.withCreationContext(buildSceneData(name));
-	const blob = new Blob([JSON.stringify(sceneData, null, 2)], { type: 'application/json' });
-	const url = URL.createObjectURL(blob);
-	const a = document.createElement('a');
-	a.href = url;
-	a.download = `${name.replace(/[\\/:*?"<>|]+/g, '_')}.${ext}`;
-	document.body.appendChild(a);
-	a.click();
-	a.remove();
-	URL.revokeObjectURL(url);
+	const filename = `${sceneFileStem(name)}.${ext}`;
+	downloadSceneBlob(sceneData, filename);
 
 	updateStatus(`Saved "${name}" to your device`, 'connected');
 	hideExportModal();
+}
+
+// Share tab: download the current scene as a .vrscene.json file, the same
+// JSON format Import .vrscene.json accepts (code, name, creation context).
+async function downloadVrsceneJson() {
+	if (!sceneExportsAllowed()) { showExportsBlocked(); return; }
+	const name = activeScene?.name || 'Untitled';
+	const sceneData = await GSContext.withCreationContext(buildSceneData(name));
+	const filename = `${sceneFileStem(name)}.vrscene.json`;
+	downloadSceneBlob(sceneData, filename);
+	updateStatus(`Saved "${filename}" to your device`, 'connected');
+	return { filename, sceneData };
 }
 
 // Loads a scene record (file import, the server-saved slot, Community, share
@@ -3099,7 +3127,7 @@ function loadSceneFile(file) {
 			updateStatus(`Load error: ${err.message}`, 'error');
 			return;
 		}
-		loadSceneData(data, file.name.replace(/\.[^.]+$/, '')).then(reportSceneLoaded).catch(err => {
+		loadSceneData(data, file.name.replace(/\.(vrscene\.json|vrscene|json)$/i, '')).then(reportSceneLoaded).catch(err => {
 			console.error('Error loading scene file:', err);
 			updateStatus(`Load error: ${err.message}`, 'error');
 		});
@@ -4243,11 +4271,20 @@ function applyCommunityTheme(th) {
 		});
 }
 
-function appendThemeChatBubble(role, content) {
+function appendThemeChatBubble(role, content, attachments) {
 	if (!dchatThemeChatMessages) return;
 	const div = document.createElement('div');
 	div.className = `dchat-theme-msg ${role}`;
-	div.textContent = content;
+	const text = document.createElement('div');
+	text.className = 'dchat-msg-text';
+	text.textContent = content;
+	div.appendChild(text);
+	if (attachments && attachments.length) {
+		const strip = document.createElement('div');
+		strip.className = 'dchat-attach-strip';
+		for (const att of attachments) strip.appendChild(renderAttachmentThumb(att, { removable: false }));
+		div.appendChild(strip);
+	}
 	dchatThemeChatMessages.appendChild(div);
 	dchatThemeChatMessages.scrollTop = dchatThemeChatMessages.scrollHeight;
 }
@@ -4261,12 +4298,9 @@ async function sendThemeChat() {
 	pendingThemeAttachments = [];
 	renderThemeAttachmentChips();
 	let userContent = text;
-	for (const att of themeAtts.filter(a => a.kind === 'text')) {
-		userContent += `\n\n--- File: ${att.name} ---\n${att.text}`;
-	}
-	const bubbleLabel = text + (themeAtts.length ? `\n\n📄 ${themeAtts.map(a => a.name).join(', ')}` : '');
+	for (const att of themeAtts) userContent += contextTextForAttachment(att);
 	themeChatMessages.push({ role: 'user', content: userContent || '(attached files)' });
-	appendThemeChatBubble('user', bubbleLabel || '(attached files)');
+	appendThemeChatBubble('user', text || '(attached files)', themeAtts);
 	themeChatLoading = true;
 	if (dchatThemeChatSend) dchatThemeChatSend.disabled = true;
 	appendThemeChatBubble('system', thinkingStatusText());
@@ -4430,7 +4464,7 @@ function renderDomSceneList() {
 	if (!sc && total === 0) {
 		const empty = document.createElement('div');
 		empty.className = 'dchat-scene-empty';
-		empty.textContent = 'Empty scene. Chat to build one, or use Import File, Load Saved or Community. Loading a scene replaces this one.';
+		empty.textContent = 'Empty scene. Chat to build one, or use Import .vrscene.json or Community. Loading a scene replaces this one.';
 		dchatCurrentScene.appendChild(empty);
 		return;
 	}
@@ -5065,16 +5099,8 @@ async function attemptAutoFix(failingCode, errorMessage, errorStack, blockKey) {
 }
 
 // ============================================================================
-// Chat attachments (desktop only - images and text-ish files for context)
+// Chat attachments (images, text, PDF, audio, and other files as context)
 // ============================================================================
-const MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024; // 6MB raw per file
-const MAX_ATTACHMENTS = 4;
-const TEXTY_FILE_EXT = /\.(txt|md|markdown|json|js|jsx|ts|tsx|py|csv|html|htm|css|xml|yaml|yml|log|c|cpp|h|hpp|java|go|rs|sh|sql|ini|toml)$/i;
-
-function isTextyFile(file) {
-	return file.type.startsWith('text/') || file.type === 'application/json' || TEXTY_FILE_EXT.test(file.name);
-}
-
 function readFileAsDataURL(file) {
 	return new Promise((resolve, reject) => {
 		const reader = new FileReader();
@@ -5093,9 +5119,487 @@ function readFileAsText(file) {
 	});
 }
 
-async function addAttachments(fileList) {
-	for (const file of fileList) {
-		if (pendingAttachments.length >= MAX_ATTACHMENTS) {
+const MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024; // 6MB raw per file
+const MAX_ATTACHMENTS = 4;
+const TEXTY_FILE_EXT = /\.(txt|md|markdown|json|js|jsx|ts|tsx|py|csv|html|htm|css|xml|yaml|yml|log|c|cpp|h|hpp|java|go|rs|sh|sql|ini|toml)$/i;
+const AUDIO_FILE_EXT = /\.(mp3|wav|ogg|m4a|aac|flac|webm|oga|opus)$/i;
+const IMAGE_FILE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i;
+const PDF_JS_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.8.69/build/pdf.min.mjs';
+const PDF_JS_WORKER_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.8.69/build/pdf.worker.min.mjs';
+let pdfJsLoader = null;
+
+function isTextyFile(file) {
+	return file.type.startsWith('text/') || file.type === 'application/json' || TEXTY_FILE_EXT.test(file.name);
+}
+
+function isPdfFile(file) {
+	return file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+}
+
+function isAudioFile(file) {
+	return file.type.startsWith('audio/') || AUDIO_FILE_EXT.test(file.name);
+}
+
+function isImageFile(file) {
+	return file.type.startsWith('image/') || IMAGE_FILE_EXT.test(file.name);
+}
+
+function formatFileSize(bytes) {
+	if (!bytes && bytes !== 0) return '';
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDuration(seconds) {
+	if (!Number.isFinite(seconds) || seconds < 0) return '';
+	const s = Math.round(seconds);
+	const m = Math.floor(s / 60);
+	const r = s % 60;
+	return `${m}:${String(r).padStart(2, '0')}`;
+}
+
+function newAttachmentId() {
+	return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function readFileAsArrayBuffer(file) {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => resolve(reader.result);
+		reader.onerror = () => reject(reader.error || new Error('Read failed'));
+		reader.readAsArrayBuffer(file);
+	});
+}
+
+function arrayBufferToBase64(buf) {
+	const bytes = new Uint8Array(buf);
+	const chunk = 0x8000;
+	let binary = '';
+	for (let i = 0; i < bytes.length; i += chunk) {
+		binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+	}
+	return btoa(binary);
+}
+
+function loadPdfJs() {
+	if (!pdfJsLoader) {
+		pdfJsLoader = import(PDF_JS_URL).then((pdfjs) => {
+			pdfjs.GlobalWorkerOptions.workerSrc = PDF_JS_WORKER_URL;
+			return pdfjs;
+		});
+	}
+	return pdfJsLoader;
+}
+
+function extractPdfTextFallback(buf) {
+	try {
+		const text = new TextDecoder('latin1').decode(buf);
+		const parts = [];
+		const re = /\((?:\\.|[^\\)]){1,400}\)/g;
+		let m;
+		while ((m = re.exec(text))) {
+			const s = m[0].slice(1, -1)
+				.replace(/\\n/g, '\n')
+				.replace(/\\r/g, '')
+				.replace(/\\t/g, ' ')
+				.replace(/\\\(/g, '(')
+				.replace(/\\\)/g, ')')
+				.replace(/\\\\/g, '\\');
+			if (/[A-Za-z0-9]/.test(s)) parts.push(s);
+			if (parts.join(' ').length > 8000) break;
+		}
+		const count = (text.match(/\/Type\s*\/Page(?![sA-Za-z])/g) || []).length;
+		return { text: parts.join(' ').trim(), pageCount: count || 0 };
+	} catch {
+		return { text: '', pageCount: 0 };
+	}
+}
+
+function withTimeout(promise, ms, label) {
+	return new Promise((resolve, reject) => {
+		const t = setTimeout(() => reject(new Error(label || 'Timed out')), ms);
+		promise.then((v) => { clearTimeout(t); resolve(v); }, (err) => { clearTimeout(t); reject(err); });
+	});
+}
+
+async function enhancePdfWithPdfJs(rec, buf) {
+	const pdfjs = await withTimeout(loadPdfJs(), 8000, 'pdf.js load');
+	const doc = await withTimeout(pdfjs.getDocument({ data: new Uint8Array(buf) }).promise, 8000, 'pdf.js parse');
+	rec.pageCount = doc.numPages || rec.pageCount || 0;
+	if (doc.numPages >= 1) {
+		const page = await doc.getPage(1);
+		const viewport = page.getViewport({ scale: 1 });
+		const scale = Math.min(224 / Math.max(viewport.width, 1), 152 / Math.max(viewport.height, 1), 1.6);
+		const vp = page.getViewport({ scale });
+		const canvas = document.createElement('canvas');
+		canvas.width = Math.max(1, Math.round(vp.width));
+		canvas.height = Math.max(1, Math.round(vp.height));
+		await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+		rec.previewDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+	}
+	const maxPages = Math.min(doc.numPages, 8);
+	const parts = [];
+	for (let i = 1; i <= maxPages; i++) {
+		const page = await doc.getPage(i);
+		const content = await page.getTextContent();
+		parts.push(content.items.map((it) => it.str).join(' '));
+	}
+	const text = parts.join('\n').trim();
+	if (text) rec.text = text + (doc.numPages > maxPages ? `\n\n[... ${doc.numPages - maxPages} more pages not included]` : '');
+	return rec;
+}
+
+async function readPdfAttachment(file, buf) {
+	const base64 = arrayBufferToBase64(buf);
+	const fb = extractPdfTextFallback(buf);
+	const rec = {
+		id: newAttachmentId(),
+		name: file.name,
+		kind: 'pdf',
+		mediaType: file.type || 'application/pdf',
+		base64,
+		text: fb.text,
+		pageCount: fb.pageCount,
+		previewDataUrl: '',
+		size: file.size
+	};
+	// Fill in a first-page preview and better text in the background so a
+	// slow or blocked pdf.js load does not stall the attachment strip.
+	rec._enhance = enhancePdfWithPdfJs(rec, buf).catch((err) => {
+		console.warn('PDF preview failed, using fallback', err);
+		return rec;
+	});
+	return rec;
+}
+
+function measureAudioDuration(url) {
+	return new Promise((resolve) => {
+		const audio = new Audio();
+		const done = (value) => {
+			audio.removeAttribute('src');
+			audio.load();
+			resolve(value);
+		};
+		audio.preload = 'metadata';
+		audio.onloadedmetadata = () => done(Number.isFinite(audio.duration) ? audio.duration : 0);
+		audio.onerror = () => done(0);
+		setTimeout(() => done(0), 4000);
+		audio.src = url;
+	});
+}
+
+async function drawAudioWaveform(url) {
+	try {
+		const ctx = new (window.AudioContext || window.webkitAudioContext)();
+		const res = await fetch(url);
+		const buf = await res.arrayBuffer();
+		const audioBuf = await ctx.decodeAudioData(buf.slice(0));
+		const channel = audioBuf.getChannelData(0);
+		const canvas = document.createElement('canvas');
+		canvas.width = 224;
+		canvas.height = 72;
+		const g = canvas.getContext('2d');
+		g.fillStyle = '#1e1b4b';
+		g.fillRect(0, 0, canvas.width, canvas.height);
+		const bars = 28;
+		const step = Math.max(1, Math.floor(channel.length / bars));
+		const barW = canvas.width / bars;
+		g.fillStyle = '#a5b4fc';
+		for (let i = 0; i < bars; i++) {
+			let peak = 0;
+			const start = i * step;
+			for (let j = 0; j < step && start + j < channel.length; j++) {
+				const v = Math.abs(channel[start + j]);
+				if (v > peak) peak = v;
+			}
+			const h = Math.max(3, peak * canvas.height * 0.9);
+			g.fillRect(i * barW + 1, (canvas.height - h) / 2, Math.max(2, barW - 2), h);
+		}
+		if (ctx.state !== 'closed' && ctx.close) await ctx.close().catch(() => {});
+		return canvas.toDataURL('image/png');
+	} catch {
+		return '';
+	}
+}
+
+async function readAudioAttachment(file) {
+	const dataUrl = await readFileAsDataURL(file);
+	const duration = await measureAudioDuration(dataUrl);
+	const waveform = await drawAudioWaveform(dataUrl);
+	return {
+		id: newAttachmentId(),
+		name: file.name,
+		kind: 'audio',
+		mediaType: file.type || 'audio/mpeg',
+		dataUrl,
+		duration,
+		waveform,
+		size: file.size
+	};
+}
+
+function textSnippet(text, maxChars = 280) {
+	const cleaned = String(text || '').replace(/\r\n/g, '\n').trim();
+	if (cleaned.length <= maxChars) return cleaned;
+	return cleaned.slice(0, maxChars).trimEnd() + '…';
+}
+
+async function readFileAsAttachment(file) {
+	if (isImageFile(file)) {
+		const dataUrl = await readFileAsDataURL(file);
+		const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+		const mediaType = file.type || 'image/png';
+		return {
+			id: newAttachmentId(),
+			name: file.name,
+			kind: 'image',
+			mediaType,
+			base64,
+			previewDataUrl: dataUrl,
+			size: file.size
+		};
+	}
+	if (isPdfFile(file)) {
+		const buf = await readFileAsArrayBuffer(file);
+		return readPdfAttachment(file, buf);
+	}
+	if (isAudioFile(file)) {
+		return readAudioAttachment(file);
+	}
+	if (isTextyFile(file)) {
+		const text = await readFileAsText(file);
+		return {
+			id: newAttachmentId(),
+			name: file.name,
+			kind: 'text',
+			mediaType: file.type || 'text/plain',
+			text,
+			size: file.size
+		};
+	}
+	// Unknown type: keep a generic tile and a short note as context.
+	const dataUrl = await readFileAsDataURL(file);
+	return {
+		id: newAttachmentId(),
+		name: file.name,
+		kind: 'file',
+		mediaType: file.type || 'application/octet-stream',
+		dataUrl,
+		size: file.size
+	};
+}
+
+function contextTextForAttachment(att) {
+	if (att.kind === 'text') return `\n\n--- File: ${att.name} ---\n${att.text || ''}`;
+	if (att.kind === 'pdf') {
+		const pages = att.pageCount ? `, ${att.pageCount} page${att.pageCount === 1 ? '' : 's'}` : '';
+		const body = (att.text || '').trim() || '(no extractable text)';
+		return `\n\n--- File: ${att.name} (PDF${pages}) ---\n${body}`;
+	}
+	if (att.kind === 'audio') {
+		const dur = formatDuration(att.duration);
+		const bits = [att.mediaType, formatFileSize(att.size), dur].filter(Boolean).join(', ');
+		return `\n\n--- Audio file: ${att.name}${bits ? ` (${bits})` : ''} ---`;
+	}
+	if (att.kind === 'file') {
+		const bits = [att.mediaType, formatFileSize(att.size)].filter(Boolean).join(', ');
+		return `\n\n--- File: ${att.name}${bits ? ` (${bits})` : ''} ---`;
+	}
+	return '';
+}
+
+function attachmentKindLabel(att) {
+	if (att.kind === 'image') return 'Image';
+	if (att.kind === 'pdf') {
+		if (att.pageCount) return `PDF · ${att.pageCount} page${att.pageCount === 1 ? '' : 's'}`;
+		return 'PDF';
+	}
+	if (att.kind === 'text') return 'Text';
+	if (att.kind === 'audio') {
+		const dur = formatDuration(att.duration);
+		return dur ? `Audio · ${dur}` : 'Audio';
+	}
+	return 'File';
+}
+
+function stopThumbAudio(el) {
+	const audio = el?._gsAudio;
+	if (audio) {
+		audio.pause();
+		audio.currentTime = 0;
+	}
+	const btn = el?.querySelector('.dchat-attach-play');
+	if (btn) {
+		btn.textContent = '▶';
+		btn.setAttribute('aria-label', 'Play audio');
+	}
+}
+
+function renderAttachmentThumb(att, { removable = false, onRemove = null } = {}) {
+	const thumb = document.createElement('div');
+	thumb.className = 'dchat-attach-thumb';
+	thumb.dataset.kind = att.kind || 'file';
+	thumb.dataset.name = att.name || '';
+	thumb.title = att.name || '';
+
+	const preview = document.createElement('div');
+	preview.className = 'dchat-attach-preview';
+
+	if (att.kind === 'image' && (att.previewDataUrl || att.base64)) {
+		const img = document.createElement('img');
+		img.alt = att.name || 'Image';
+		img.src = att.previewDataUrl || `data:${att.mediaType || 'image/png'};base64,${att.base64}`;
+		preview.appendChild(img);
+	} else if (att.kind === 'pdf') {
+		const badge = document.createElement('span');
+		badge.className = 'dchat-attach-pdf-badge';
+		badge.textContent = 'PDF';
+		preview.appendChild(badge);
+		if (att.previewDataUrl) {
+			const img = document.createElement('img');
+			img.alt = att.name || 'PDF preview';
+			img.src = att.previewDataUrl;
+			preview.appendChild(img);
+		} else {
+			const icon = document.createElement('span');
+			icon.className = 'dchat-attach-icon';
+			icon.textContent = '📄';
+			preview.appendChild(icon);
+		}
+	} else if (att.kind === 'text') {
+		const pre = document.createElement('pre');
+		pre.textContent = textSnippet(att.text, 220) || att.name || '';
+		preview.appendChild(pre);
+	} else if (att.kind === 'audio') {
+		const box = document.createElement('div');
+		box.className = 'dchat-attach-audio';
+		if (att.waveform) {
+			const wave = document.createElement('img');
+			wave.className = 'dchat-attach-wave';
+			wave.alt = '';
+			wave.src = att.waveform;
+			box.appendChild(wave);
+		} else {
+			const icon = document.createElement('span');
+			icon.className = 'dchat-attach-icon';
+			icon.textContent = '🎵';
+			box.appendChild(icon);
+		}
+		if (att.dataUrl) {
+			const play = document.createElement('button');
+			play.type = 'button';
+			play.className = 'dchat-attach-play';
+			play.textContent = '▶';
+			play.title = 'Play';
+			play.setAttribute('aria-label', 'Play audio');
+			play.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				if (!thumb._gsAudio) {
+					const audio = new Audio(att.dataUrl);
+					audio.addEventListener('ended', () => stopThumbAudio(thumb));
+					thumb._gsAudio = audio;
+				}
+				const audio = thumb._gsAudio;
+				if (audio.paused) {
+					document.querySelectorAll('.dchat-attach-thumb[data-kind="audio"]').forEach((el) => {
+						if (el !== thumb) stopThumbAudio(el);
+					});
+					audio.play().then(() => {
+						play.textContent = '❚❚';
+						play.setAttribute('aria-label', 'Pause audio');
+					}).catch(() => {});
+				} else {
+					audio.pause();
+					play.textContent = '▶';
+					play.setAttribute('aria-label', 'Play audio');
+				}
+			});
+			box.appendChild(play);
+		}
+		preview.appendChild(box);
+	} else {
+		const icon = document.createElement('span');
+		icon.className = 'dchat-attach-icon';
+		icon.textContent = '📦';
+		preview.appendChild(icon);
+	}
+
+	const meta = document.createElement('div');
+	meta.className = 'dchat-attach-meta';
+	const name = document.createElement('span');
+	name.className = 'dchat-attachment-name';
+	name.textContent = att.name || 'file';
+	name.title = att.name || '';
+	const sub = document.createElement('div');
+	sub.className = 'dchat-attach-sub';
+	const bits = [attachmentKindLabel(att), formatFileSize(att.size)].filter(Boolean);
+	sub.textContent = bits.join(' · ');
+	meta.append(name, sub);
+
+	thumb.append(preview, meta);
+
+	if (removable) {
+		const remove = document.createElement('button');
+		remove.type = 'button';
+		remove.className = 'dchat-attachment-remove';
+		remove.textContent = '×';
+		remove.title = 'Remove';
+		remove.setAttribute('aria-label', `Remove ${att.name || 'file'}`);
+		remove.addEventListener('click', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			stopThumbAudio(thumb);
+			if (onRemove) onRemove();
+		});
+		thumb.appendChild(remove);
+	}
+	return thumb;
+}
+
+function attachmentsFor(target) {
+	return target === 'theme' ? pendingThemeAttachments : pendingAttachments;
+}
+
+function setAttachments(target, list) {
+	if (target === 'theme') pendingThemeAttachments = list;
+	else pendingAttachments = list;
+}
+
+function renderAttachmentList(target) {
+	const list = attachmentsFor(target);
+	const row = target === 'theme' ? dchatThemeAttachmentsRow : desktopAttachmentsRow;
+	if (!row) return;
+	row.innerHTML = '';
+	row.hidden = list.length === 0;
+	row.classList.toggle('dchat-attach-strip', true);
+	for (const att of list) {
+		row.appendChild(renderAttachmentThumb(att, {
+			removable: true,
+			onRemove: () => {
+				setAttachments(target, attachmentsFor(target).filter((a) => a.id !== att.id));
+				renderAttachmentList(target);
+			}
+		}));
+	}
+}
+
+function renderAttachmentChips() {
+	renderAttachmentList('scene');
+}
+
+function renderThemeAttachmentChips() {
+	renderAttachmentList('theme');
+}
+
+async function addAttachmentsTo(fileList, target) {
+	const dest = target === 'theme' ? 'theme' : 'scene';
+	// Copy immediately: a <input type="file"> change handler may clear
+	// input.value, which empties the live FileList mid-loop.
+	const files = [...(fileList || [])];
+	for (const file of files) {
+		if (attachmentsFor(dest).length >= MAX_ATTACHMENTS) {
 			updateStatus(`Only ${MAX_ATTACHMENTS} attachments at a time`, 'error');
 			break;
 		}
@@ -5104,382 +5608,96 @@ async function addAttachments(fileList) {
 			continue;
 		}
 		try {
-			if (file.type.startsWith('image/')) {
-				const dataUrl = await readFileAsDataURL(file);
-				const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
-				pendingAttachments.push({
-					id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-					name: file.name,
-					kind: 'image',
-					mediaType: file.type,
-					base64
+			const rec = await readFileAsAttachment(file);
+			if (dest === 'theme' && rec.kind === 'image') {
+				updateStatus(`Theme chat uses text, PDF, and other non-image files — skipped "${file.name}"`, 'error');
+				continue;
+			}
+			if (attachmentsFor(dest).some((a) => a.name === rec.name && a.kind === rec.kind && a.size === rec.size)) continue;
+			attachmentsFor(dest).push(rec);
+			if (rec._enhance) {
+				rec._enhance.then(() => {
+					delete rec._enhance;
+					renderAttachmentList(dest);
+					if (dest === 'scene') renderDomChat();
 				});
-			} else if (isTextyFile(file)) {
-				const text = await readFileAsText(file);
-				pendingAttachments.push({
-					id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-					name: file.name,
-					kind: 'text',
-					text
-				});
-			} else {
-				updateStatus(`"${file.name}" isn't a supported type — images and text files only`, 'error');
 			}
 		} catch (err) {
 			updateStatus(`Couldn't read "${file.name}": ${err.message}`, 'error');
 		}
 	}
-	renderAttachmentChips();
+	renderAttachmentList(dest);
 }
 
-function renderAttachmentChips() {
-	if (!desktopAttachmentsRow) return;
-	desktopAttachmentsRow.innerHTML = '';
-	desktopAttachmentsRow.hidden = pendingAttachments.length === 0;
-	for (const att of pendingAttachments) {
-		const chip = document.createElement('div');
-		chip.className = 'dchat-attachment-chip';
-
-		const icon = document.createElement('span');
-		icon.textContent = att.kind === 'image' ? '🖼️' : '📄';
-
-		const name = document.createElement('span');
-		name.className = 'dchat-attachment-name';
-		name.textContent = att.name;
-		name.title = att.name;
-
-		const remove = document.createElement('button');
-		remove.className = 'dchat-attachment-remove';
-		remove.textContent = '×';
-		remove.title = 'Remove';
-		remove.addEventListener('click', () => {
-			pendingAttachments = pendingAttachments.filter(a => a.id !== att.id);
-			renderAttachmentChips();
-		});
-
-		chip.append(icon, name, remove);
-		desktopAttachmentsRow.appendChild(chip);
-	}
+async function addAttachments(fileList) {
+	return addAttachmentsTo(fileList, 'scene');
 }
 
-// ============================================================================
-// Context Files library (Files tab) — persisted in IndexedDB, pickable from chat
-// ============================================================================
-const FILES_DB_NAME = 'carljr-context-files';
-const FILES_STORE = 'files';
-const MAX_LIBRARY_FILES = 40;
-
-function formatFileSize(bytes) {
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function openFilesDb() {
-	return new Promise((resolve, reject) => {
-		const req = indexedDB.open(FILES_DB_NAME, 1);
-		req.onupgradeneeded = () => {
-			const db = req.result;
-			if (!db.objectStoreNames.contains(FILES_STORE)) {
-				db.createObjectStore(FILES_STORE, { keyPath: 'id' });
+function filesFromDataTransfer(dt) {
+	if (!dt) return [];
+	if (dt.files && dt.files.length) return [...dt.files];
+	const out = [];
+	if (dt.items) {
+		for (const item of dt.items) {
+			if (item.kind === 'file') {
+				const f = item.getAsFile();
+				if (f) out.push(f);
 			}
-		};
-		req.onsuccess = () => resolve(req.result);
-		req.onerror = () => reject(req.error || new Error('IndexedDB open failed'));
-	});
-}
-
-async function idbGetAllFiles() {
-	const db = await openFilesDb();
-	return new Promise((resolve, reject) => {
-		const tx = db.transaction(FILES_STORE, 'readonly');
-		const req = tx.objectStore(FILES_STORE).getAll();
-		req.onsuccess = () => resolve(req.result || []);
-		req.onerror = () => reject(req.error);
-	});
-}
-
-async function idbPutFile(record) {
-	const db = await openFilesDb();
-	return new Promise((resolve, reject) => {
-		const tx = db.transaction(FILES_STORE, 'readwrite');
-		tx.objectStore(FILES_STORE).put(record);
-		tx.oncomplete = () => resolve();
-		tx.onerror = () => reject(tx.error);
-	});
-}
-
-async function idbDeleteFile(id) {
-	const db = await openFilesDb();
-	return new Promise((resolve, reject) => {
-		const tx = db.transaction(FILES_STORE, 'readwrite');
-		tx.objectStore(FILES_STORE).delete(id);
-		tx.oncomplete = () => resolve();
-		tx.onerror = () => reject(tx.error);
-	});
-}
-
-async function idbClearFiles() {
-	const db = await openFilesDb();
-	return new Promise((resolve, reject) => {
-		const tx = db.transaction(FILES_STORE, 'readwrite');
-		tx.objectStore(FILES_STORE).clear();
-		tx.oncomplete = () => resolve();
-		tx.onerror = () => reject(tx.error);
-	});
-}
-
-async function loadContextLibrary() {
-	try {
-		contextLibrary = await idbGetAllFiles();
-		contextLibrary.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
-	} catch (err) {
-		console.warn('Context library load failed', err);
-		contextLibrary = [];
-	}
-	renderContextFilesList();
-}
-
-function libraryRecordFromPendingShape(rec) {
-	// pendingAttachments / library share { id, name, kind, ... }
-	return {
-		id: rec.id,
-		name: rec.name,
-		kind: rec.kind,
-		mediaType: rec.mediaType || '',
-		base64: rec.base64 || '',
-		text: rec.text || '',
-		size: rec.size || 0,
-		addedAt: rec.addedAt || Date.now()
-	};
-}
-
-function attachmentFromLibrary(rec) {
-	const out = {
-		id: rec.id + '-' + Math.random().toString(36).slice(2, 6),
-		name: rec.name,
-		kind: rec.kind,
-		libraryId: rec.id
-	};
-	if (rec.kind === 'image') {
-		out.mediaType = rec.mediaType;
-		out.base64 = rec.base64;
-	} else {
-		out.text = rec.text;
+		}
 	}
 	return out;
 }
 
-async function addFilesToLibrary(fileList) {
-	for (const file of fileList) {
-		if (contextLibrary.length >= MAX_LIBRARY_FILES) {
-			updateStatus(`Library full (max ${MAX_LIBRARY_FILES} files)`, 'error');
-			break;
-		}
-		if (file.size > MAX_ATTACHMENT_BYTES) {
-			updateStatus(`"${file.name}" is too large (max ${MAX_ATTACHMENT_BYTES / (1024 * 1024)}MB)`, 'error');
-			continue;
-		}
-		try {
-			let record;
-			const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-			if (file.type.startsWith('image/')) {
-				const dataUrl = await readFileAsDataURL(file);
-				const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
-				record = {
-					id, name: file.name, kind: 'image', mediaType: file.type,
-					base64, text: '', size: file.size, addedAt: Date.now()
-				};
-			} else if (isTextyFile(file)) {
-				const text = await readFileAsText(file);
-				record = {
-					id, name: file.name, kind: 'text', mediaType: file.type || 'text/plain',
-					base64: '', text, size: file.size, addedAt: Date.now()
-				};
-			} else {
-				updateStatus(`"${file.name}" isn't a supported type — images and text files only`, 'error');
-				continue;
-			}
-			await idbPutFile(record);
-			contextLibrary.unshift(record);
-			updateStatus(`Added "${file.name}" to Files`, 'connected');
-		} catch (err) {
-			updateStatus(`Couldn't save "${file.name}": ${err.message}`, 'error');
-		}
-	}
-	renderContextFilesList();
+function activeAttachTarget() {
+	return (typeof chatSection !== 'undefined' && chatSection === 'theme') ? 'theme' : 'scene';
 }
 
-async function removeLibraryFile(id) {
-	try {
-		await idbDeleteFile(id);
-	} catch (err) {
-		updateStatus(`Couldn't remove file: ${err.message}`, 'error');
-		return;
-	}
-	contextLibrary = contextLibrary.filter(f => f.id !== id);
-	renderContextFilesList();
-}
-
-async function clearContextLibrary() {
-	if (!contextLibrary.length) return;
-	if (!await gsConfirm(`Remove all ${contextLibrary.length} files from the library?`, { title: 'Clear Files library', okLabel: 'Remove all', danger: true })) return;
-	try {
-		await idbClearFiles();
-		contextLibrary = [];
-		renderContextFilesList();
-		updateStatus('Files library cleared', 'connected');
-	} catch (err) {
-		updateStatus(`Clear failed: ${err.message}`, 'error');
-	}
-}
-
-function renderContextFilesList() {
-	if (scenePanelSubTab === 'files') renderDomSceneList();
-	if (!dchatFilesList) return;
-	dchatFilesList.innerHTML = '';
-	if (!contextLibrary.length) {
-		const empty = document.createElement('div');
-		empty.className = 'dchat-scene-empty';
-		empty.textContent = 'No files yet. Upload images or text to use as chat context.';
-		dchatFilesList.appendChild(empty);
-		return;
-	}
-	for (const rec of contextLibrary) {
-		const item = document.createElement('div');
-		item.className = 'dchat-file-item';
-
-		const icon = document.createElement('span');
-		icon.textContent = rec.kind === 'image' ? '🖼️' : '📄';
-
-		const meta = document.createElement('div');
-		meta.className = 'meta';
-		const name = document.createElement('div');
-		name.className = 'name';
-		name.textContent = rec.name;
-		name.title = rec.name;
-		const sub = document.createElement('div');
-		sub.className = 'sub';
-		sub.textContent = `${rec.kind === 'image' ? 'Image' : 'Text'} · ${formatFileSize(rec.size || 0)}`;
-		meta.append(name, sub);
-
-		const remove = document.createElement('button');
-		remove.className = 'dchat-btn';
-		remove.textContent = 'Remove';
-		remove.addEventListener('click', () => removeLibraryFile(rec.id));
-
-		item.append(icon, meta, remove);
-		dchatFilesList.appendChild(item);
-	}
-}
-
-function renderThemeAttachmentChips() {
-	if (!dchatThemeAttachmentsRow) return;
-	dchatThemeAttachmentsRow.innerHTML = '';
-	dchatThemeAttachmentsRow.hidden = pendingThemeAttachments.length === 0;
-	for (const att of pendingThemeAttachments) {
-		const chip = document.createElement('div');
-		chip.className = 'dchat-attachment-chip';
-		const icon = document.createElement('span');
-		icon.textContent = att.kind === 'image' ? '🖼️' : '📄';
-		const name = document.createElement('span');
-		name.className = 'dchat-attachment-name';
-		name.textContent = att.name;
-		name.title = att.name;
-		const remove = document.createElement('button');
-		remove.className = 'dchat-attachment-remove';
-		remove.textContent = '×';
-		remove.title = 'Remove';
-		remove.addEventListener('click', () => {
-			pendingThemeAttachments = pendingThemeAttachments.filter(a => a.id !== att.id);
-			renderThemeAttachmentChips();
-		});
-		chip.append(icon, name, remove);
-		dchatThemeAttachmentsRow.appendChild(chip);
-	}
-}
-
-function openFilesPicker(target) {
-	filesPickerTarget = target === 'theme' ? 'theme' : 'scene';
-	filesPickerSelected = new Set();
-	if (!filesPickerModal || !filesPickerList) return;
-	filesPickerList.innerHTML = '';
-	if (!contextLibrary.length) {
-		const empty = document.createElement('div');
-		empty.className = 'dchat-scene-empty';
-		empty.style.padding = '12px';
-		empty.textContent = 'No files in the library yet. Open the Files tab to upload some.';
-		filesPickerList.appendChild(empty);
-	} else {
-		for (const rec of contextLibrary) {
-			const row = document.createElement('label');
-			row.className = 'files-picker-row';
-			const cb = document.createElement('input');
-			cb.type = 'checkbox';
-			cb.value = rec.id;
-			cb.addEventListener('change', () => {
-				if (cb.checked) filesPickerSelected.add(rec.id);
-				else filesPickerSelected.delete(rec.id);
-				row.classList.toggle('selected', cb.checked);
-			});
-			const label = document.createElement('div');
-			label.className = 'label';
-			const name = document.createElement('div');
-			name.className = 'name';
-			name.textContent = `${rec.kind === 'image' ? '🖼️' : '📄'} ${rec.name}`;
-			const sub = document.createElement('div');
-			sub.className = 'sub';
-			sub.textContent = `${rec.kind === 'image' ? 'Image' : 'Text'} · ${formatFileSize(rec.size || 0)}`;
-			label.append(name, sub);
-			row.append(cb, label);
-			filesPickerList.appendChild(row);
-		}
-	}
-	filesPickerModal.classList.add('open');
-	filesPickerModal.setAttribute('aria-hidden', 'false');
-}
-
-function closeFilesPicker() {
-	if (!filesPickerModal) return;
-	filesPickerModal.classList.remove('open');
-	filesPickerModal.setAttribute('aria-hidden', 'true');
-	filesPickerSelected = new Set();
-}
-
-function confirmFilesPicker() {
-	const picked = contextLibrary.filter(f => filesPickerSelected.has(f.id));
-	if (!picked.length) {
-		closeFilesPicker();
-		return;
-	}
-	if (filesPickerTarget === 'theme') {
-		for (const rec of picked) {
-			if (pendingThemeAttachments.length >= MAX_ATTACHMENTS) {
-				updateStatus(`Only ${MAX_ATTACHMENTS} attachments at a time`, 'error');
-				break;
-			}
-			// Theme API is text-only; skip images with a note
-			if (rec.kind === 'image') {
-				updateStatus(`Theme chat uses text files only — skipped "${rec.name}"`, 'error');
-				continue;
-			}
-			if (pendingThemeAttachments.some(a => a.libraryId === rec.id || a.name === rec.name)) continue;
-			pendingThemeAttachments.push(attachmentFromLibrary(rec));
-		}
-		renderThemeAttachmentChips();
-	} else {
-		for (const rec of picked) {
-			if (pendingAttachments.length >= MAX_ATTACHMENTS) {
-				updateStatus(`Only ${MAX_ATTACHMENTS} attachments at a time`, 'error');
-				break;
-			}
-			if (pendingAttachments.some(a => a.libraryId === rec.id || (a.name === rec.name && a.kind === rec.kind))) continue;
-			pendingAttachments.push(attachmentFromLibrary(rec));
-		}
-		renderAttachmentChips();
-	}
-	closeFilesPicker();
-	updateStatus(`Added ${picked.length} file(s) to prompt`, 'connected');
+function initChatFileDrop() {
+	const panel = document.getElementById('dchat-panel-chat');
+	const windowEl = document.getElementById('desktop-chat');
+	const bindEl = panel || windowEl;
+	if (!bindEl) return;
+	const hoverEls = [panel, windowEl].filter(Boolean);
+	let dragDepth = 0;
+	const setHover = (on) => {
+		for (const el of hoverEls) el.classList.toggle('gs-attach-drop', on);
+	};
+	const onDragEnter = (e) => {
+		if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
+		e.preventDefault();
+		dragDepth += 1;
+		setHover(true);
+	};
+	const onDragOver = (e) => {
+		if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
+		e.preventDefault();
+		e.dataTransfer.dropEffect = 'copy';
+	};
+	const onDragLeave = (e) => {
+		if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
+		dragDepth = Math.max(0, dragDepth - 1);
+		if (dragDepth === 0) setHover(false);
+	};
+	const onDrop = (e) => {
+		if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
+		e.preventDefault();
+		e.stopPropagation();
+		dragDepth = 0;
+		setHover(false);
+		const files = filesFromDataTransfer(e.dataTransfer);
+		if (files.length) addAttachmentsTo(files, activeAttachTarget());
+	};
+	// Bind to the chat panel when present so other tabs don't steal drops.
+	bindEl.addEventListener('dragenter', onDragEnter);
+	bindEl.addEventListener('dragover', onDragOver);
+	bindEl.addEventListener('dragleave', onDragLeave);
+	bindEl.addEventListener('drop', onDrop);
+	document.getElementById('desktop-chat')?.addEventListener('paste', (e) => {
+		const files = filesFromDataTransfer(e.clipboardData);
+		if (!files.length) return;
+		e.preventDefault();
+		addAttachmentsTo(files, activeAttachTarget());
+	});
 }
 
 // Shapes attached files into whatever the selected backend expects. Text
@@ -5488,9 +5706,7 @@ function confirmFilesPicker() {
 // Anthropic, OpenAI, and Ollama each represent an inline image differently.
 function buildUserContent(userMessage, attachments, backend) {
 	let text = userMessage;
-	for (const att of attachments.filter(a => a.kind === 'text')) {
-		text += `\n\n--- File: ${att.name} ---\n${att.text}`;
-	}
+	for (const att of attachments) text += contextTextForAttachment(att);
 
 	const images = attachments.filter(a => a.kind === 'image');
 	if (images.length === 0) return { content: text };
@@ -5542,7 +5758,8 @@ async function sendMessage(userMessage) {
 	messages.push({ role: 'user', content: userContent, ...(ollamaImages ? { images: ollamaImages } : {}) });
 	displayMessages.push({
 		role: 'user',
-		content: userMessage + (attachments.length > 0 ? `\n\n📎 ${attachments.map(a => a.name).join(', ')}` : '')
+		content: userMessage,
+		attachments: attachments.slice()
 	});
 
 	// Set loading state BEFORE rendering so the model-aware thinking indicator
@@ -5679,7 +5896,7 @@ GSContext.initCreationContext({
 		locomotion: locomotionMode
 	}),
 	getSettingsNote: () => buildGsSettingsNote(),
-	getLibraryFiles: () => contextLibrary.map(f => ({ name: f.name, kind: f.kind, size: f.size || 0 })),
+	getLibraryFiles: () => [],
 	getSceneName: () => activeScene?.name || 'Current session',
 	// Restored history goes into both arrays: `messages` is what the next
 	// /api/chat request sends, `displayMessages` is drawn on desktop and in VR.
@@ -7359,24 +7576,17 @@ window.gsTechnicalMode = gsTechnicalMode;
 // now, before the headset session (the Quest Headset cameras prompt can end it).
 if (xrEntryButton) xrEntryButton.addEventListener('click', () => { if (!renderer.xr.isPresenting) askCameraBeforeXr(); }, true);
 desktopAttachInput?.addEventListener('change', (e) => {
-	addAttachments(e.target.files);
+	const files = [...(e.target.files || [])];
 	desktopAttachInput.value = '';
+	addAttachments(files);
 });
-
-desktopFilesPickerButton?.addEventListener('click', () => openFilesPicker('scene'));
-themeFilesPickerButton?.addEventListener('click', () => openFilesPicker('theme'));
-filesPickerCancel?.addEventListener('click', closeFilesPicker);
-filesPickerConfirm?.addEventListener('click', confirmFilesPicker);
-filesPickerModal?.addEventListener('click', (e) => {
-	if (e.target === filesPickerModal) closeFilesPicker();
+themeAttachButton?.addEventListener('click', () => themeAttachInput?.click());
+themeAttachInput?.addEventListener('change', (e) => {
+	const files = [...(e.target.files || [])];
+	themeAttachInput.value = '';
+	addAttachmentsTo(files, 'theme');
 });
-
-dchatFilesUpload?.addEventListener('click', () => handleMenuAction('files:upload'));
-dchatFilesInput?.addEventListener('change', (e) => {
-	addFilesToLibrary(e.target.files);
-	dchatFilesInput.value = '';
-});
-dchatFilesClear?.addEventListener('click', () => handleMenuAction('files:clear'));
+initChatFileDrop();
 
 if (desktopMicButton) {
 	desktopMicButton.addEventListener('click', toggleMicAlwaysOn);
@@ -7860,7 +8070,7 @@ if (window.visualViewport) {
 _coarsePointer.addEventListener?.('change', _onViewportChange);
 updateKeyboardState('init');
 
-// "More" (+) in the chat input row on phones: attach / files / mic / history.
+// "More" (+) in the chat input row on phones: attach / camera / mic / history.
 (function initChatMoreButton() {
 	const compose = document.getElementById('desktop-chat-compose-row');
 	const row = document.getElementById('desktop-chat-input-row');
@@ -7868,7 +8078,7 @@ updateKeyboardState('init');
 	const more = document.createElement('button');
 	more.type = 'button';
 	more.id = 'desktop-chat-more';
-	more.title = 'More: attach, files, voice, history';
+	more.title = 'More: attach, camera, voice, history';
 	more.setAttribute('aria-label', 'More actions');
 	more.setAttribute('aria-expanded', 'false');
 	more.setAttribute('aria-controls', 'desktop-chat-tools-row');
@@ -8128,7 +8338,7 @@ document.addEventListener('keydown', (e) => {
 
 // Tabs: opened from the hamburger at the top left of the menu window
 // (Chat / Environment / Scenes / Files / Code / Community / Controls /
-// Dependencies / Share / Render / Technical / Meta Settings).
+// Dependencies / Share & Export / Render / Technical / Meta Settings).
 function tabButtonLabel(btn) {
 	if (!btn) return '';
 	const clone = btn.cloneNode(true);
@@ -8627,9 +8837,10 @@ if (dchatCodeEditor && dchatCodeHighlight) {
 }
 
 // Environment tab: VR mode (shared button spec, see ENV_MODE_BUTTONS/
-// handleMenuAction), color picker, hue/saturation/brightness sliders. The toggle buttons
-// themselves are (re)mounted by renderDomEnv() since their active/inactive
-// styling depends on isVRMode.
+// handleMenuAction) and the "Select Color" bar (native color input overlaid
+// on the active-color preview). The toggle buttons themselves are
+// (re)mounted by renderDomEnv() since their active/inactive styling depends
+// on isVRMode.
 dchatColorPicker.addEventListener('input', () => {
 	const hex = dchatColorPicker.value;
 	const c = new THREE.Color(hex);
@@ -8641,26 +8852,13 @@ dchatColorPicker.addEventListener('input', () => {
 	applyEnvironmentMode();
 	renderDomEnv();
 });
-dchatBrightness.addEventListener('input', () => {
-	vrBgLight = Math.max(0.02, Math.min(0.95, Number(dchatBrightness.value) / 100));
-	applyEnvironmentMode();
-	renderDomEnv();
-});
-if (dchatHue) dchatHue.addEventListener('input', () => {
-	vrBgHue = Math.max(0, Math.min(360, Number(dchatHue.value)));
-	applyEnvironmentMode();
-	renderDomEnv();
-});
-if (dchatSaturation) dchatSaturation.addEventListener('input', () => {
-	vrBgSat = Math.max(0, Math.min(1, Number(dchatSaturation.value) / 100));
-	applyEnvironmentMode();
-	renderDomEnv();
-});
 dchatResetCameraBtn.addEventListener('click', resetCameraView);
 
 // Scenes / Community tabs: shared button specs (SCENES_BUTTONS,
-// COMMUNITY_BUTTONS) mounted once - their content never changes.
-mountButtonsToDOM(dchatScenesButtonsMount, SCENES_BUTTONS, { width: 384, height: phoneMenuButtonHeight(44, 384), gap: 8, minWidth: 100, fontSize: 12 }, handleMenuAction);
+// COMMUNITY_BUTTONS) mounted once as HTML buttons - their content never
+// changes. HTML (not SVG) lets the long Scenes labels wrap on a phone, and
+// htmlInCanvas / vrWindows still paints the same DOM into the VR menu.
+mountHtmlActionButtons(dchatScenesButtonsMount, SCENES_BUTTONS);
 renderCommunityDesktopButtons();
 if (dchatThemesButtonsMount) {
 	mountButtonsToDOM(dchatThemesButtonsMount, THEME_BUTTONS, { width: 384, height: phoneMenuButtonHeight(44, 384), gap: 8, perRow: 3, fontSize: 11 }, handleMenuAction);
@@ -9288,7 +9486,6 @@ if (rememberTheme) {
 	try { localStorage.removeItem(THEME_CACHE_KEY); } catch { /* ignore */ }
 }
 
-loadContextLibrary();
 
 bootSharedScene();
 
