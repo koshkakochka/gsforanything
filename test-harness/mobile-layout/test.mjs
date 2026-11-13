@@ -217,6 +217,105 @@ for (const vp of PHONES) {
   }
 }
 
+// ---- Header stays one row at narrow widths (hamburger, tab title, expand, minimize)
+async function headerRow(p) {
+  return p.evaluate(() => {
+    const box = (s) => {
+      const e = document.querySelector(s);
+      if (!e) return null;
+      const r = e.getBoundingClientRect();
+      const cs = getComputedStyle(e);
+      if (r.width < 1 || r.height < 1 || cs.display === 'none' || cs.visibility === 'hidden' || e.closest('[hidden]')) return null;
+      return { t: r.top, b: r.bottom, l: r.left, r: r.right, w: r.width, h: r.height };
+    };
+    const header = box('#desktop-chat-header');
+    const burger = box('#gs-menu-hamburger');
+    const title = box('#gs-menu-current-tab');
+    const expand = box('#desktop-chat-expand');
+    const mini = box('#desktop-chat-minimize');
+    const buttons = [burger, expand, mini].filter(Boolean);
+    const tops = buttons.map((x) => x.t);
+    // Same row: the band from the highest top to the lowest bottom is no
+    // taller than the tallest button (plus a 4px slop). Different-height
+    // buttons (36px hamburger vs 24px expand on desktop / VR) can have
+    // different tops and still sit on one row.
+    const band = buttons.length ? Math.max(...buttons.map((x) => x.b)) - Math.min(...tops) : 0;
+    const tallest = buttons.length ? Math.max(...buttons.map((x) => x.h)) : 0;
+    const sameTop = buttons.length >= 1 && band <= tallest + 4;
+    const titleOverflow = !!(title && header && (title.r > header.r + 1 || title.l < header.l - 1 || title.t < header.t - 1 || title.b > header.b + 1));
+    const titleOverButtons = !!(title && expand && title.r > expand.l + 1);
+    const titleOnRow = !title || (buttons.length && title.b > Math.min(...tops) + 2 && title.t < Math.max(...buttons.map((x) => x.b)) - 2);
+    return {
+      label: (document.getElementById('gs-menu-current-tab')?.textContent || '').trim(),
+      sameTop, titleOverflow, titleOverButtons, titleOnRow, band, tallest,
+      n: buttons.length,
+      header, burger, title, expand, mini,
+    };
+  });
+}
+
+const HEADER_VPS = [
+  { name: '320x568', w: 320, h: 568 },
+  { name: '375x667', w: 375, h: 667 },
+  { name: '390x844', w: 390, h: 844 },
+  { name: '568x320', w: 568, h: 320 },
+  { name: '667x375', w: 667, h: 375 },
+  { name: '844x390', w: 844, h: 390 },
+];
+if (!ONLY || ONLY.split(',').some((o) => o.startsWith('header'))) {
+  for (const vp of HEADER_VPS) {
+    const T = `[header ${vp.name}]`;
+    const p = await openPhone(vp);
+    for (const tabName of ['chat', 'env', 'meta']) {
+      await tab(p, tabName);
+      const row = await headerRow(p);
+      ok(`${T} ${tabName}: hamburger, expand and minimize share the same top`, row.sameTop && row.n >= 2, JSON.stringify(row));
+      ok(`${T} ${tabName}: tab title stays on that row and does not overflow the header`, row.titleOnRow && !row.titleOverflow && !row.titleOverButtons, JSON.stringify({ label: row.label, title: row.title, header: row.header, expand: row.expand, overflow: row.titleOverflow, overButtons: row.titleOverButtons }));
+    }
+    await p.close();
+  }
+  // VR menu: the in-world source is a fixed 600x700 html-in-canvas window
+  // (minimize hidden, Exit VR visible). Also check a 320px on-screen window
+  // with the same presenting chrome, in case a narrow desktop window is used.
+  {
+    const p = await b.newPage();
+    p._errs = [];
+    await p.setViewport({ width: 1280, height: 800 });
+    await p.setRequestInterception(true);
+    p.on('request', req => {
+      const u = req.url();
+      if (u.includes('/api/community-scenes') && req.method() === 'POST') return req.respond({ status: 503, body: 'blocked' });
+      if (u.endsWith('/api/chat')) return req.respond({ status: 200, contentType: 'application/json', body: '{"content":[{"type":"text","text":"ok"}]}' });
+      req.continue();
+    });
+    await p.goto(BASE + '/', { waitUntil: 'networkidle2' }); await sleep(2500);
+    await p.evaluate(() => {
+      document.body.classList.add('gs-xr-presenting');
+      document.getElementById('desktop-chat').classList.add('html-in-canvas-source');
+      document.querySelector('.dchat-tab[data-tab="env"]')?.click();
+    });
+    await sleep(200);
+    let row = await headerRow(p);
+    ok(`[header VR 600] Environment: visible header buttons share one row`, row.sameTop && row.n >= 1, JSON.stringify(row));
+    ok(`[header VR 600] Environment: tab title stays on that row and does not overflow the header`, row.titleOnRow && !row.titleOverflow && !row.titleOverButtons, JSON.stringify({ label: row.label, title: row.title, header: row.header, expand: row.expand }));
+    await p.evaluate(() => {
+      const el = document.getElementById('desktop-chat');
+      el.classList.remove('html-in-canvas-source');
+      el.style.width = '320px';
+      el.style.minWidth = '0px';
+      el.style.maxWidth = '320px';
+      el.style.left = '24px';
+      el.style.top = '24px';
+      el.style.right = 'auto';
+    });
+    await sleep(200);
+    row = await headerRow(p);
+    ok(`[header VR 320] Environment: visible header buttons share one row`, row.sameTop && row.n >= 1, JSON.stringify(row));
+    ok(`[header VR 320] Environment: tab title stays on that row and does not overflow the header`, row.titleOnRow && !row.titleOverflow && !row.titleOverButtons, JSON.stringify({ label: row.label, title: row.title, header: row.header, expand: row.expand }));
+    await p.close();
+  }
+}
+
 // ---- Desktop: unchanged, no phone classes
 if (!ONLY) for (const vp of [{ width: 1280, height: 800 }, { width: 700, height: 800 }]) {
   const T = `[desktop ${vp.width}x${vp.height}]`;

@@ -195,6 +195,17 @@
 		@container gs-chat-header (max-width: 262px) {
 			#gs-dock { order: 3; flex: 1 0 100%; margin: 0 !important; justify-content: flex-start; flex-wrap: wrap; }
 		}
+		/* In a session the Exit VR button is large; below ~420px it would
+		   push expand / minimize onto a second row. Wrap the dock instead. */
+		@container gs-chat-header (max-width: 420px) {
+			body.gs-xr-presenting #gs-dock {
+				order: 3;
+				flex: 1 0 100%;
+				margin: 0 !important;
+				justify-content: flex-start;
+				flex-wrap: wrap;
+			}
+		}
 		/* Exit VR (VR menu only): large, red, white bold label. */
 		#gs-dock #gs-exit-vr-btn {
 			height: 40px !important;
@@ -540,13 +551,20 @@
 		#gs-menu-nav {
 			display: flex;
 			align-items: center;
+			flex-wrap: nowrap;
 			gap: 8px;
-			/* Don't grow/shrink against the title: the current tab name must
-			   stay readable. The decorative title yields space first. */
-			flex: 0 0 auto;
+			/* Content-sized so leftover header stays a drag handle
+			   (#gs-menu-nav is not a drag target). max-width reserves
+			   the expand / minimize buttons so a long tab name
+			   ellipsizes instead of wrapping them to a second row. */
+			flex: 0 1 auto;
 			min-width: 0;
+			max-width: calc(100% - 108px);
 			margin-right: 8px;
 		}
+		/* Phones also reserve a bare stretch (margin on the buttons)
+		   to drag the window by, because the decorative title is hidden. */
+		html.gs-phone #gs-menu-nav { max-width: calc(100% - 120px); }
 		#gs-menu-hamburger {
 			flex: 0 0 auto;
 			width: 36px;
@@ -583,7 +601,10 @@
 		#gs-menu-hamburger[aria-expanded="true"] #gs-menu-hamburger-bars::before { top: 0; transform: rotate(45deg); }
 		#gs-menu-hamburger[aria-expanded="true"] #gs-menu-hamburger-bars::after { top: 0; transform: rotate(-45deg); }
 		#gs-menu-current-tab {
-			flex: 0 0 auto;
+			flex: 1 1 auto;
+			min-width: 0;
+			overflow: hidden;
+			text-overflow: ellipsis;
 			white-space: nowrap;
 			font-size: 14px;
 			font-weight: 700;
@@ -2613,7 +2634,7 @@
 			padding: 6px 8px 6px 96px; min-height: 56px; box-sizing: border-box;
 		}
 		html.gs-phone #desktop-chat-title { display: none; }
-		html.gs-phone #desktop-chat-header-buttons { gap: 8px; }
+		html.gs-phone #desktop-chat-header-buttons { gap: 8px; margin-left: 24px; }
 		html.gs-phone #desktop-chat-header-buttons button { width: 44px; height: 44px; font-size: 16px; border-radius: 10px; }
 		html.gs-phone #ui-toggle {
 			top: max(18px, calc(env(safe-area-inset-top, 0px) + 6px));
@@ -2621,9 +2642,23 @@
 			padding: 0 14px;
 		}
 		html.gs-phone #gs-menu-hamburger { width: 44px; height: 44px; }
+		/* display:block + line-height, not flex: text-overflow:ellipsis
+		   does not apply to a flex container's anonymous text child. */
 		html.gs-phone #gs-menu-current-tab {
-			display: flex; align-items: center;
+			display: block;
+			min-width: 0;
 			min-height: 44px;
+			line-height: 44px;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		/* Very narrow phone / VR-menu widths: keep the hamburger, tab
+		   name, expand and minimize on one row by tightening gaps. */
+		@container gs-chat-header (max-width: 380px) {
+			#gs-menu-nav { gap: 4px; margin-right: 4px; }
+			#desktop-chat-header-buttons { gap: 4px; }
+			html.gs-phone #desktop-chat-header-buttons { gap: 4px; margin-left: 24px; }
 		}
 		html.gs-phone .dchat-tab { min-height: 44px; font-size: 15px; }
 		html.gs-phone .dchat-subtab { min-height: 44px; }
