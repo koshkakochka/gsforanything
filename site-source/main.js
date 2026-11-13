@@ -133,8 +133,11 @@ function applyMenuLayerPriority() {
 }
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-renderer.setPixelRatio(window.devicePixelRatio);
-renderer.setSize(window.innerWidth, window.innerHeight);
+// Drawing-buffer size is kept in sync by applyRendererSize(); pass false so
+// the CSS (position:fixed; inset:0; 100%/100dvh) keeps the canvas covering
+// the visible page instead of being locked to stale inline pixel sizes.
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 3));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.xr.enabled = true;
 appElement.appendChild(renderer.domElement);
 renderer.setClearColor(0x000000, 0.0);
@@ -8694,39 +8697,105 @@ function setImmersiveUiMode(immersive) {
 // ============================================================================
 // Window Resize
 // ============================================================================
+// The canvas must always fill the visible page: pinch-zoom, browser zoom,
+// orientation, window resize, iOS Safari toolbar show/hide, and
+// devicePixelRatio changes. Size comes from the live layout (canvas client
+// box, visualViewport, innerWidth/innerHeight) rather than cached values.
+// Skip while WebXR is presenting — three.js owns the buffer then.
+const MAX_PIXEL_RATIO = 3;
 var _rendererSize = { w: window.innerWidth, h: window.innerHeight };
-var _rendererResizeTimer = 0;
+var _rendererResizeRaf = 0;
+
+function rendererPixelRatio() {
+	return Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
+}
+
+function visibleViewportSize() {
+	const vv = window.visualViewport;
+	const iw = window.innerWidth || 0;
+	const ih = window.innerHeight || 0;
+	const vw = vv && vv.width > 0 ? vv.width : 0;
+	const vh = vv && vv.height > 0 ? vv.height : 0;
+	// Pinch-zoom out can make the visual viewport larger than the layout one.
+	return {
+		w: Math.max(1, Math.round(Math.max(iw, vw))),
+		h: Math.max(1, Math.round(Math.max(ih, vh)))
+	};
+}
+
 function applyRendererSize() {
-	_rendererResizeTimer = 0;
-	const w = window.innerWidth, h = window.innerHeight;
+	_rendererResizeRaf = 0;
+	if (renderer.xr.isPresenting) return;
+	const canvas = renderer.domElement;
+	const vis = visibleViewportSize();
+	// If CSS has not filled the visible page (older browsers, leftover inline
+	// sizes), force the CSS box to the visible viewport.
+	if (canvas.clientWidth + 1 < vis.w || canvas.clientHeight + 1 < vis.h) {
+		canvas.style.width = vis.w + 'px';
+		canvas.style.height = vis.h + 'px';
+	}
+	const w = Math.max(vis.w, Math.round(canvas.clientWidth || vis.w));
+	const h = Math.max(vis.h, Math.round(canvas.clientHeight || vis.h));
 	// While the phone keyboard is up (Android shrinks the window), keep the
 	// canvas at its full size: it sits behind the panel, and resizing it on
 	// every keyboard animation frame just thrashes WebGL.
 	if (isKeyboardLayoutActive() && w === _rendererSize.w) return;
-	if (w === _rendererSize.w && h === _rendererSize.h && renderer.domElement.width) {
-		const px = renderer.getPixelRatio();
-		if (Math.round(w * px) === renderer.domElement.width && Math.round(h * px) === renderer.domElement.height) return;
+	const px = rendererPixelRatio();
+	if (w === _rendererSize.w && h === _rendererSize.h && canvas.width) {
+		if (Math.round(w * px) === canvas.width && Math.round(h * px) === canvas.height) return;
 	}
 	_rendererSize = { w, h };
 	camera.aspect = w / h;
 	camera.updateProjectionMatrix();
-	renderer.setSize(w, h);
+	if (renderer.getPixelRatio() !== px) renderer.setPixelRatio(px);
+	renderer.setSize(w, h, false);
 }
+
 function scheduleRendererResize() {
-	clearTimeout(_rendererResizeTimer);
-	_rendererResizeTimer = setTimeout(applyRendererSize, 150);
+	if (_rendererResizeRaf) return;
+	_rendererResizeRaf = requestAnimationFrame(applyRendererSize);
 }
+
 function onWindowResize() {
-	// Phones: debounce (keyboard and URL-bar animations fire many resizes).
-	// Desktop, tablets and VR / Cardboard resize immediately as before.
-	if (isPhoneLayout() && !renderer.xr.isPresenting && !document.body.classList.contains('gs-cardboard-active')) {
-		scheduleRendererResize();
-		return;
-	}
-	applyRendererSize();
+	scheduleRendererResize();
 }
 
 window.addEventListener('resize', onWindowResize);
+window.addEventListener('orientationchange', () => {
+	scheduleRendererResize();
+	// iOS often fires this before the new layout size is available.
+	setTimeout(scheduleRendererResize, 200);
+	setTimeout(scheduleRendererResize, 500);
+});
+if (window.visualViewport) {
+	window.visualViewport.addEventListener('resize', scheduleRendererResize);
+	window.visualViewport.addEventListener('scroll', scheduleRendererResize);
+}
+if (typeof ResizeObserver === 'function') {
+	const ro = new ResizeObserver(() => scheduleRendererResize());
+	ro.observe(document.documentElement);
+	if (appElement) ro.observe(appElement);
+}
+(function watchDevicePixelRatio() {
+	let mql;
+	const onChange = () => {
+		scheduleRendererResize();
+		attach();
+	};
+	const attach = () => {
+		if (mql) {
+			if (mql.removeEventListener) mql.removeEventListener('change', onChange);
+			else if (mql.removeListener) mql.removeListener(onChange);
+		}
+		try { mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`); }
+		catch { mql = null; return; }
+		if (!mql) return;
+		if (mql.addEventListener) mql.addEventListener('change', onChange);
+		else if (mql.addListener) mql.addListener(onChange);
+	};
+	attach();
+})();
+applyRendererSize();
 
 renderer.xr.addEventListener('sessionstart', () => {
 	// 'local-floor' reference space: origin at the real floor, eye level
@@ -8759,6 +8828,7 @@ renderer.xr.addEventListener('sessionend', () => {
 	setImmersiveUiMode(false);
 	resetCameraView(); // back to the default desktop view (not the headset pose)
 	photoCapture?.restartForMode();
+	scheduleRendererResize();
 });
 
 // ============================================================================
@@ -9497,7 +9567,7 @@ renderer.setAnimationLoop((time) => {
 	if (mobileXRMode === 'cardboard') {
 		// Manual side-by-side stereo render (no OpenXR session to do this for us).
 		stereoCam.update(camera);
-		const w = window.innerWidth, h = window.innerHeight;
+		const w = _rendererSize.w, h = _rendererSize.h;
 		renderer.setScissorTest(true);
 		renderer.setScissor(0, 0, w / 2, h);
 		renderer.setViewport(0, 0, w / 2, h);
