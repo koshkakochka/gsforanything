@@ -13,7 +13,7 @@ Desktop (1280×800):
   arrow defaults), read-only mouse/touch list, Reset disabled at defaults.
 - Capture (press I, press ArrowUp into the alternate slot), typing names
   ("Space", "k" → K, partial names marked invalid), Backspace clears, Esc
-  restores; saved to `gs.controlKeys.v1`; the remapped key pans and the old
+  restores; saved to `gs.controlKeys.v2`; the remapped key pans and the old
   one doesn't.
 - Duplicate warning and highlighted fields; Reset to defaults.
 - Fly (13 actions): remap survives reload, new key moves, old key doesn't,
@@ -30,3 +30,11 @@ Desktop (1280×800):
 Phone (390×844): no horizontal overflow, ≥44 px key fields / sub-tabs /
 height buttons, one-row sub-tabs and header, duplicate warning, Custom
 Controls populated and fitting.
+
+First person D regression (bug report "the D key isn't working"): fresh
+storage D/A/W/S and the arrows move the right way (measured in the camera's
+frame); a key field leaves focus after capturing so a later W can't rebind
+it; help text shows remapped keys; clearing every key of Move right restores
+D / ArrowRight; a stale v1 layout (Move right = W) is dropped; a partial v2
+layout (blank Move right, `'w'`, junk) falls back to defaults. Map: a
+remapped-away arrow doesn't move the camera at all.

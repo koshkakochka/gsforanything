@@ -15,7 +15,11 @@
 // that differ from the defaults). Key layouts are a keyboard / user
 // preference like the camera mode itself, so they are not saved with scenes.
 
-export const CONTROL_KEYS_STORAGE_KEY = 'gs.controlKeys.v1';
+export const CONTROL_KEYS_STORAGE_KEY = 'gs.controlKeys.v2';
+// Layouts saved by the first PR #48 dev builds (key fields could rebind a key
+// silently while still focused). Dropped once so every action starts from
+// its defaults again; only ever existed on dev.
+const LEGACY_STORAGE_KEYS = ['gs.controlKeys.v1'];
 
 const PAN_ROTATE_NOTE = 'Shift / Ctrl / ⌘ + a pan key rotates instead';
 
@@ -162,6 +166,7 @@ let overrides = readStored();
 const listeners = new Set();
 
 function readStored() {
+	try { for (const k of LEGACY_STORAGE_KEYS) localStorage.removeItem(k); } catch { /* storage blocked */ }
 	try {
 		const raw = JSON.parse(localStorage.getItem(CONTROL_KEYS_STORAGE_KEY) || 'null');
 		return sanitizeOverrides(raw);
@@ -175,7 +180,18 @@ function sanitizeOverrides(raw) {
 		if (!s || typeof s !== 'object') continue;
 		for (const a of def.actions) {
 			if (!Array.isArray(s[a.id])) continue;
-			const keys = s[a.id].slice(0, KEYS_PER_ACTION).map((k) => (k === '' || k == null ? '' : normalizeCode(k) || ''));
+			// Accept codes ('KeyD') and names ('d', 'D', 'ArrowRight'); drop junk
+			// and a key repeated within the action.
+			const keys = [];
+			for (const k of s[a.id].slice(0, KEYS_PER_ACTION)) {
+				const code = (k === '' || k == null) ? '' : (normalizeCode(k) || parseKeyName(String(k)) || '');
+				keys.push(code && keys.includes(code) ? '' : code);
+			}
+			// An action left with no key at all (blank or missing entries) falls
+			// back to its default keys instead of going dead.
+			if (!keys.some(Boolean)) continue;
+			const defaults = defaultKeys(style, a.id);
+			if (padKeys(keys).every((k, i) => k === defaults[i])) continue;
 			(out[style] ||= {})[a.id] = keys;
 		}
 	}
@@ -216,9 +232,13 @@ export function setKey(style, actionId, slot, code) {
 	if (!a || slot < 0 || slot >= KEYS_PER_ACTION) return false;
 	const norm = code ? normalizeCode(code) : '';
 	if (code && !norm) return false;
-	const keys = getKeys(style, actionId);
+	let keys = getKeys(style, actionId);
 	keys[slot] = norm || '';
+	if (norm && keys[1 - slot] === norm) keys[1 - slot] = ''; // same key twice in one action
 	const defaults = defaultKeys(style, actionId);
+	// Clearing the last key of an action puts its defaults back (an action
+	// with no key would just stop working).
+	if (!keys.some(Boolean)) keys = defaults.slice();
 	if (keys.every((k, i) => k === defaults[i])) {
 		if (overrides[style]) { delete overrides[style][actionId]; if (!Object.keys(overrides[style]).length) delete overrides[style]; }
 	} else {
@@ -299,6 +319,13 @@ export function createKeyInput({ value = '', ariaLabel = 'Key', placeholder = 'n
 	let committed = value || '';
 	let fresh = false; // focused and not yet edited
 	let atFocus = committed; // key when the field got focus (Esc restores it)
+	// A key field never stays focused after it has its key: otherwise the next
+	// key pressed to play (W to walk) would silently rebind it. A captured key
+	// leaves the field at once; typed names leave it after a short pause.
+	let idle = 0;
+	const TYPE_IDLE_MS = 1200;
+	const leave = () => { clearTimeout(idle); idle = 0; if (document.activeElement === input) input.blur(); };
+	const leaveSoon = () => { clearTimeout(idle); idle = setTimeout(leave, TYPE_IDLE_MS); };
 	input.value = keyLabel(committed);
 	input.dataset.code = committed;
 
@@ -318,6 +345,7 @@ export function createKeyInput({ value = '', ariaLabel = 'Key', placeholder = 'n
 		keepSelection(input);
 	});
 	input.addEventListener('blur', () => {
+		clearTimeout(idle); idle = 0;
 		input.placeholder = placeholder;
 		input.classList.remove('capturing');
 		const parsed = input.value.trim() === '' ? '' : parseKeyName(input.value);
@@ -328,23 +356,23 @@ export function createKeyInput({ value = '', ariaLabel = 'Key', placeholder = 'n
 		if (e.key === 'Tab') return;
 		if (e.key === 'Escape') { e.preventDefault(); commit(atFocus); input.blur(); return; }
 		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); input.blur(); return; }
-		if ((e.key === 'Backspace' || e.key === 'Delete') && fresh) { e.preventDefault(); fresh = false; commit(''); return; }
+		if ((e.key === 'Backspace' || e.key === 'Delete') && fresh) { e.preventDefault(); fresh = false; commit(''); leave(); return; }
 		if (e.ctrlKey || e.metaKey) {
 			// Ctrl / ⌘ alone is a key; Ctrl+V etc. stay editing shortcuts.
-			if (e.key === 'Control' || e.key === 'Meta') { e.preventDefault(); fresh = false; commit(normalizeCode(e.code)); input.select(); }
+			if (e.key === 'Control' || e.key === 'Meta') { e.preventDefault(); fresh = false; commit(normalizeCode(e.code)); leave(); }
 			return;
 		}
 		// Printable single characters (letters, digits, punctuation) edit the
 		// text so names can be typed; everything else is captured as a key.
 		const printable = e.key.length === 1 && e.key !== ' ';
-		if (printable) { fresh = false; return; }
-		if (e.key === 'Backspace' || e.key === 'Delete' || (e.key.startsWith('Arrow') && !fresh && input.value && !parseKeyName(input.value))) { fresh = false; return; }
+		if (printable) { fresh = false; leaveSoon(); return; }
+		if (e.key === 'Backspace' || e.key === 'Delete' || (e.key.startsWith('Arrow') && !fresh && input.value && !parseKeyName(input.value))) { fresh = false; leaveSoon(); return; }
 		const code = normalizeCode(e.code);
 		if (!code) return;
 		e.preventDefault();
 		fresh = true;
 		commit(code);
-		try { input.select(); } catch { /* ignore */ }
+		leave();
 	});
 	input.addEventListener('keyup', (e) => e.stopPropagation());
 	input.addEventListener('input', () => {
@@ -359,6 +387,6 @@ export function createKeyInput({ value = '', ariaLabel = 'Key', placeholder = 'n
 	return {
 		input,
 		get code() { return committed; },
-		set(code) { if (document.activeElement !== input) show(code); else { committed = code || ''; input.dataset.code = committed; } }
+		set(code) { show(code); }
 	};
 }

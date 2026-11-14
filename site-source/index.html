@@ -1177,6 +1177,8 @@
 		}
 		/* Key remapping rows (controlBindings.js) and Custom Controls params */
 		#dchat-key-remap:empty { display: none; }
+		.dchat-controls-help kbd.remapped { background: rgba(165, 180, 252, 0.28); color: #fff; }
+		.dchat-controls-help kbd.unbound { opacity: 0.45; }
 		.gs-remap-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 		.gs-remap-head .dchat-section-label { margin: 0; }
 		.gs-remap-reset, .gs-cc-reset { padding: 6px 10px; font-size: 12px; flex-shrink: 0; width: auto; }
@@ -3422,25 +3424,25 @@
 				<div class="dchat-controls-help" data-camera-help="orbit" hidden>
 					<b>OrbitControls</b>, around the scene origin. Left-drag rotate &middot; right-drag or
 					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + left-drag pan &middot; wheel or middle-drag zoom &middot;
-					<kbd>&larr;</kbd><kbd>&uarr;</kbd><kbd>&rarr;</kbd><kbd>&darr;</kbd> pan &middot;
-					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + arrows rotate.
+					<kbd data-key="orbit:panLeft:0">&larr;</kbd><kbd data-key="orbit:panUp:0">&uarr;</kbd><kbd data-key="orbit:panRight:0">&rarr;</kbd><kbd data-key="orbit:panDown:0">&darr;</kbd> pan &middot;
+					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + pan keys rotate.
 					Touch: one finger rotates, two fingers zoom and pan.
 				</div>
 				<div class="dchat-controls-help" data-camera-help="map">
 					<b>MapControls</b>. Left-drag pan &middot; right-drag or
 					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + left-drag rotate &middot; wheel or middle-drag zoom &middot;
-					<kbd>&larr;</kbd><kbd>&uarr;</kbd><kbd>&rarr;</kbd><kbd>&darr;</kbd> pan &middot;
-					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + arrows rotate.
+					<kbd data-key="map:panLeft:0">&larr;</kbd><kbd data-key="map:panUp:0">&uarr;</kbd><kbd data-key="map:panRight:0">&rarr;</kbd><kbd data-key="map:panDown:0">&darr;</kbd> pan &middot;
+					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + pan keys rotate.
 					Touch: one finger pans, two fingers zoom and rotate.
 				</div>
 				<div class="dchat-controls-help" data-camera-help="fly" hidden>
-					<b>FlyControls</b>. <kbd>W</kbd>/<kbd>S</kbd> forward/back &middot; <kbd>A</kbd>/<kbd>D</kbd> left/right &middot;
-					<kbd>R</kbd>/<kbd>F</kbd> up/down &middot; <kbd>Q</kbd>/<kbd>E</kbd> roll &middot;
-					<kbd>&uarr;</kbd>/<kbd>&darr;</kbd> pitch &middot; <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> yaw &middot; drag the scene to look.
+					<b>FlyControls</b>. <kbd data-key="fly:forward:0">W</kbd>/<kbd data-key="fly:back:0">S</kbd> forward/back &middot; <kbd data-key="fly:left:0">A</kbd>/<kbd data-key="fly:right:0">D</kbd> left/right &middot;
+					<kbd data-key="fly:up:0">R</kbd>/<kbd data-key="fly:down:0">F</kbd> up/down &middot; <kbd data-key="fly:rollLeft:0">Q</kbd>/<kbd data-key="fly:rollRight:0">E</kbd> roll &middot;
+					<kbd data-key="fly:pitchUp:0">&uarr;</kbd>/<kbd data-key="fly:pitchDown:0">&darr;</kbd> pitch &middot; <kbd data-key="fly:yawLeft:0">&larr;</kbd>/<kbd data-key="fly:yawRight:0">&rarr;</kbd> yaw &middot; <kbd data-key="fly:slow:0">Shift</kbd> slow &middot; drag the scene to look.
 				</div>
 				<div class="dchat-controls-help" data-camera-help="firstperson" hidden>
 					<b>PointerLockControls</b>. Click the scene to look around with the mouse, <kbd>Esc</kbd> to release &middot;
-					<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or <kbd>&uarr;</kbd><kbd>&larr;</kbd><kbd>&darr;</kbd><kbd>&rarr;</kbd> move.
+					<kbd data-key="firstperson:forward:0">W</kbd><kbd data-key="firstperson:left:0">A</kbd><kbd data-key="firstperson:backward:0">S</kbd><kbd data-key="firstperson:right:0">D</kbd> or <kbd data-key="firstperson:forward:1">&uarr;</kbd><kbd data-key="firstperson:left:1">&larr;</kbd><kbd data-key="firstperson:backward:1">&darr;</kbd><kbd data-key="firstperson:right:1">&rarr;</kbd> move.
 				</div>
 				<div class="dchat-controls-help" data-camera-help="fly firstperson" hidden>
 					On-screen joysticks: left stick moves (up/down forward and back, sideways strafes), right stick looks around.
@@ -3471,7 +3473,7 @@
 						</div>
 						<button type="button" class="dchat-btn secondary gs-height-reset" id="dchat-player-height-reset">Reset</button>
 					</div>
-					<div id="dchat-player-height-help" class="gs-height-help">Eye height above the floor while walking, 0.3&ndash;5 m (default 1.6). Type a value or use the arrows (hold to repeat). Fly moves freely up and down instead (<kbd>R</kbd>/<kbd>F</kbd>).</div>
+					<div id="dchat-player-height-help" class="gs-height-help">Eye height above the floor while walking, 0.3&ndash;5 m (default 1.6). Type a value or use the arrows (hold to repeat). Fly moves freely up and down instead (<kbd data-key="fly:up:0">R</kbd>/<kbd data-key="fly:down:0">F</kbd>).</div>
 				</div>
 				<div>
 					<div class="dchat-section-label" style="margin:6px 0 8px">Game controller</div>

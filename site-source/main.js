@@ -6641,7 +6641,23 @@ function refreshKeyRemap() {
 	const reset = document.getElementById('dchat-key-remap-reset');
 	if (reset) reset.disabled = !gsKeyBindings.isStyleCustomized(style);
 }
+// The mode help text (<kbd data-key="style:action:slot">) shows the keys as
+// they are bound now, highlighted when remapped.
+const HELP_ARROWS = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' };
+function refreshHelpKeys() {
+	document.querySelectorAll('kbd[data-key]').forEach((kbd) => {
+		const [style, action, slot] = kbd.dataset.key.split(':');
+		const code = gsKeyBindings.getKeys(style, action)[+slot] || '';
+		const def = gsKeyBindings.defaultKeys(style, action)[+slot] || '';
+		kbd.textContent = code ? (HELP_ARROWS[code] || gsKeyBindings.keyLabel(code)) : '—';
+		kbd.classList.toggle('remapped', code !== def);
+		kbd.classList.toggle('unbound', !code);
+		kbd.title = code ? '' : 'No key (Controls → Camera keys)';
+	});
+}
+refreshHelpKeys();
 gsKeyBindings.onBindingsChange((style) => {
+	refreshHelpKeys();
 	if (style === cameraControls.mode) cameraControls.releaseKeys();
 	if (style === remapRenderedFor) refreshKeyRemap();
 	customControls?.refreshAllWarnings();

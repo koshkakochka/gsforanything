@@ -126,9 +126,15 @@ Three moving parts:
   translated to the stock key of its action before it reaches the stock
   three.js control, so the defaults behave exactly as before. Duplicate keys
   in a style are highlighted with a warning; Reset to defaults per style.
-  Mouse / touch gestures are listed read-only. Saved per style in
-  localStorage `gs.controlKeys.v1` (not in scenes: a keyboard preference,
-  like the camera mode). Scenes read them with `gsControls.keyBindings(mode)`.
+  Mouse / touch gestures are listed read-only. A key field gives focus back
+  as soon as it has its key (a pressed key at once, a typed name after a
+  short pause), so the next key pressed to play can't rebind it. Clearing
+  every key of an action restores its defaults. The mode help text shows the
+  keys as bound now. Saved per style in localStorage `gs.controlKeys.v2`
+  (validated on load: names like `d` become `KeyD`, blank actions fall back
+  to their defaults; the v1 layouts of the first dev builds are dropped). Not
+  in scenes: a keyboard preference, like the camera mode. Scenes read them
+  with `gsControls.keyBindings(mode)`.
 - **Player height** (Controls → Camera → First person): eye height for
   walking, 0.3–5 m (default 1.6), text field (accepts `1.75`, `175cm`,
   `5.8ft`) with ▲ / ▼ (0.1 m, hold to repeat). Applies live, kept by Reset
