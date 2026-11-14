@@ -175,8 +175,8 @@ document.addEventListener('touchmove', preventPagePanFromTouch, { passive: false
 document.addEventListener('gesturestart', preventPagePanFromTouch, { passive: false });
 document.addEventListener('gesturechange', preventPagePanFromTouch, { passive: false });
 
-// Desktop (non-XR) camera controls are the stock three.js addons (Orbit,
-// Map, Trackball, Fly, First person); see cameraControls.js and the Controls
+// Desktop (non-XR) camera controls are the stock three.js addons (Map
+// (default), Orbit, Fly, First person); see cameraControls.js and the Controls
 // tab section below. They are disabled while WebXR or Cardboard drives the camera.
 
 // Walk-in-AR only: finger-driven transform gizmos for arPlacementRoot (not WebXR).
@@ -4388,7 +4388,7 @@ async function bootSharedScene() {
 }
 
 // /embed/:id (embedExport.js): the app in display-only mode for an <iframe>
-// on another site: orbit camera, optional Enter VR (?vr=0 hides it), a
+// on another site: Map camera (the desktop/phone default), optional Enter VR (?vr=0 hides it), a
 // "Made with GS For Anything" link, no editor UI and no Community list fetch.
 async function bootEmbedScene(route) {
 	embedRoute = route.embed;
@@ -4406,7 +4406,7 @@ async function bootEmbedScene(route) {
 			.then((supported) => { if (!supported) document.body.classList.remove('gs-embed-vr'); });
 	}
 	const chrome = mountEmbedChrome({ sceneId: route.sceneId });
-	setCameraControlMode('orbit', { persist: false });
+	setCameraControlMode('map', { persist: false });
 	try {
 		const sc = await loadCommunitySceneById(route.sceneId, { activate: true });
 		document.title = sc.name ? `${sc.name} — GS For Anything` : 'GS For Anything';
@@ -6187,11 +6187,11 @@ function updateLocomotion(dt, session) {
 // Controls tab: desktop/phone camera mode. The stock three.js controls from
 // cameraControls.js, never used during an XR session or Cardboard (they drive
 // the camera themselves) and disabled while typing into a text field.
-//   orbit (default) OrbitControls around the scene origin · map MapControls ·
-//   trackball TrackballControls · fly FlyControls · firstperson
-//   PointerLockControls with the pointerlock example's WASD · off nothing.
+//   map (default) MapControls around the scene origin · orbit OrbitControls ·
+//   fly FlyControls · firstperson PointerLockControls with the pointerlock
+//   example's WASD · off nothing.
 // Saved values from 0.976 and earlier map orbit → orbit, free → firstperson,
-// off → off.
+// off → off. A later-removed Trackball value falls back to Map.
 // ============================================================================
 const CAMERA_CONTROL_STORAGE_KEY = 'gs.cameraControlMode';
 
@@ -6199,7 +6199,7 @@ const CAMERA_CONTROL_STORAGE_KEY = 'gs.cameraControlMode';
 // VR's far plane is RENDER_FAR metres from the headset, which starts at the
 // player rig's eye (RENDER_EYE_HEIGHT above the rig). The windowed camera hangs
 // in the same rig but usually not at the eye: it starts 4 m behind it, and
-// Orbit / Map / Trackball zoom it further out while Fly / First person move it. With the same far value the
+// Orbit / Map zoom it further out while Fly / First person move it. With the same far value the
 // desktop used to clip what VR still shows, so outside XR the far plane is
 // pushed out by the camera's distance from the VR eye. With the camera at the
 // eye that is exactly RENDER_FAR. VR and Cardboard use the far value as is.
@@ -6317,14 +6317,14 @@ function resetPlayerRig() {
 }
 
 // Reset Camera View / gamepad View / leaving VR or Cardboard: the default
-// desktop view (camera at (0, 1.6, 4); Orbit, Map and Trackball look at the
+// desktop view (camera at (0, 1.6, 4); Orbit and Map look at the
 // origin with their target there, Fly and First person face -Z).
 function resetCameraView() {
 	resetPlayerRig();
 	cameraControls.reset();
 }
 
-// Orbit / Map / Trackball target, in world space (null in the other modes).
+// Orbit / Map target, in world space (null in the other modes).
 function orbitPivotWorld() {
 	const t = cameraControls.target;
 	if (!t) return null;
@@ -6333,7 +6333,7 @@ function orbitPivotWorld() {
 	return out;
 }
 
-// Clear scene and loading a scene put the Orbit / Map / Trackball target
+// Clear scene and loading a scene put the Orbit / Map target
 // back on the scene origin if it was panned away.
 function recenterOrbitPivot() {
 	if (cameraControlsSuspended()) return;
@@ -6344,7 +6344,7 @@ function recenterOrbitPivot() {
 // Compatible handles for scene code: gsOrbit (0.976) and window.controls (the
 // name three.js examples use) both reach the active stock control.
 window.gsOrbit = {
-	/** World position the camera orbits (Orbit / Map / Trackball), else the origin. */
+	/** World position the camera orbits (Orbit / Map), else the origin. */
 	pivot: () => (orbitPivotWorld() || ORBIT_TARGET.clone()).toArray(),
 	recenter: () => recenterOrbitPivot()
 };
@@ -6447,7 +6447,7 @@ originRotation = createOriginRotation({
 	getViewDirection: (out) => {
 		if (renderer.xr.isPresenting) return null;
 		const mode = window.gsControls && window.gsControls.mode;
-		if (mode !== 'orbit' && mode !== 'map' && mode !== 'trackball') return null;
+		if (mode !== 'orbit' && mode !== 'map') return null;
 		const o = gsOriginRoot.getWorldPosition(new THREE.Vector3());
 		return camera.getWorldPosition(out).sub(o);
 	},
@@ -7014,7 +7014,6 @@ function withGsSettingsNote(outgoing) {
 //              LT / RT zoom out / in.
 //   First person: left stick walks, right stick looks.
 //   Fly:       left stick moves, right stick yaws / pitches, LB / RB down / up.
-//   Trackball: sticks unused (no programmatic API).
 //   All:       Y switches Orbit <-> First person, View (Back) resets the view.
 //   Off:       the controller does not move the camera.
 // Browsers only reveal a pad after a button is pressed on it.
@@ -7165,7 +7164,7 @@ function pollGamepads() {
 // Orbit / Map: right stick orbits, left stick pans (Orbit: y dollies in/out),
 // LT/RT zoom. First person: left stick walks, right stick looks (through
 // PointerLockControls' own mouse-look). Fly: left stick moves, right stick
-// yaws/pitches, LB/RB down/up. Trackball: sticks unused. Y switches Orbit /
+// yaws/pitches, LB/RB down/up. Y switches Orbit /
 // First person, View resets the view.
 function updateGamepadCamera(dt) {
 	if (!gsGamepad.connected || dt <= 0) return null;

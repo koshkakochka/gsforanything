@@ -114,8 +114,8 @@ Three moving parts:
   are unaffected. Test: `test-harness/mobile-layout`.
 - **Desktop camera controls** (`site-source/cameraControls.js`): the stock
   three.js r180 addons from `vendor_modules/three/examples/jsm/controls/`:
-  Orbit (OrbitControls, default, target at the origin), Map (MapControls),
-  Trackball, Fly (FlyControls), First person (PointerLockControls + WASD as in
+  Map (MapControls, default, target at the origin), Orbit (OrbitControls),
+  Fly (FlyControls), First person (PointerLockControls + WASD as in
   the three.js pointerlock example) and Off, picked in the Controls tab. Only
   focused text fields block keys; VR uses head tracking. Scenes see
   `window.gsControls` / `window.controls` / `window.gsOrbit`.
@@ -124,7 +124,7 @@ Three moving parts:
   camera through the stock three.js control picked in the Controls tab
   (Orbit / Map: right stick orbits, left stick pans / dollies, LT/RT zoom;
   First person: left stick walks, right stick looks; Fly: left stick moves,
-  right stick yaw/pitch, LB/RB down/up; Trackball and Off: not used; Y
+  right stick yaw/pitch, LB/RB down/up; Off: not used; Y
   toggles Orbit / First person, View resets). Scenes read the pad with `gsGamepad.axis()`,
   `button()`, `justPressed()`, `onButton()`, and set
   `gsGamepad.captureCamera = true` to take the sticks over. WebXR headset
