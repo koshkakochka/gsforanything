@@ -1,5 +1,5 @@
 // Export permission of a Community scene ("Allow exports" / "Don't allow
-// exports" on upload) and the embed page's server-side bits.
+// exports" on upload), plus where the retired /embed/:id route redirects.
 //
 // Shared by the Vercel server (server.js), the Cloudflare Worker
 // (worker/index.js) and the browser (main.js), so all three agree on:
@@ -14,11 +14,11 @@
 //                        Never sent back to anyone.
 //
 // What "exports" means (see README / PR): GLB / glTF / FBX / OBJ / Blender,
-// Save to Device / Export (.vrscene, the scene's code), Merge, and Embed. A
+// Save to Device / Export (.vrscene, the scene's code) and Merge. A
 // share link (/s/:id, /e/:id) is not an export: it only points at the scene.
 
 export const OWNER_KEY_HEADER = 'x-gs-owner-key';
-export const EXPORTS_OFF_MESSAGE = 'The creator of this scene turned off exports, so it can\'t be downloaded, merged or embedded.';
+export const EXPORTS_OFF_MESSAGE = 'The creator of this scene turned off exports, so it can\'t be downloaded or merged.';
 
 /** Upload body -> stored flag. Only an explicit false turns exports off. */
 export function allowExportFromBody(v) {
@@ -63,19 +63,13 @@ export function publicSceneRecord(record, { isOwner = false } = {}) {
 	return { ...rest, allowExport: exportAllowed(record), isOwner: !!isOwner };
 }
 
-function escapeHtml(s) {
-	return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[c]));
-}
-
-/** Small standalone page for /embed/:id when the scene is missing or its
- *  creator turned exports (and so embedding) off. */
-export function embedUnavailableHtml({ status = 404, name = '', origin = '' } = {}) {
-	const title = status === 403 ? 'Embedding is turned off' : 'Scene not found';
-	const body = status === 403
-		? `The creator of ${name ? `“${escapeHtml(name)}”` : 'this scene'} turned off exports, so it can't be embedded on other sites.`
-		: 'This GS scene doesn\'t exist (any more).';
-	const home = `${escapeHtml(origin)}/`;
-	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} — GS For Anything</title>
-<style>html,body{margin:0;height:100%;background:#16161f;color:#fff;font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}main{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;box-sizing:border-box;text-align:center}h1{margin:0;font-size:18px}p{margin:0;color:rgba(255,255,255,.75);max-width:420px}a{color:#c7d2fe}</style></head>
-<body><main id="gs-embed-unavailable" data-status="${status}"><h1>${title}</h1><p>${body}</p><p><a href="${home}" target="_blank" rel="noopener">Made with GS For Anything</a></p></main></body></html>`;
+// Embedding was removed. Old <iframe src="/embed/:id"> snippets
+// and links get a 302 to the scene's view-only share link (/s/:id), so they
+// still show the scene instead of breaking. 302 (not 301) so browsers don't
+// cache it forever. Anything that isn't a valid scene id goes to the home page.
+const LEGACY_EMBED_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+export function legacyEmbedRedirectPath(rawId) {
+	let id = '';
+	try { id = decodeURIComponent(String(rawId ?? '')); } catch { id = ''; }
+	return LEGACY_EMBED_ID_RE.test(id) ? `/s/${encodeURIComponent(id)}` : '/';
 }

@@ -36,7 +36,7 @@ From the repo root:
 python3 scripts/seed-dev-scenes.py
 
 # Production: clean tree on origin/main, explicit confirm, then smoke all four
-# hosts (three Cloudflare URLs + the Vercel backup) and the platform embeds
+# hosts (three Cloudflare URLs + the Vercel backup) and a known scene per platform
 ./scripts/deploy-prod.sh --confirm
 ./scripts/deploy-prod.sh --dry-run
 ```
@@ -48,7 +48,7 @@ Smoke checks (shared `scripts/smoke-gs.py`) verify:
 - `/version.js` exports `GS_VERSION`
 - `/api/backends` returns JSON
 - every static import reached from `index.html` and `main.js` (including the import map, `three.module.js`, and local `./…` modules) returns HTTP 200
-- production also checks `/embed/mvziiev10e4f789b` on the Cloudflare hosts and `/embed/musxb3sm5b31e766` on Vercel
+- production also checks scene `mvziiev10e4f789b` on the Cloudflare hosts and `musxb3sm5b31e766` on Vercel (`--scene`): `/s/ID` returns the app, `/api/community-scenes/ID` returns the record, and the retired `/embed/ID` answers `302` → `/s/ID` (embedding was removed; old iframes and links fall back to the share page)
 
 ## GitHub Actions
 
