@@ -11,15 +11,16 @@
 // stock code before handing it to the stock control, so with the defaults
 // every control behaves exactly as before.
 //
-// Saved in this browser (localStorage `gs.controlKeys.v1`, only the actions
+// Saved in this browser (localStorage `gs.controlKeys.v3`, only the actions
 // that differ from the defaults). Key layouts are a keyboard / user
 // preference like the camera mode itself, so they are not saved with scenes.
 
-export const CONTROL_KEYS_STORAGE_KEY = 'gs.controlKeys.v2';
-// Layouts saved by the first PR #48 dev builds (key fields could rebind a key
-// silently while still focused). Dropped once so every action starts from
-// its defaults again; only ever existed on dev.
-const LEGACY_STORAGE_KEYS = ['gs.controlKeys.v1'];
+export const CONTROL_KEYS_STORAGE_KEY = 'gs.controlKeys.v3';
+// Layouts saved by the PR #48 dev builds (v1, v2): a key field that kept
+// focus turned the next key pressed to walk (W) into Move right's key, so D
+// went dead while → still worked. Dropped once so every action starts from its
+// defaults again; only ever existed on dev.
+const LEGACY_STORAGE_KEYS = ['gs.controlKeys.v1', 'gs.controlKeys.v2'];
 
 const PAN_ROTATE_NOTE = 'Shift / Ctrl / ⌘ + a pan key rotates instead';
 
@@ -194,6 +195,31 @@ function sanitizeOverrides(raw) {
 			if (padKeys(keys).every((k, i) => k === defaults[i])) continue;
 			(out[style] ||= {})[a.id] = keys;
 		}
+		// A key may only belong to one action: a stored layout where it is
+		// used twice (older builds allowed it) keeps it on the first action
+		// only; an action left with no key gets its defaults back.
+		if (out[style]) {
+			const seen = new Set();
+			for (const a of def.actions) {
+				const o = out[style][a.id];
+				let keys = o ? padKeys(o) : defaultKeys(style, a.id);
+				if (o) {
+					// A key taken by an earlier action goes back to this slot's
+					// default key when that one is free.
+					const defaults = defaultKeys(style, a.id);
+					keys = keys.map((k, i) => {
+						if (!k || !seen.has(k)) return k;
+						const d = defaults[i];
+						return d && !seen.has(d) && !keys.includes(d) ? d : '';
+					});
+					if (!keys.some(Boolean)) keys = defaults.map((k) => (k && seen.has(k) ? '' : k));
+					if (keys.every((k, i) => k === defaults[i])) delete out[style][a.id];
+					else out[style][a.id] = keys;
+				}
+				for (const k of keys) if (k) seen.add(k);
+			}
+			if (!Object.keys(out[style]).length) delete out[style];
+		}
 	}
 	return out;
 }
@@ -226,12 +252,26 @@ export function getStyleBindings(style) {
 	if (!def) return {};
 	return Object.fromEntries(def.actions.map((a) => [a.id, getKeys(style, a.id)]));
 }
+/** The other action of a style that already uses a key: { id, label } or null. */
+export function keyOwner(style, actionId, code) {
+	const def = REMAP_STYLES[style];
+	const norm = code ? normalizeCode(code) : '';
+	if (!def || !norm) return null;
+	for (const a of def.actions) {
+		if (a.id !== actionId && getKeys(style, a.id).includes(norm)) return { id: a.id, label: a.label };
+	}
+	return null;
+}
+/** Bind a key. A key another action of the style already uses is refused
+ *  (returns false): it would silently take the key from one of them, which is
+ *  how a stray W in Move right's field left D dead. Change that one first. */
 export function setKey(style, actionId, slot, code) {
 	const def = REMAP_STYLES[style];
 	const a = def?.actions.find((x) => x.id === actionId);
 	if (!a || slot < 0 || slot >= KEYS_PER_ACTION) return false;
 	const norm = code ? normalizeCode(code) : '';
 	if (code && !norm) return false;
+	if (norm && keyOwner(style, actionId, norm)) return false;
 	let keys = getKeys(style, actionId);
 	keys[slot] = norm || '';
 	if (norm && keys[1 - slot] === norm) keys[1 - slot] = ''; // same key twice in one action
@@ -301,11 +341,15 @@ export function keepSelection(input) {
 	setTimeout(() => input.removeEventListener('mouseup', onUp), 600);
 }
 /**
- * A text input that records a key: focus it and press a key (arrows, Space,
- * Shift and the like are captured directly), or type the key's name ('W',
- * 'ArrowUp', 'Space'). Enter or leaving the field keeps it, Esc puts the old
- * key back, Backspace / Delete on an untouched field clears it.
- * onCommit(code|'') runs whenever a valid key (or empty) is entered.
+ * A text input that records a key: click it ("Press a key") and press the key.
+ * Every key, letters included, is taken from KeyboardEvent.code at once and the
+ * field lets go of focus, so a key pressed afterwards to play never lands in
+ * it. Esc / Enter / Tab leave it unchanged; Backspace / Delete clear it.
+ * Without a usable code (phone soft keyboards) the key's name can be typed
+ * ('W', 'ArrowUp', 'Space') and is kept when the field is left.
+ * onCommit(code|'') runs whenever a valid key (or empty) is entered; when it
+ * returns false the key was refused and the field shows the old key again.
+ * Pressing anywhere outside the field also lets go of it.
  */
 export function createKeyInput({ value = '', ariaLabel = 'Key', placeholder = 'none', onCommit = () => {} } = {}) {
 	const input = document.createElement('input');
@@ -317,72 +361,54 @@ export function createKeyInput({ value = '', ariaLabel = 'Key', placeholder = 'n
 	input.setAttribute('aria-label', ariaLabel);
 	input.placeholder = placeholder;
 	let committed = value || '';
-	let fresh = false; // focused and not yet edited
-	let atFocus = committed; // key when the field got focus (Esc restores it)
-	// A key field never stays focused after it has its key: otherwise the next
-	// key pressed to play (W to walk) would silently rebind it. A captured key
-	// leaves the field at once; typed names leave it after a short pause.
-	let idle = 0;
-	const TYPE_IDLE_MS = 1200;
-	const leave = () => { clearTimeout(idle); idle = 0; if (document.activeElement === input) input.blur(); };
-	const leaveSoon = () => { clearTimeout(idle); idle = setTimeout(leave, TYPE_IDLE_MS); };
 	input.value = keyLabel(committed);
 	input.dataset.code = committed;
 
 	function show(code) { committed = code || ''; input.value = keyLabel(committed); input.dataset.code = committed; input.classList.remove('invalid'); }
 	function commit(code) {
 		code = code || '';
-		const changed = code !== committed;
+		if (code === committed) { show(code); return true; }
+		const prev = committed;
 		show(code);
-		if (changed) onCommit(code);
+		if (onCommit(code) === false) { show(prev); return false; }
+		return true;
 	}
+	const leave = () => { if (document.activeElement === input) input.blur(); };
+	// A press anywhere else (panel, resize handle, scene) lets go of the
+	// field even where that press does not move focus by itself.
+	const onOutsideDown = (e) => { if (e.target !== input) leave(); };
 	input.addEventListener('focus', () => {
-		fresh = true;
-		atFocus = committed;
 		input.placeholder = 'Press a key';
 		input.classList.add('capturing');
 		try { input.select(); } catch { /* ignore */ }
 		keepSelection(input);
+		document.addEventListener('pointerdown', onOutsideDown, true);
 	});
 	input.addEventListener('blur', () => {
-		clearTimeout(idle); idle = 0;
+		document.removeEventListener('pointerdown', onOutsideDown, true);
 		input.placeholder = placeholder;
 		input.classList.remove('capturing');
-		const parsed = input.value.trim() === '' ? '' : parseKeyName(input.value);
-		if (parsed === null) show(committed); else commit(parsed);
+		// Typed names (phone keyboards) are kept on leaving.
+		const t = input.value.trim();
+		const parsed = t === '' ? '' : parseKeyName(t);
+		if (parsed === null || (t !== '' && t === keyLabel(committed))) show(committed); else commit(parsed);
 	});
 	input.addEventListener('keydown', (e) => {
 		e.stopPropagation(); // never reaches the camera controls / app shortcuts
+		if (e.isComposing) return;
 		if (e.key === 'Tab') return;
-		if (e.key === 'Escape') { e.preventDefault(); commit(atFocus); input.blur(); return; }
-		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); input.blur(); return; }
-		if ((e.key === 'Backspace' || e.key === 'Delete') && fresh) { e.preventDefault(); fresh = false; commit(''); leave(); return; }
-		if (e.ctrlKey || e.metaKey) {
-			// Ctrl / ⌘ alone is a key; Ctrl+V etc. stay editing shortcuts.
-			if (e.key === 'Control' || e.key === 'Meta') { e.preventDefault(); fresh = false; commit(normalizeCode(e.code)); leave(); }
-			return;
-		}
-		// Printable single characters (letters, digits, punctuation) edit the
-		// text so names can be typed; everything else is captured as a key.
-		const printable = e.key.length === 1 && e.key !== ' ';
-		if (printable) { fresh = false; leaveSoon(); return; }
-		if (e.key === 'Backspace' || e.key === 'Delete' || (e.key.startsWith('Arrow') && !fresh && input.value && !parseKeyName(input.value))) { fresh = false; leaveSoon(); return; }
+		if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); show(committed); leave(); return; }
+		if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); commit(''); leave(); return; }
 		const code = normalizeCode(e.code);
-		if (!code) return;
+		if (!code) return; // soft keyboard: the typed text is read on leaving
 		e.preventDefault();
-		fresh = true;
-		commit(code);
+		if (!commit(code)) input.classList.add('invalid');
 		leave();
 	});
 	input.addEventListener('keyup', (e) => e.stopPropagation());
 	input.addEventListener('input', () => {
-		fresh = false;
-		const t = input.value;
-		if (t.trim() === '') { input.classList.remove('invalid'); return; }
-		const parsed = parseKeyName(t);
-		input.classList.toggle('invalid', parsed === null);
-		if (parsed !== null && t.trim().length === 1) input.value = keyLabel(parsed); // 'w' → 'W'
-		if (parsed !== null && parsed !== committed) { committed = parsed; input.dataset.code = parsed; onCommit(parsed); }
+		const t = input.value.trim();
+		input.classList.toggle('invalid', t !== '' && parseKeyName(t) === null);
 	});
 	return {
 		input,

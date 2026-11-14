@@ -121,19 +121,21 @@ Three moving parts:
   `window.gsControls` / `window.controls` / `window.gsOrbit`.
 - **Key remapping** (`site-source/controlBindings.js`, Controls → Camera):
   every keyboard action of Map, Orbit, Fly and First person has a primary and
-  an alternate key field (click and press a key, or type `W`, `ArrowUp`,
-  `Space`, `Shift`). Keys are stored as `KeyboardEvent.code`; a pressed key is
+  an alternate key field (click it and press the key; phone soft keyboards
+  can type a name like `W`, `ArrowUp`, `Space`, `Shift`). Keys are stored as `KeyboardEvent.code`; a pressed key is
   translated to the stock key of its action before it reaches the stock
   three.js control, so the defaults behave exactly as before. Duplicate keys
-  in a style are highlighted with a warning; Reset to defaults per style.
-  Mouse / touch gestures are listed read-only. A key field gives focus back
-  as soon as it has its key (a pressed key at once, a typed name after a
-  short pause), so the next key pressed to play can't rebind it. Clearing
+  in a style are refused with a notice ("W is already Move forward"), so a
+  key pressed into a focused field can't silently take another action's key;
+  Reset to defaults per style. Mouse / touch gestures are listed read-only.
+  A key field captures the pressed key (letters too, by `code`) and gives
+  focus back at once; a press anywhere outside it releases it too. Clearing
   every key of an action restores its defaults. The mode help text shows the
-  keys as bound now. Saved per style in localStorage `gs.controlKeys.v2`
+  keys as bound now. Saved per style in localStorage `gs.controlKeys.v3`
   (validated on load: names like `d` become `KeyD`, blank actions fall back
-  to their defaults; the v1 layouts of the first dev builds are dropped). Not
-  in scenes: a keyboard preference, like the camera mode. Scenes read them
+  to their defaults, a key saved on two actions stays on the first and the
+  other gets its default back; the v1 / v2 layouts of the dev builds are
+  dropped). Not in scenes: a keyboard preference, like the camera mode. Scenes read them
   with `gsControls.keyBindings(mode)`.
 - **Player height** (Controls → Camera → First person): eye height for
   walking, 0.3–5 m (default 1.6), text field (accepts `1.75`, `175cm`,

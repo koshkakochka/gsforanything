@@ -157,7 +157,7 @@ async function focusKey(p, style, action, slot = 0) {
 // ===================================================================== desktop
 const ctx = await b.createBrowserContext();
 let p = await openPage(ctx, { width: 1280, height: 800 });
-await p.evaluate(() => { localStorage.removeItem('gs.controlKeys.v2'); localStorage.removeItem('gs.customControls.v1'); });
+await p.evaluate(() => { localStorage.removeItem('gs.controlKeys.v3'); localStorage.removeItem('gs.customControls.v1'); });
 await p.reload({ waitUntil: 'networkidle2' });
 await p.waitForFunction(() => window.gsKeyBindings);
 await sleep(600);
@@ -188,7 +188,7 @@ await openControls(p);
 	await sleep(100);
 	check('desktop focused key field asks for a key', ph === 'Press a key', ph);
 	check('desktop pressing I in Pan forward captures "I"', v === 'I', v);
-	const st = await stored(p, 'gs.controlKeys.v2');
+	const st = await stored(p, 'gs.controlKeys.v3');
 	check('desktop remap saved to localStorage per style', JSON.stringify(st) === JSON.stringify({ map: { panUp: ['KeyI', ''] } }), st);
 	// apply: I pans, ArrowUp no longer does
 	let a = await camState(p);
@@ -208,53 +208,46 @@ await openControls(p);
 	await p.keyboard.press('ArrowUp');
 	await sleep(60);
 	await blur(p);
-	const st2 = await stored(p, 'gs.controlKeys.v2');
+	const st2 = await stored(p, 'gs.controlKeys.v3');
 	check('desktop ArrowUp captured into the alternate slot', JSON.stringify(st2?.map?.panUp) === JSON.stringify(['KeyI', 'ArrowUp']), st2);
 }
 
-// --- typing a key name
+// --- letters and Space are captured as pressed (no typed names on desktop)
 {
 	const sel = await focusKey(p, 'map', 'panDown');
-	await p.keyboard.type('Spa');
-	await sleep(40);
-	const mid = await p.$eval(sel, (i) => [i.value, i.classList.contains('invalid')]);
-	await p.keyboard.type('ce');
-	await p.keyboard.press('Enter');
-	await sleep(100);
+	await p.keyboard.press('Space');
+	await sleep(80);
 	const v = await p.$eval(sel, (i) => i.value);
-	const st = await stored(p, 'gs.controlKeys.v2');
-	check('desktop partial name is marked invalid while typing', mid[1] === true, mid);
-	check('desktop typing "Space" binds Space', v === 'Space' && st?.map?.panDown?.[0] === 'Space', { v, st });
+	const st = await stored(p, 'gs.controlKeys.v3');
+	check('desktop pressing Space binds Space', v === 'Space' && st?.map?.panDown?.[0] === 'Space', { v, st });
 	await focusKey(p, 'map', 'panDown');
-	await p.keyboard.type('k');
-	await blur(p);
+	await p.keyboard.press('KeyK');
 	await sleep(80);
 	const v2 = await p.$eval(sel, (i) => i.value);
-	check('desktop typing "k" shows "K"', v2 === 'K', v2);
-	// Backspace on a fresh field clears; Esc restores
+	const act = await p.evaluate(() => document.activeElement?.id || document.activeElement?.tagName);
+	check('desktop pressing k shows "K" and leaves the field', v2 === 'K' && act !== sel.slice(1), { v2, act });
+	// Backspace clears; Esc keeps the old key
 	await focusKey(p, 'map', 'panUp', 1);
 	await p.keyboard.press('Backspace');
 	await blur(p);
-	const st3 = await stored(p, 'gs.controlKeys.v2');
+	const st3 = await stored(p, 'gs.controlKeys.v3');
 	check('desktop Backspace clears the alternate key', st3?.map?.panUp?.[1] === '', st3);
 	await focusKey(p, 'map', 'panDown');
-	await p.keyboard.type('zz');
 	await p.keyboard.press('Escape');
 	await sleep(80);
 	const v3 = await p.$eval(sel, (i) => i.value);
-	check('desktop Esc puts the previous key back', v3 === 'K', v3);
+	check('desktop Esc keeps the previous key', v3 === 'K', v3);
 }
 
-// --- duplicate warning
+// --- a key another action uses is refused (no silent shadowing)
 {
 	await focusKey(p, 'map', 'panLeft');
 	await p.keyboard.press('KeyI');
-	await blur(p);
 	await sleep(120);
 	const info = await remapInfo(p);
-	const dupRows = info.rows.filter((r) => r.dup).map((r) => r.action);
-	check('desktop duplicate warning names the key and actions', /I is used by Pan forward and Pan left/.test(info.warn), info.warn);
-	check('desktop both duplicate fields are highlighted', JSON.stringify(dupRows) === JSON.stringify(['panUp', 'panLeft']), dupRows);
+	const b2 = await p.evaluate(() => gsControls.keyBindings('map'));
+	check('desktop key used by another action is refused with a notice', /I is already Pan forward/.test(info.warn) && b2.panLeft[0] === 'ArrowLeft' && b2.panUp[0] === 'KeyI', { warn: info.warn, b2 });
+	check('desktop refused field shows its old key', info.rows.find((r) => r.action === 'panLeft').keys[0] === 'ArrowLeft', info.rows);
 	await p.evaluate(() => document.getElementById('dchat-key-remap')?.scrollIntoView({ block: 'start' }));
 	await sleep(120);
 	await p.screenshot({ path: `${SHOT_DIR}/desktop-duplicate-warning.png` });
@@ -262,7 +255,7 @@ await openControls(p);
 	await sleep(150);
 	const after = await remapInfo(p);
 	check('desktop Reset to defaults restores arrows, clears warning and storage',
-		JSON.stringify(after.rows.map((r) => r.keys[0])) === JSON.stringify(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) && !after.warn && (await stored(p, 'gs.controlKeys.v2')) === null,
+		JSON.stringify(after.rows.map((r) => r.keys[0])) === JSON.stringify(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) && !after.warn && (await stored(p, 'gs.controlKeys.v3')) === null,
 		after);
 	const a = await camState(p);
 	await tapKey(p, 'ArrowUp');
@@ -601,15 +594,15 @@ async function fpPage(storage) {
 	await sleep(60);
 	const activeArrow = await pg.evaluate(() => document.activeElement?.id || document.activeElement?.tagName);
 	check('regression key field leaves focus at once after capturing ArrowRight', activeArrow !== 'gs-remap-firstperson-right-1', activeArrow);
-	// A letter may start a typed name, so the field waits a moment, then leaves.
+	// A letter is captured at once too.
 	await focusKey(pg, 'firstperson', 'right', 0);
 	await pg.keyboard.press('KeyL');
-	await sleep(1500);
+	await sleep(80);
 	const active = await pg.evaluate(() => document.activeElement?.id || document.activeElement?.tagName);
 	await pg.keyboard.press('KeyW'); // the next key, meant for walking
 	await sleep(80);
 	const after = await pg.evaluate(() => gsControls.keyBindings('firstperson'));
-	check('regression key field leaves focus shortly after a typed letter', active !== 'gs-remap-firstperson-right-0', active);
+	check('regression key field leaves focus at once after a letter', active !== 'gs-remap-firstperson-right-0', active);
 	check('regression a later key press does not silently rebind the field', JSON.stringify(after.right) === JSON.stringify(['KeyL', 'ArrowRight']) && after.forward[0] === 'KeyW', after);
 	const help = await pg.evaluate(() => { const k = document.querySelector('kbd[data-key="firstperson:right:0"]'); return { text: k.textContent, remapped: k.classList.contains('remapped'), w: document.querySelector('kbd[data-key="firstperson:forward:0"]').textContent }; });
 	check('regression help text shows the current (remapped) key', help.text === 'L' && help.remapped && help.w === 'W', help);
@@ -623,7 +616,7 @@ async function fpPage(storage) {
 	await focusKey(pg, 'firstperson', 'right', 1);
 	await pg.keyboard.press('Backspace');
 	await sleep(100);
-	const cleared = await pg.evaluate(() => ({ b: gsControls.keyBindings('firstperson').right, st: localStorage.getItem('gs.controlKeys.v2'), help: document.querySelector('kbd[data-key="firstperson:right:0"]').textContent }));
+	const cleared = await pg.evaluate(() => ({ b: gsControls.keyBindings('firstperson').right, st: localStorage.getItem('gs.controlKeys.v3'), help: document.querySelector('kbd[data-key="firstperson:right:0"]').textContent }));
 	check('regression clearing every key of an action restores its defaults', JSON.stringify(cleared.b) === JSON.stringify(['KeyD', 'ArrowRight']) && cleared.st === null && cleared.help === 'D', cleared);
 	check('regression D moves right again', (await fpMove(pg, 'KeyD')).right > 0.3);
 	await pg.evaluate(() => document.querySelector('kbd[data-key="firstperson:right:0"]')?.closest('.dchat-controls-help')?.scrollIntoView({ block: 'start' }));
@@ -641,13 +634,78 @@ async function fpPage(storage) {
 }
 {
 	// Partial / blank / name-style saved layout: blank right → defaults, 'w' normalized.
-	const pg = await fpPage({ 'gs.controlKeys.v2': { firstperson: { right: ['', null], forward: ['w', 'ArrowUp'], left: ['KeyJ', 'nonsense'] }, fly: 'junk' } });
+	const pg = await fpPage({ 'gs.controlKeys.v3': { firstperson: { right: ['', null], forward: ['w', 'ArrowUp'], left: ['KeyJ', 'nonsense'] }, fly: 'junk' } });
 	const st = await pg.evaluate(() => ({ b: gsControls.keyBindings('firstperson') }));
 	const r = await fpMove(pg, 'KeyD');
 	const rj = await fpMove(pg, 'KeyJ');
 	check('regression partial saved layout: blank Move right falls back to D / ArrowRight', JSON.stringify(st.b.right) === JSON.stringify(['KeyD', 'ArrowRight']) && st.b.forward[0] === 'KeyW' && JSON.stringify(st.b.left) === JSON.stringify(['KeyJ', '']), st.b);
 	check('regression partial saved layout: D moves right, saved J moves left', r.right > 0.3 && rj.right < -0.3, { r, rj });
 	await pg._ctx.close();
+}
+
+{
+	// Kross's report after 74833e1: only D (Move right) dead in First person,
+	// → still fine. A v2 layout with Move right = W (W pressed into the
+	// focused Move right field) is dropped, and a v3 one where a key is used
+	// twice gives the later action its default back.
+	const pg = await fpPage({ 'gs.controlKeys.v2': { firstperson: { right: ['KeyW', 'ArrowRight'] } } });
+	const st = await pg.evaluate(() => ({ v2: localStorage.getItem('gs.controlKeys.v2'), b: gsControls.keyBindings('firstperson').right }));
+	check('regression stale v2 layout (Move right = W) is dropped', st.v2 === null && JSON.stringify(st.b) === JSON.stringify(['KeyD', 'ArrowRight']), st);
+	check('regression stale v2 layout: D moves right', (await fpMove(pg, 'KeyD')).right > 0.3);
+	await pg._ctx.close();
+	const pg2 = await fpPage({ 'gs.controlKeys.v3': { firstperson: { right: ['KeyW', 'ArrowRight'], left: ['KeyA', 'KeyW'] } } });
+	const b2 = await pg2.evaluate(() => gsControls.keyBindings('firstperson'));
+	check('regression saved key used twice stays on the first action; D comes back', b2.forward[0] === 'KeyW' && JSON.stringify(b2.right) === JSON.stringify(['KeyD', 'ArrowRight']) && JSON.stringify(b2.left) === JSON.stringify(['KeyA', 'ArrowLeft']), b2);
+	const r2 = await fpMove(pg2, 'KeyD');
+	check('regression saved key used twice: D moves right', r2.right > 0.3, r2);
+	await pg2._ctx.close();
+}
+{
+	// Real UI, real mouse: open the menu, click Controls, click First person,
+	// click the Move right field, then walk with W/A/S/D as a player would.
+	const c = await b.createBrowserContext();
+	const pg = await openPage(c, { width: 1280, height: 800 });
+	await pg.evaluate(() => { localStorage.clear(); });
+	await pg.reload({ waitUntil: 'networkidle2' });
+	await pg.waitForFunction(() => window.gsKeyBindings && window.THREE && document.getElementById('gs-menu-hamburger'));
+	await sleep(600);
+	await pg.click('#gs-menu-hamburger');
+	await sleep(250);
+	await pg.click('.dchat-tab[data-tab="controls"]');
+	await sleep(250);
+	await pg.click('#dchat-camera-mode [data-camera-mode="firstperson"]');
+	await sleep(300);
+	const focusOnBtn = await pg.evaluate(() => document.activeElement?.dataset?.cameraMode);
+	// keys pressed with the First person button still focused (no blur)
+	const press = async (code, ms = 400) => {
+		const before = await pg.evaluate(() => window.camera.position.toArray());
+		await pg.keyboard.down(code); await sleep(ms); await pg.keyboard.up(code); await sleep(300);
+		return pg.evaluate((bp) => +(window.camera.position.x - bp[0]).toFixed(3), before);
+	};
+	const dBtn = await press('KeyD'), aBtn = await press('KeyA');
+	check('real UI: First person button focused, D moves right and A left', focusOnBtn === 'firstperson' && dBtn > 0.3 && aBtn < -0.3, { focusOnBtn, dBtn, aBtn });
+	// click Move right's field, then try to walk: W must not take D's place
+	await pg.evaluate(() => document.getElementById('gs-remap-firstperson-right-0')?.scrollIntoView({ block: 'center' }));
+	await pg.click('#gs-remap-firstperson-right-0');
+	await sleep(100);
+	await pg.keyboard.down('KeyW'); await sleep(500); await pg.keyboard.up('KeyW'); await sleep(200);
+	const afterW = await pg.evaluate(() => ({ b: gsControls.keyBindings('firstperson'), act: document.activeElement?.id || document.activeElement?.tagName, warn: document.getElementById('dchat-key-remap-warning')?.textContent }));
+	check('real UI: W pressed into the focused Move right field is refused; D stays', JSON.stringify(afterW.b.right) === JSON.stringify(['KeyD', 'ArrowRight']) && afterW.b.forward[0] === 'KeyW' && /W is already Move forward/.test(afterW.warn), afterW);
+	check('real UI: the field let go of focus', afterW.act !== 'gs-remap-firstperson-right-0', afterW.act);
+	const dAfter = await press('KeyD');
+	check('real UI: D still moves right after that', dAfter > 0.3, dAfter);
+	// a click elsewhere in the panel (not focusable) releases a focused key field
+	await pg.click('#gs-remap-firstperson-right-0');
+	await sleep(100);
+	const lab = await pg.evaluate(() => { const r = document.querySelector('#dchat-key-remap .gs-remap-fixed').getBoundingClientRect(); return [r.x + 10, r.y + 6]; });
+	await pg.mouse.click(lab[0], lab[1]);
+	await sleep(150);
+	const act2 = await pg.evaluate(() => document.activeElement?.id || document.activeElement?.tagName);
+	const dAfter2 = await press('KeyD');
+	check('real UI: clicking the panel releases the key field and D moves right', act2 !== 'gs-remap-firstperson-right-0' && dAfter2 > 0.3, { act2, dAfter2 });
+	await pg.screenshot({ path: `${SHOT_DIR}/real-ui-refused-w.png` });
+	check('real UI page: no console errors', pg._errors.length === 0, pg._errors);
+	await c.close();
 }
 
 // ======================================================================= phone
@@ -679,10 +737,13 @@ async function fpPage(storage) {
 	await ph.evaluate(() => document.getElementById('dchat-key-remap')?.scrollIntoView({ block: 'start' }));
 	await sleep(150);
 	await ph.screenshot({ path: `${SHOT_DIR}/phone-fly-remap.png` });
-	await ph.evaluate(() => { gsKeyBindings.setKey('fly', 'back', 0, 'KeyW'); document.getElementById('dchat-key-remap-warning')?.scrollIntoView({ block: 'center' }); });
+	await ph.focus('#gs-remap-fly-back-0');
+	await ph.keyboard.press('KeyW');
 	await sleep(150);
-	const pw = await ph.evaluate(() => document.getElementById('dchat-key-remap-warning').textContent);
-	check('phone duplicate warning shows', /W is used by Move forward and Move back/.test(pw), pw);
+	await ph.evaluate(() => document.getElementById('dchat-key-remap-warning')?.scrollIntoView({ block: 'center' }));
+	await sleep(150);
+	const pw = await ph.evaluate(() => [document.getElementById('dchat-key-remap-warning').textContent, gsKeyBindings.setKey('fly', 'back', 0, 'KeyW'), gsControls.keyBindings('fly').back[0]]);
+	check('phone refused-key notice shows and Move back keeps S', /W is already Move forward/.test(pw[0]) && pw[1] === false && pw[2] === 'KeyS', pw);
 	await ph.screenshot({ path: `${SHOT_DIR}/phone-duplicate-warning.png` });
 	await ph.evaluate(() => gsKeyBindings.resetStyle('fly'));
 	await setMode(ph, 'firstperson');

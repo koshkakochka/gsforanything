@@ -6540,6 +6540,7 @@ document.querySelectorAll('#dchat-controls-subtabs [data-controls-section]').for
 
 let remapRenderedFor = null; // style whose rows are in the DOM
 const remapInputs = new Map(); // `${action}:${slot}` -> key field
+let remapNotice = ''; // last refused key (already used by another action)
 function renderKeyRemap(force = false) {
 	const box = document.getElementById('dchat-key-remap');
 	if (!box) return;
@@ -6548,6 +6549,7 @@ function renderKeyRemap(force = false) {
 	if (!def) { box.textContent = ''; remapRenderedFor = null; remapInputs.clear(); return; }
 	if (remapRenderedFor === style && !force) { refreshKeyRemap(); return; }
 	remapRenderedFor = style;
+	remapNotice = '';
 	remapInputs.clear();
 	box.textContent = '';
 	box.dataset.style = style;
@@ -6561,12 +6563,12 @@ function renderKeyRemap(force = false) {
 	reset.className = 'dchat-btn secondary gs-remap-reset';
 	reset.id = 'dchat-key-remap-reset';
 	reset.textContent = 'Reset to defaults';
-	reset.addEventListener('click', () => gsKeyBindings.resetStyle(style));
+	reset.addEventListener('click', () => { remapNotice = ''; gsKeyBindings.resetStyle(style); refreshKeyRemap(); });
 	head.append(label, reset);
 	const hint = document.createElement('div');
 	hint.className = 'dchat-controls-help';
 	hint.style.marginBottom = '6px';
-	hint.textContent = 'Click a field and press a key, or type its name (W, ArrowUp, Space, Shift). Backspace clears it.';
+	hint.textContent = 'Click a field, then press the key you want. Backspace clears it, Esc keeps the old key.';
 	const list = document.createElement('div');
 	list.className = 'gs-remap-list';
 	for (const a of def.actions) {
@@ -6584,7 +6586,16 @@ function renderKeyRemap(force = false) {
 				value: bound[slot],
 				ariaLabel: `${def.label}: ${a.label}${slot ? ' (alternate key)' : ''}`,
 				placeholder: slot ? 'alt' : 'none',
-				onCommit: (code) => gsKeyBindings.setKey(style, a.id, slot, code)
+				onCommit: (code) => {
+					const owner = gsKeyBindings.keyOwner(style, a.id, code);
+					if (owner) {
+						remapNotice = `${gsKeyBindings.keyLabel(gsKeyBindings.normalizeCode(code))} is already ${owner.label}. Give ${owner.label} another key first.`;
+						refreshKeyRemap();
+						return false;
+					}
+					remapNotice = '';
+					return gsKeyBindings.setKey(style, a.id, slot, code);
+				}
 			});
 			k.input.id = `gs-remap-${style}-${a.id}-${slot}`;
 			k.input.dataset.slot = String(slot);
@@ -6634,9 +6645,10 @@ function refreshKeyRemap() {
 	const warn = document.getElementById('dchat-key-remap-warning');
 	if (warn) {
 		const lines = gsKeyBindings.describeDuplicates(dup);
-		warn.textContent = lines.length ? `⚠ Duplicate keys: ${lines.join('; ')}. Only the first action listed gets the key.` : '';
-		warn.hidden = !lines.length;
-		warn.classList.toggle('gs-remap-dup', !!lines.length);
+		const text = remapNotice ? `⚠ ${remapNotice}` : lines.length ? `⚠ Duplicate keys: ${lines.join('; ')}. Only the first action listed gets the key.` : '';
+		warn.textContent = text;
+		warn.hidden = !text;
+		warn.classList.toggle('gs-remap-dup', !!text);
 	}
 	const reset = document.getElementById('dchat-key-remap-reset');
 	if (reset) reset.disabled = !gsKeyBindings.isStyleCustomized(style);
