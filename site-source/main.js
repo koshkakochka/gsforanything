@@ -17,6 +17,7 @@ import { normalizeEnvironmentHdri, environmentHdriLoadUrl, environmentHdriSignat
 import * as ChatPrompt from './chatPrompt.js';
 import { gsAlert, gsConfirm, gsPrompt, configureDialogs, dialogCard, refreshDialogMode, installDialogGlobals } from './gsDialog.js';
 import { initEmbedUi, mountEmbedChrome, parseEmbedRoute } from './embedExport.js';
+import { createRendererOrExplain, watchContextLoss } from './webglGuard.js';
 import { EXPORTS_OFF_MESSAGE, OWNER_KEY_HEADER } from './sceneExportPolicy.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
@@ -132,11 +133,18 @@ function applyMenuLayerPriority() {
 	}
 }
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+// One WebGLRenderer for the whole page (never recreated). If the browser
+// refuses WebGL (e.g. Chrome blocked the site after a GPU reset), show a
+// clear message instead of a half-built page (webglGuard.js). The embed view
+// never reads pixels back, so it skips preserveDrawingBuffer (less GPU memory
+// and bandwidth on someone else's page).
+const IS_EMBED_VIEW = !!parseEmbedRoute(window.location);
+const renderer = createRendererOrExplain(THREE, { antialias: true, alpha: true, preserveDrawingBuffer: !IS_EMBED_VIEW });
+window.gsContextWatch = watchContextLoss(renderer);
 // Drawing-buffer size is kept in sync by applyRendererSize(); pass false so
 // the CSS (position:fixed; inset:0; 100%/100dvh) keeps the canvas covering
 // the visible page instead of being locked to stale inline pixel sizes.
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 3));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, IS_EMBED_VIEW ? 2 : 3));
 renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.xr.enabled = true;
 appElement.appendChild(renderer.domElement);
@@ -8912,7 +8920,8 @@ var _rendererSize = { w: window.innerWidth, h: window.innerHeight };
 var _rendererResizeRaf = 0;
 
 function rendererPixelRatio() {
-	return Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
+	// Embeds share the GPU with the host page: cap at 2 (the app allows 3).
+	return Math.min(window.devicePixelRatio || 1, IS_EMBED_VIEW ? 2 : MAX_PIXEL_RATIO);
 }
 
 function visibleViewportSize() {

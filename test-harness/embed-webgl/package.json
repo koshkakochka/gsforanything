@@ -1,0 +1,9 @@
+{
+  "name": "gs-embed-webgl-test",
+  "private": true,
+  "type": "module",
+  "description": "The embed snippet on a plain python http.server page: one WebGL context, no context loss, scene renders; context-loss recovery and the WebGL-unavailable message.",
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}
