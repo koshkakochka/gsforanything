@@ -119,6 +119,35 @@ Three moving parts:
   the three.js pointerlock example) and Off, picked in the Controls tab. Only
   focused text fields block keys; VR uses head tracking. Scenes see
   `window.gsControls` / `window.controls` / `window.gsOrbit`.
+- **Key remapping** (`site-source/controlBindings.js`, Controls → Camera):
+  every keyboard action of Map, Orbit, Fly and First person has a primary and
+  an alternate key field (click and press a key, or type `W`, `ArrowUp`,
+  `Space`, `Shift`). Keys are stored as `KeyboardEvent.code`; a pressed key is
+  translated to the stock key of its action before it reaches the stock
+  three.js control, so the defaults behave exactly as before. Duplicate keys
+  in a style are highlighted with a warning; Reset to defaults per style.
+  Mouse / touch gestures are listed read-only. Saved per style in
+  localStorage `gs.controlKeys.v1` (not in scenes: a keyboard preference,
+  like the camera mode). Scenes read them with `gsControls.keyBindings(mode)`.
+- **Player height** (Controls → Camera → First person): eye height for
+  walking, 0.3–5 m (default 1.6), text field (accepts `1.75`, `175cm`,
+  `5.8ft`) with ▲ / ▼ (0.1 m, hold to repeat). Applies live, kept by Reset
+  Camera View, saved in localStorage `gs.playerHeight`. Fly has no fixed
+  height (R / F move up and down).
+- **Custom Controls** (`site-source/customControls.js`, Controls → Custom
+  Controls): scene code — normally a chat reply, when the user asks for a new
+  control scheme — calls `gsControls.defineCustomScheme({ id, name,
+  description, cameraMode?, params })` with params of type `key`, `number`
+  (min / max / step / unit), `boolean` or `select` (options). The tab shows
+  them as key fields, slider + number, switch and list, live-updating the
+  handle the code reads (`h.isDown(key)`, `h.values`, `h.onChange`,
+  `h.onPress`). Same id again replaces the scheme and keeps the user's
+  values; clearing / loading a scene removes all schemes; `cameraMode: 'off'`
+  turns the camera controls off while the scheme exists and restores them
+  after. Changed values are saved in localStorage `gs.customControls.v1` per
+  scheme id and in scene files as `customControls: { id: { param: value } }`.
+  The chat prompt (server.js, copied to worker/prompts.js) documents the API.
+  Test: `test-harness/controls-remap`.
 - **Game controllers** (Gamepad API, `window.gsGamepad`): Xbox Series X|S
   and other standard pads over USB or Bluetooth drive the desktop/phone
   camera through the stock three.js control picked in the Controls tab

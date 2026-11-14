@@ -22,7 +22,9 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { initSceneExport } from './exporter.js';
 import { createTwinSticks } from './twinSticks.js';
-import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, ORBIT_TARGET, DEFAULT_CAMERA_POSITION, isTextEntry } from './cameraControls.js';
+import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, ORBIT_TARGET, DEFAULT_CAMERA_POSITION, isTextEntry, clampPlayerHeight, PLAYER_HEIGHT_DEFAULT, PLAYER_HEIGHT_STEP, PLAYER_HEIGHT_MIN, PLAYER_HEIGHT_MAX } from './cameraControls.js';
+import * as gsKeyBindings from './controlBindings.js';
+import { createCustomControls } from './customControls.js';
 import { sanitizeDescription, DESCRIPTION_MAX_CHARS, DESCRIPTION_PLACEHOLDER } from './sceneDescription.js';
 import { THUMB_WIDTH, THUMB_HEIGHT, THUMB_MAX_BYTES } from './sceneThumbnail.js';
 import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
@@ -748,6 +750,7 @@ gsOriginRoot.name = 'gsOriginRoot';
 arPlacementRoot.add(gsOriginRoot);
 window.gsOriginRoot = gsOriginRoot;
 let originRotation = null; // createOriginRotation(), set up with the Environment tab below
+let customControls = null; // createCustomControls(), set up with the Controls tab below
 // Scene code removes with scene.remove(obj); that must still work for objects
 // that were moved into the origin / AR placement group.
 {
@@ -2897,6 +2900,7 @@ function clearUserObjects() {
 		try { surf.dispose(); } catch (e) { console.error('surface dispose failed:', e); }
 	}
 	if (typeof gsGamepad !== 'undefined') gsGamepad._reset();
+	customControls?.reset(); // custom control schemes belong to the scene code
 	for (let i = scene.children.length - 1; i >= 0; i--) {
 		const child = scene.children[i];
 		if (!systemObjectIds.has(child.uuid)) {
@@ -2995,6 +2999,7 @@ function buildSceneData(name) {
 		...environmentHdriForScene(), // { environmentHdri } when an HDRI is active (URL ones; files on upload)
 		codeBlocks,
 		...originRotationForScene(), // { originRotation } only when rotated
+		...customControls.forScene(), // { customControls: { schemeId: changed values } } when set
 		...GSMerge.sceneCredits(activeScene) // mergedFrom / credits of a merged scene
 	};
 }
@@ -3093,7 +3098,9 @@ async function loadSceneData(data, fallbackName, { key, source = 'file', extra =
 	setActiveScene(sc);
 	const hdriApplied = applySceneEnvironmentHdri(data);
 	applySceneOriginRotation(data);
+	customControls.setPendingSceneValues(data); // its code re-defines the schemes with these values
 	await runLoadedSceneCode(sc);
+	customControls.setPendingSceneValues(null);
 	if (activeScene !== sc) return { sc, hdriApplied }; // replaced while its code ran
 	notifyCodeEditorExternalChange();
 	GSContext.restoreFromScene(data, { key, source }).catch(err => console.warn('creation context restore failed:', err));
@@ -6308,6 +6315,15 @@ function refreshCameraControls() {
 	cameraControls.refreshEnabled();
 }
 
+// First person eye height (Controls tab → First person → Player height),
+// saved in this browser. Read before the first setMode below.
+const PLAYER_HEIGHT_STORAGE_KEY = 'gs.playerHeight';
+{
+	let saved = null;
+	try { saved = localStorage.getItem(PLAYER_HEIGHT_STORAGE_KEY); } catch { /* storage blocked */ }
+	if (saved !== null && clampPlayerHeight(saved) !== null) cameraControls.setPlayerHeight(saved);
+}
+
 // The desktop controls move the camera inside the player rig; keep the rig at
 // the origin so the camera's local pose is its world pose (and the Orbit
 // target really is the scene origin).
@@ -6386,6 +6402,7 @@ function renderCameraControlsUi(why) {
 			: '';
 	}
 	window.gsRefreshTwinSticks?.(); // set up with the twin sticks further down
+	if (customControls) renderKeyRemap(); // key remapping (set up below)
 }
 
 function setCameraControlMode(mode, { persist = true } = {}) {
@@ -6422,6 +6439,262 @@ document.addEventListener('change', (e) => {
 	}
 	renderCameraControlsUi();
 }
+
+// ============================================================================
+// Controls tab → Camera: key remapping per style (controlBindings.js), and
+// Controls tab → Custom Controls: schemes declared by scene code
+// (gsControls.defineCustomScheme, customControls.js).
+// ============================================================================
+let controlsSection = 'camera';
+function setControlsSection(name) {
+	controlsSection = name === 'custom' ? 'custom' : 'camera';
+	document.querySelectorAll('#dchat-controls-subtabs [data-controls-section]').forEach((b) => {
+		const on = b.dataset.controlsSection === controlsSection;
+		b.classList.toggle('active', on);
+		b.setAttribute('aria-selected', on ? 'true' : 'false');
+	});
+	document.querySelectorAll('#dchat-controls > .dchat-controls-section').forEach((el) => {
+		el.classList.toggle('active', el.dataset.controlsSection === controlsSection);
+	});
+}
+document.querySelectorAll('#dchat-controls-subtabs [data-controls-section]').forEach((b) => {
+	b.addEventListener('click', () => setControlsSection(b.dataset.controlsSection));
+});
+
+// ---- First person: Player height (text field + ▲ / ▼, hold to repeat) ----
+{
+	const input = document.getElementById('dchat-player-height-input');
+	const up = document.getElementById('dchat-player-height-up');
+	const down = document.getElementById('dchat-player-height-down');
+	const resetBtn = document.getElementById('dchat-player-height-reset');
+	const fmt = (v) => (Math.round(v * 100) / 100).toFixed(2).replace(/0$/, '');
+	const show = () => {
+		if (!input) return;
+		const v = cameraControls.playerHeight;
+		input.value = fmt(v);
+		input.classList.remove('invalid');
+		input.setAttribute('aria-valuenow', String(v));
+		if (up) up.disabled = v >= PLAYER_HEIGHT_MAX;
+		if (down) down.disabled = v <= PLAYER_HEIGHT_MIN;
+		if (resetBtn) resetBtn.disabled = v === PLAYER_HEIGHT_DEFAULT;
+	};
+	const apply = (h) => {
+		const v = cameraControls.setPlayerHeight(h);
+		try {
+			if (v === PLAYER_HEIGHT_DEFAULT) localStorage.removeItem(PLAYER_HEIGHT_STORAGE_KEY);
+			else localStorage.setItem(PLAYER_HEIGHT_STORAGE_KEY, String(v));
+		} catch { /* storage blocked */ }
+		show();
+		return v;
+	};
+	// Typed values: "1.75", "1,75", "175cm" or "5.5ft" are understood; anything
+	// else is marked red and put back on Enter / leaving the field.
+	const parse = (text) => {
+		const t = String(text).trim().toLowerCase().replace(',', '.');
+		const m = t.match(/^(-?\d*\.?\d+)\s*(m|cm|ft|')?$/);
+		if (!m) return null;
+		let v = parseFloat(m[1]);
+		if (m[2] === 'cm') v /= 100;
+		else if (m[2] === 'ft' || m[2] === "'") v *= 0.3048;
+		return Number.isFinite(v) ? v : null;
+	};
+	const step = (dir) => apply(Math.round((cameraControls.playerHeight + dir * PLAYER_HEIGHT_STEP) * 100) / 100);
+	if (input) {
+		input.addEventListener('input', () => {
+			const v = parse(input.value);
+			const ok = v !== null && v >= PLAYER_HEIGHT_MIN && v <= PLAYER_HEIGHT_MAX;
+			input.classList.toggle('invalid', !ok && input.value.trim() !== '');
+			if (ok) cameraControls.setPlayerHeight(v); // live preview; saved on commit
+		});
+		const commit = () => {
+			const v = parse(input.value);
+			if (v === null) show(); else apply(v); // out of range clamps to 0.3–5 m
+		};
+		input.addEventListener('change', commit);
+		input.addEventListener('blur', commit);
+		input.addEventListener('keydown', (e) => {
+			e.stopPropagation(); // keys stay in the field
+			if (e.key === 'Enter') { e.preventDefault(); commit(); input.blur(); }
+			else if (e.key === 'Escape') { e.preventDefault(); apply(parseFloat(input.dataset.atFocus || cameraControls.playerHeight)); input.blur(); }
+			else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); step(e.key === 'ArrowUp' ? 1 : -1); input.select(); }
+		});
+		input.addEventListener('focus', () => { input.dataset.atFocus = String(cameraControls.playerHeight); input.select(); gsKeyBindings.keepSelection(input); });
+	}
+	// ▲ / ▼: a click steps once; holding repeats after 400 ms, every 80 ms.
+	for (const [btn, dir] of [[up, 1], [down, -1]]) {
+		if (!btn) continue;
+		let delay = 0, timer = 0, held = false;
+		const stop = () => { clearTimeout(delay); clearInterval(timer); delay = timer = 0; };
+		btn.addEventListener('pointerdown', (e) => {
+			if (e.button !== undefined && e.button !== 0) return;
+			held = true;
+			stop();
+			delay = setTimeout(() => { timer = setInterval(() => step(dir), 80); }, 400);
+		});
+		for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) btn.addEventListener(ev, stop);
+		btn.addEventListener('click', () => { stop(); step(dir); held = false; });
+	}
+	resetBtn?.addEventListener('click', () => apply(PLAYER_HEIGHT_DEFAULT));
+	show();
+}
+
+let remapRenderedFor = null; // style whose rows are in the DOM
+const remapInputs = new Map(); // `${action}:${slot}` -> key field
+function renderKeyRemap(force = false) {
+	const box = document.getElementById('dchat-key-remap');
+	if (!box) return;
+	const style = cameraControls.mode;
+	const def = gsKeyBindings.REMAP_STYLES[style];
+	if (!def) { box.textContent = ''; remapRenderedFor = null; remapInputs.clear(); return; }
+	if (remapRenderedFor === style && !force) { refreshKeyRemap(); return; }
+	remapRenderedFor = style;
+	remapInputs.clear();
+	box.textContent = '';
+	box.dataset.style = style;
+	const head = document.createElement('div');
+	head.className = 'gs-remap-head';
+	const label = document.createElement('div');
+	label.className = 'dchat-section-label';
+	label.textContent = `${def.label} keys`;
+	const reset = document.createElement('button');
+	reset.type = 'button';
+	reset.className = 'dchat-btn secondary gs-remap-reset';
+	reset.id = 'dchat-key-remap-reset';
+	reset.textContent = 'Reset to defaults';
+	reset.addEventListener('click', () => gsKeyBindings.resetStyle(style));
+	head.append(label, reset);
+	const hint = document.createElement('div');
+	hint.className = 'dchat-controls-help';
+	hint.style.marginBottom = '6px';
+	hint.textContent = 'Click a field and press a key, or type its name (W, ArrowUp, Space, Shift). Backspace clears it.';
+	const list = document.createElement('div');
+	list.className = 'gs-remap-list';
+	for (const a of def.actions) {
+		const row = document.createElement('div');
+		row.className = 'gs-remap-row';
+		row.dataset.action = a.id;
+		const name = document.createElement('label');
+		name.className = 'gs-remap-label';
+		name.textContent = a.label;
+		const keys = document.createElement('div');
+		keys.className = 'gs-remap-keys';
+		const bound = gsKeyBindings.getKeys(style, a.id);
+		for (let slot = 0; slot < gsKeyBindings.KEYS_PER_ACTION; slot++) {
+			const k = gsKeyBindings.createKeyInput({
+				value: bound[slot],
+				ariaLabel: `${def.label}: ${a.label}${slot ? ' (alternate key)' : ''}`,
+				placeholder: slot ? 'alt' : 'none',
+				onCommit: (code) => gsKeyBindings.setKey(style, a.id, slot, code)
+			});
+			k.input.id = `gs-remap-${style}-${a.id}-${slot}`;
+			k.input.dataset.slot = String(slot);
+			if (slot === 0) name.htmlFor = k.input.id;
+			remapInputs.set(`${a.id}:${slot}`, k);
+			keys.appendChild(k.input);
+		}
+		row.append(name, keys);
+		list.appendChild(row);
+	}
+	const warn = document.createElement('div');
+	warn.className = 'gs-remap-warning';
+	warn.id = 'dchat-key-remap-warning';
+	warn.setAttribute('role', 'status');
+	const fixed = document.createElement('div');
+	fixed.className = 'gs-remap-fixed';
+	const fh = document.createElement('div');
+	fh.textContent = 'Mouse and touch (not remappable):';
+	fixed.appendChild(fh);
+	for (const [input, what] of def.fixed || []) {
+		const r = document.createElement('div');
+		const b = document.createElement('b');
+		b.textContent = input;
+		r.append(b, document.createTextNode(` · ${what}`));
+		fixed.appendChild(r);
+	}
+	box.append(head, hint, list, warn);
+	if (def.note) {
+		const n = document.createElement('div');
+		n.className = 'gs-remap-note';
+		n.textContent = def.note + '.';
+		box.appendChild(n);
+	}
+	box.appendChild(fixed);
+	refreshKeyRemap();
+}
+function refreshKeyRemap() {
+	const style = remapRenderedFor;
+	if (!style) return;
+	const def = gsKeyBindings.REMAP_STYLES[style];
+	for (const a of def.actions) {
+		const keys = gsKeyBindings.getKeys(style, a.id);
+		keys.forEach((code, slot) => remapInputs.get(`${a.id}:${slot}`)?.set(code));
+	}
+	const dup = gsKeyBindings.styleDuplicates(style);
+	for (const [, k] of remapInputs) k.input.classList.toggle('duplicate', !!k.code && dup.has(k.code));
+	const warn = document.getElementById('dchat-key-remap-warning');
+	if (warn) {
+		const lines = gsKeyBindings.describeDuplicates(dup);
+		warn.textContent = lines.length ? `⚠ Duplicate keys: ${lines.join('; ')}. Only the first action listed gets the key.` : '';
+		warn.hidden = !lines.length;
+		warn.classList.toggle('gs-remap-dup', !!lines.length);
+	}
+	const reset = document.getElementById('dchat-key-remap-reset');
+	if (reset) reset.disabled = !gsKeyBindings.isStyleCustomized(style);
+}
+gsKeyBindings.onBindingsChange((style) => {
+	if (style === cameraControls.mode) cameraControls.releaseKeys();
+	if (style === remapRenderedFor) refreshKeyRemap();
+	customControls?.refreshAllWarnings();
+});
+window.addEventListener('storage', (e) => { if (e.key === gsKeyBindings.CONTROL_KEYS_STORAGE_KEY) gsKeyBindings.reloadBindings(); });
+
+/** "is used by Map: Pan up" for a custom key that the active camera style also uses. */
+function describeCameraKey(code) {
+	const style = cameraControls.mode;
+	const a = code && gsKeyBindings.actionForCode(style, code);
+	return a ? `moves the camera (${gsKeyBindings.REMAP_STYLES[style].label}: ${a.label})` : '';
+}
+
+customControls = createCustomControls({
+	mount: document.getElementById('dchat-custom-controls'),
+	isTyping: () => isTextEntry(document.activeElement),
+	getCameraMode: () => cameraControls.mode,
+	setCameraMode: (m, opts) => setCameraControlMode(m, opts),
+	cameraModes: CAMERA_MODES.slice(),
+	describeCameraKey,
+	onAskChat: () => {
+		activateTab('chat');
+		const input = desktopChatInput;
+		if (!input) return;
+		if (!input.value.trim()) {
+			input.value = 'Create a custom control scheme for this scene: ';
+			input.dispatchEvent(new Event('input', { bubbles: true }));
+		}
+		input.focus();
+		try { input.setSelectionRange(input.value.length, input.value.length); } catch { /* ignore */ }
+	},
+	onSchemesChange: (ev) => {
+		const tab = document.querySelector('#dchat-controls-subtabs [data-controls-section="custom"]');
+		if (tab) tab.classList.toggle('has-custom', customControls.count > 0);
+		if (ev.type === 'define') {
+			setControlsSection('custom');
+			updateStatus(`Custom controls "${ev.name}" ready: Controls → Custom Controls`, 'connected');
+		}
+	}
+});
+
+// Scene code API (documented in the chat prompt): see customControls.js.
+Object.assign(window.gsControls, {
+	/** Declare a custom control scheme; returns its handle (values, isDown, onChange, onPress, …). */
+	defineCustomScheme: (def) => customControls.define(def),
+	getCustomScheme: (id) => customControls.get(id),
+	removeCustomScheme: (id) => customControls.remove(id),
+	/** Key bindings of a style, e.g. gsControls.keyBindings('fly') → { forward: ['KeyW', ''], … }. */
+	keyBindings: (style) => gsKeyBindings.getStyleBindings(style || cameraControls.mode)
+});
+Object.defineProperty(window.gsControls, 'customSchemes', { configurable: true, enumerable: true, get: () => customControls.describe() });
+window.gsKeyBindings = gsKeyBindings; // tests / console
+renderKeyRemap(true);
 
 // ============================================================================
 // Origin rotation (Environment tab → Origin rotation; originGizmo.js)

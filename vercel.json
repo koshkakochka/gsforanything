@@ -25,6 +25,8 @@
           "site-source/communityMerge.js",
           "site-source/twinSticks.js",
           "site-source/cameraControls.js",
+          "site-source/controlBindings.js",
+          "site-source/customControls.js",
           "site-source/chatPrompt.js",
           "site-source/originGizmo.js",
           "site-source/sceneFit.js",

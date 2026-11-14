@@ -1154,6 +1154,68 @@
 			text-align: center;
 		}
 		#dchat-controls-status { font-size: 11px; color: rgba(255, 255, 255, 0.72); }
+		/* First person: Player height field with ▲ / ▼ */
+		.gs-height-row { display: flex; align-items: center; gap: 6px; }
+		#desktop-chat #dchat-player-height-input {
+			width: 72px; box-sizing: border-box; padding: 7px 8px; border-radius: 6px; border: 1px solid #6d7088;
+			background: #24253a; color: #fff; font: 600 13px/1.3 ui-monospace, Menlo, monospace; text-align: right;
+		}
+		#desktop-chat #dchat-player-height-input.invalid { border-color: #f87171; }
+		.gs-height-unit { font-size: 13px; color: rgba(255, 255, 255, 0.8); }
+		.gs-height-steps { display: flex; gap: 4px; }
+		.gs-height-step { width: 36px; padding: 6px 0; font-size: 12px; line-height: 1; }
+		.gs-height-reset { width: auto; padding: 6px 10px; font-size: 12px; margin-left: auto; }
+		.gs-height-help { margin-top: 6px; }
+		html.gs-phone .gs-height-step { width: 44px; min-height: 44px; }
+		/* Controls tab sub-tabs (Camera | Custom Controls) */
+		#dchat-controls-subtabs { display: flex; gap: 6px; flex-shrink: 0; }
+		.dchat-controls-section { display: none; flex-direction: column; gap: 12px; }
+		.dchat-controls-section.active { display: flex; }
+		#dchat-controls-subtabs .dchat-subtab.has-custom::after {
+			content: ''; display: inline-block; width: 7px; height: 7px; margin-left: 6px;
+			border-radius: 50%; background: #34d399; vertical-align: middle;
+		}
+		/* Key remapping rows (controlBindings.js) and Custom Controls params */
+		#dchat-key-remap:empty { display: none; }
+		.gs-remap-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+		.gs-remap-head .dchat-section-label { margin: 0; }
+		.gs-remap-reset, .gs-cc-reset { padding: 6px 10px; font-size: 12px; flex-shrink: 0; width: auto; }
+		.gs-remap-list, .gs-cc-params { display: flex; flex-direction: column; gap: 4px; }
+		.gs-remap-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; }
+		.gs-remap-label { flex: 1 1 auto; min-width: 0; color: rgba(255, 255, 255, 0.88); font-size: 12px; overflow-wrap: anywhere; }
+		.gs-remap-keys { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+		#desktop-chat input.gs-key-input {
+			width: 92px; box-sizing: border-box; padding: 6px 8px; border-radius: 6px;
+			border: 1px solid #6d7088; background: #24253a; color: #fff;
+			font: 600 12px/1.3 ui-monospace, Menlo, monospace; text-align: center;
+		}
+		#desktop-chat input.gs-key-input::placeholder { color: rgba(255, 255, 255, 0.4); font-weight: 400; }
+		#desktop-chat input.gs-key-input.capturing { border-color: #a5b4fc; box-shadow: 0 0 0 2px rgba(165, 180, 252, 0.35); }
+		#desktop-chat input.gs-key-input.invalid { border-color: #f87171; }
+		#desktop-chat input.gs-key-input.duplicate { border-color: #fbbf24; background: #3b3220; }
+		.gs-remap-warning { font-size: 12px; line-height: 1.4; margin-top: 6px; }
+		.gs-remap-warning[hidden] { display: none; }
+		.gs-remap-dup { color: #fbbf24; font-weight: 600; }
+		.gs-cc-overlap { color: rgba(255, 255, 255, 0.72); margin-top: 2px; }
+		.gs-remap-fixed { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+		.gs-remap-fixed b { color: rgba(255, 255, 255, 0.8); font-weight: 600; }
+		.gs-remap-note { font-size: 12px; color: rgba(255, 255, 255, 0.6); margin-top: 4px; }
+		.gs-cc-empty { display: flex; flex-direction: column; gap: 8px; padding: 14px; border: 1px dashed #6d7088; border-radius: 10px; font-size: 12px; line-height: 1.45; color: rgba(255, 255, 255, 0.78); }
+		.gs-cc-empty p { margin: 0; }
+		.gs-cc-empty-title { font-size: 13px; font-weight: 700; color: #fff; }
+		.gs-cc-example { color: rgba(255, 255, 255, 0.6); font-style: italic; }
+		.gs-cc-scheme { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid #4b4d63; border-radius: 10px; background: rgba(255, 255, 255, 0.03); }
+		.gs-cc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+		.gs-cc-title { font-size: 14px; font-weight: 700; color: #fff; min-width: 0; overflow-wrap: anywhere; }
+		.gs-cc-range { width: 110px; accent-color: #7c3aed; }
+		#desktop-chat input.gs-cc-number { width: 64px; box-sizing: border-box; padding: 5px 6px; border-radius: 6px; border: 1px solid #6d7088; background: #24253a; color: #fff; font-size: 12px; }
+		.gs-cc-unit { font-size: 11px; color: rgba(255, 255, 255, 0.6); }
+		.gs-cc-toggle { width: 18px; height: 18px; margin: 0; accent-color: #7c3aed; }
+		.gs-cc-select { max-width: 150px; padding: 5px 6px; border-radius: 6px; border: 1px solid #6d7088; background: #24253a; color: #fff; font-size: 12px; }
+		html.gs-phone .gs-remap-row { min-height: 48px; }
+		html.gs-phone #desktop-chat input.gs-key-input { width: 84px; }
+		html.gs-phone .gs-cc-range { width: 90px; min-height: 44px; }
+		html.gs-phone .gs-cc-param[data-type="boolean"] .gs-remap-keys { min-width: 44px; min-height: 44px; justify-content: center; }
 		#dchat-gamepad-status.connected { color: #34d399; font-weight: 600; }
 		/* Gamepad connect / disconnect toast (created by main.js) */
 		#gs-gamepad-toast {
@@ -3341,6 +3403,11 @@
 
 		<div id="dchat-panel-controls" class="dchat-panel">
 			<div id="dchat-controls">
+				<div id="dchat-controls-subtabs" role="tablist" aria-label="Controls">
+					<button type="button" class="dchat-subtab active" data-controls-section="camera" role="tab" aria-selected="true">Camera</button>
+					<button type="button" class="dchat-subtab" data-controls-section="custom" role="tab" aria-selected="false">Custom Controls</button>
+				</div>
+				<div class="dchat-controls-section active" data-controls-section="camera">
 				<div>
 					<div class="dchat-section-label" style="margin-bottom:8px">Camera controls</div>
 					<div id="dchat-camera-mode" role="radiogroup" aria-label="Camera controls">
@@ -3375,6 +3442,21 @@
 					<b>PointerLockControls</b>. Click the scene to look around with the mouse, <kbd>Esc</kbd> to release &middot;
 					<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or <kbd>&uarr;</kbd><kbd>&larr;</kbd><kbd>&darr;</kbd><kbd>&rarr;</kbd> move.
 				</div>
+				<!-- First person eye height (main.js: Player height) -->
+				<div class="dchat-controls-help" data-camera-help="firstperson" id="dchat-player-height" hidden>
+					<label class="dchat-section-label" for="dchat-player-height-input" style="display:block;margin:2px 0 6px">Player height</label>
+					<div class="gs-height-row">
+						<input type="text" id="dchat-player-height-input" inputmode="decimal" autocomplete="off" spellcheck="false"
+							aria-describedby="dchat-player-height-help" aria-label="Player height in metres" value="1.6" />
+						<span class="gs-height-unit">m</span>
+						<div class="gs-height-steps">
+							<button type="button" class="dchat-btn secondary gs-height-step" id="dchat-player-height-up" aria-label="Increase player height by 0.1 m">&#9650;</button>
+							<button type="button" class="dchat-btn secondary gs-height-step" id="dchat-player-height-down" aria-label="Decrease player height by 0.1 m">&#9660;</button>
+						</div>
+						<button type="button" class="dchat-btn secondary gs-height-reset" id="dchat-player-height-reset">Reset</button>
+					</div>
+					<div id="dchat-player-height-help" class="gs-height-help">Eye height above the floor while walking, 0.3&ndash;5 m (default 1.6). Type a value or use the arrows (hold to repeat). Fly moves freely up and down instead (<kbd>R</kbd>/<kbd>F</kbd>).</div>
+				</div>
 				<div class="dchat-controls-help" data-camera-help="fly firstperson" hidden>
 					On-screen joysticks: left stick moves (up/down forward and back, sideways strafes), right stick looks around.
 					<label id="dchat-twin-sticks-opt">
@@ -3389,6 +3471,8 @@
 					Keys work unless you are typing in a text field. Reset Camera View (Env tab) returns to the default view.
 				</div>
 				<div id="dchat-controls-status"></div>
+				<!-- Key remapping for the selected style (controlBindings.js, filled by main.js) -->
+				<div id="dchat-key-remap" aria-label="Keys for the selected camera mode"></div>
 				<div>
 					<div class="dchat-section-label" style="margin:6px 0 8px">Game controller</div>
 					<div id="dchat-gamepad-status" class="dchat-controls-help" role="status"></div>
@@ -3417,6 +3501,16 @@
 				</div>
 				<div class="dchat-controls-help" style="color:rgba(255,255,255,0.72)">
 					Desktop and phone only. In a headset, the thumbsticks still move you (see Environment &rarr; Navigation).
+				</div>
+				</div>
+				<!-- Custom Controls: schemes defined by scene code / the chat (customControls.js) -->
+				<div class="dchat-controls-section" data-controls-section="custom">
+					<div class="dchat-section-label">Custom Controls</div>
+					<div id="dchat-custom-controls"></div>
+					<div class="dchat-controls-help" style="color:rgba(255,255,255,0.72)">
+						A custom scheme belongs to the scene that defined it: clearing or loading a scene removes it.
+						Changed settings are saved in this browser and with the scene when you save or share it.
+					</div>
 				</div>
 			</div>
 		</div>
