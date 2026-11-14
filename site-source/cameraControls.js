@@ -7,28 +7,29 @@
 //     misc_controls_pointerlock example does,
 //   - forwards game-controller and on-screen stick values to each control's
 //     own movement / rotation API (see stick()).
-// Modes: orbit (OrbitControls, default), map (MapControls), trackball
-// (TrackballControls), fly (FlyControls), firstperson (PointerLockControls), off.
+// Modes: map (MapControls, default), orbit (OrbitControls), fly (FlyControls),
+// firstperson (PointerLockControls), off.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { MapControls } from 'three/examples/jsm/controls/MapControls.js';
-import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 import { FlyControls } from 'three/examples/jsm/controls/FlyControls.js';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 
-export const CAMERA_MODES = ['orbit', 'map', 'trackball', 'fly', 'firstperson', 'off'];
-export const CAMERA_MODE_LABELS = { orbit: 'Orbit', map: 'Map', trackball: 'Trackball', fly: 'Fly', firstperson: 'First person', off: 'Off' };
-// Values saved by GS 0.976 and earlier (Orbit / Free-roam / Off).
-const LEGACY_MODES = { free: 'firstperson', 'free-roam': 'firstperson' };
+export const DEFAULT_CAMERA_MODE = 'map';
+export const CAMERA_MODES = ['orbit', 'map', 'fly', 'firstperson', 'off'];
+export const CAMERA_MODE_LABELS = { orbit: 'Orbit', map: 'Map', fly: 'Fly', firstperson: 'First person', off: 'Off' };
+// Values saved by GS 0.976 and earlier (Orbit / Free-roam / Off), plus
+// Trackball which was later removed (falls back to the Map default).
+const LEGACY_MODES = { free: 'firstperson', 'free-roam': 'firstperson', trackball: 'map' };
 export function normalizeCameraMode(saved) {
 	if (CAMERA_MODES.includes(saved)) return saved;
-	return LEGACY_MODES[saved] || 'orbit';
+	return LEGACY_MODES[saved] || DEFAULT_CAMERA_MODE;
 }
 
 // Default desktop view: 4 m back from the scene origin at eye height.
 export const DEFAULT_CAMERA_POSITION = Object.freeze(new THREE.Vector3(0, 1.6, 4));
 export const ORBIT_TARGET = Object.freeze(new THREE.Vector3(0, 0, 0));
-const TARGET_MODES = new Set(['orbit', 'map', 'trackball']);
+const TARGET_MODES = new Set(['orbit', 'map']);
 // Modes whose stick input is forwarded (on-screen joysticks are shown for these).
 export const STICK_MODES = new Set(['fly', 'firstperson']);
 const GAMEPAD_MODES = new Set(['orbit', 'map', 'fly', 'firstperson']);
@@ -157,9 +158,6 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 	document.addEventListener('focusin', onFocusChange);
 	document.addEventListener('focusout', () => setTimeout(onFocusChange, 0));
 	window.addEventListener('blur', onBlur);
-	const onResize = () => { if (controls instanceof TrackballControls) controls.handleResize(); };
-	window.addEventListener('resize', onResize);
-
 	function levelCamera() {
 		camera.up.set(0, 1, 0);
 		_euler.setFromQuaternion(camera.quaternion, 'YXZ');
@@ -190,15 +188,6 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 				c.target.copy(ORBIT_TARGET);
 				c.maxPolarAngle = Math.PI / 2;
 				c.listenToKeyEvents(window);
-				c.update();
-				return c;
-			}
-			case 'trackball': {
-				const c = new TrackballControls(camera, domElement);
-				c.rotateSpeed = 1.0;
-				c.zoomSpeed = 1.2;
-				c.panSpeed = 0.8;
-				c.target.copy(ORBIT_TARGET);
 				c.update();
 				return c;
 			}
@@ -264,7 +253,7 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 
 	function update(dt) {
 		if (!controls || !controls.enabled) return;
-		if (controls instanceof OrbitControls || controls instanceof TrackballControls) controls.update();
+		if (controls instanceof OrbitControls) controls.update();
 		else if (controls instanceof FlyControls) controls.update(dt);
 		else if (controls instanceof PointerLockControls && dt > 0) {
 			// misc_controls_pointerlock animate(), without the jump/gravity part
@@ -287,7 +276,7 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 	// Game controller / on-screen joysticks, already past the deadzone.
 	// lx/ly: left stick (y down = positive), rx/ry: right stick, vertical:
 	// up (+) / down (-), zoom: in (+) / out (-). Each value goes into the
-	// active control's own API; Trackball has none for this and ignores it.
+	// active control's own API.
 	function stick(dt, { lx = 0, ly = 0, rx = 0, ry = 0, vertical = 0, zoom = 0 } = {}) {
 		if (!controls || !controls.enabled || dt <= 0 || !GAMEPAD_MODES.has(mode)) return;
 		const any = lx || ly || rx || ry || vertical || zoom;
@@ -350,7 +339,7 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 		stick,
 		refreshEnabled,
 		unlock() { if (controls instanceof PointerLockControls && controls.isLocked) controls.unlock(); },
-		/** Put the Orbit / Map / Trackball target back on the scene origin. */
+		/** Put the Orbit / Map target back on the scene origin. */
 		recenter() {
 			if (!controls || !controls.target) return;
 			// Drop any damped pan / rotate still in flight so the target stays put.
