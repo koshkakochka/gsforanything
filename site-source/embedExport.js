@@ -5,7 +5,7 @@
  * The snippet points at /embed/:id on this site. That route serves the
  * normal app (index.html + main.js) which, seeing the /embed/ path, starts in
  * a stripped "embed" mode: display-only (no chat, menus, code or community
- * UI), orbit camera, an optional Enter VR button and a small
+ * UI), Map camera (the desktop/phone default), an optional Enter VR button and a small
  * "Made with GS For Anything" link. The scene comes from Community (the
  * same storage as share links), so an unsaved scene is uploaded first;
  * main.js supplies that through getShare().

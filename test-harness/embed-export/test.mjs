@@ -215,7 +215,7 @@ for (const [H, base] of HOSTS) {
   ok(`${H} /embed renders the scene`, ev.ready === '1' && ev.knot, JSON.stringify(ev));
   ok(`${H} /embed: no editor UI, Made-with link`, !ev.chat && !ev.version && ev.badge === 'Made with GS For Anything' && ev.badgeHref.endsWith(`/s/${allowedId}`) && /gs-embed/.test(ev.cls), JSON.stringify(ev));
   ok(`${H} /embed: Enter VR button shown`, ev.xr && /enter vr/i.test(ev.xrText || ''), JSON.stringify(ev));
-  ok(`${H} /embed: orbit camera`, ev.mode === 'orbit', ev.mode);
+  ok(`${H} /embed: Map camera (desktop/phone default) and no persisted mode`, ev.mode === 'map' && !ev.savedMode, JSON.stringify({ mode: ev.mode, savedMode: ev.savedMode }));
   ok(`${H} /embed: used ?embed=1, no list fetch, no errors`, e._errs.length === 0 && e._chat === 0, e._errs.join(' | '));
   await shot(e, `${H}-6-embed-view`);
   await e.browserContext().close();

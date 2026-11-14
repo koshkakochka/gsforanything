@@ -114,17 +114,54 @@ Three moving parts:
   are unaffected. Test: `test-harness/mobile-layout`.
 - **Desktop camera controls** (`site-source/cameraControls.js`): the stock
   three.js r180 addons from `vendor_modules/three/examples/jsm/controls/`:
-  Orbit (OrbitControls, default, target at the origin), Map (MapControls),
-  Trackball, Fly (FlyControls), First person (PointerLockControls + WASD as in
+  Map (MapControls, default, target at the origin), Orbit (OrbitControls),
+  Fly (FlyControls), First person (PointerLockControls + WASD as in
   the three.js pointerlock example) and Off, picked in the Controls tab. Only
   focused text fields block keys; VR uses head tracking. Scenes see
   `window.gsControls` / `window.controls` / `window.gsOrbit`.
+- **Key remapping** (`site-source/controlBindings.js`, Controls → Camera):
+  every keyboard action of Map, Orbit, Fly and First person has a primary and
+  an alternate key field (click it and press the key; phone soft keyboards
+  can type a name like `W`, `ArrowUp`, `Space`, `Shift`). Keys are stored as `KeyboardEvent.code`; a pressed key is
+  translated to the stock key of its action before it reaches the stock
+  three.js control, so the defaults behave exactly as before. Duplicate keys
+  in a style are refused with a notice ("W is already Move forward"), so a
+  key pressed into a focused field can't silently take another action's key;
+  Reset to defaults per style. Mouse / touch gestures are listed read-only.
+  A key field captures the pressed key (letters too, by `code`) and gives
+  focus back at once; a press anywhere outside it releases it too. Clearing
+  every key of an action restores its defaults. The mode help text shows the
+  keys as bound now. Saved per style in localStorage `gs.controlKeys.v3`
+  (validated on load: names like `d` become `KeyD`, blank actions fall back
+  to their defaults, a key saved on two actions stays on the first and the
+  other gets its default back; the v1 / v2 layouts of the dev builds are
+  dropped). Not in scenes: a keyboard preference, like the camera mode. Scenes read them
+  with `gsControls.keyBindings(mode)`.
+- **Player height** (Controls → Camera → First person): eye height for
+  walking, 0.3–5 m (default 1.6), text field (accepts `1.75`, `175cm`,
+  `5.8ft`) with ▲ / ▼ (0.1 m, hold to repeat). Applies live, kept by Reset
+  Camera View, saved in localStorage `gs.playerHeight`. Fly has no fixed
+  height (R / F move up and down).
+- **Custom Controls** (`site-source/customControls.js`, Controls → Custom
+  Controls): scene code — normally a chat reply, when the user asks for a new
+  control scheme — calls `gsControls.defineCustomScheme({ id, name,
+  description, cameraMode?, params })` with params of type `key`, `number`
+  (min / max / step / unit), `boolean` or `select` (options). The tab shows
+  them as key fields, slider + number, switch and list, live-updating the
+  handle the code reads (`h.isDown(key)`, `h.values`, `h.onChange`,
+  `h.onPress`). Same id again replaces the scheme and keeps the user's
+  values; clearing / loading a scene removes all schemes; `cameraMode: 'off'`
+  turns the camera controls off while the scheme exists and restores them
+  after. Changed values are saved in localStorage `gs.customControls.v1` per
+  scheme id and in scene files as `customControls: { id: { param: value } }`.
+  The chat prompt (server.js, copied to worker/prompts.js) documents the API.
+  Test: `test-harness/controls-remap`.
 - **Game controllers** (Gamepad API, `window.gsGamepad`): Xbox Series X|S
   and other standard pads over USB or Bluetooth drive the desktop/phone
   camera through the stock three.js control picked in the Controls tab
   (Orbit / Map: right stick orbits, left stick pans / dollies, LT/RT zoom;
   First person: left stick walks, right stick looks; Fly: left stick moves,
-  right stick yaw/pitch, LB/RB down/up; Trackball and Off: not used; Y
+  right stick yaw/pitch, LB/RB down/up; Off: not used; Y
   toggles Orbit / First person, View resets). Scenes read the pad with `gsGamepad.axis()`,
   `button()`, `justPressed()`, `onButton()`, and set
   `gsGamepad.captureCamera = true` to take the sticks over. WebXR headset
