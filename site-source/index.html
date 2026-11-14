@@ -1213,7 +1213,7 @@
 		.gs-cc-toggle { width: 18px; height: 18px; margin: 0; accent-color: #7c3aed; }
 		.gs-cc-select { max-width: 150px; padding: 5px 6px; border-radius: 6px; border: 1px solid #6d7088; background: #24253a; color: #fff; font-size: 12px; }
 		html.gs-phone .gs-remap-row { min-height: 48px; }
-		html.gs-phone #desktop-chat input.gs-key-input { width: 84px; }
+		html.gs-phone #desktop-chat input.gs-key-input { width: 112px; padding-left: 4px; padding-right: 4px; }
 		html.gs-phone .gs-cc-range { width: 90px; min-height: 44px; }
 		html.gs-phone .gs-cc-param[data-type="boolean"] .gs-remap-keys { min-width: 44px; min-height: 44px; justify-content: center; }
 		#dchat-gamepad-status.connected { color: #34d399; font-weight: 600; }
@@ -3442,21 +3442,6 @@
 					<b>PointerLockControls</b>. Click the scene to look around with the mouse, <kbd>Esc</kbd> to release &middot;
 					<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or <kbd>&uarr;</kbd><kbd>&larr;</kbd><kbd>&darr;</kbd><kbd>&rarr;</kbd> move.
 				</div>
-				<!-- First person eye height (main.js: Player height) -->
-				<div class="dchat-controls-help" data-camera-help="firstperson" id="dchat-player-height" hidden>
-					<label class="dchat-section-label" for="dchat-player-height-input" style="display:block;margin:2px 0 6px">Player height</label>
-					<div class="gs-height-row">
-						<input type="text" id="dchat-player-height-input" inputmode="decimal" autocomplete="off" spellcheck="false"
-							aria-describedby="dchat-player-height-help" aria-label="Player height in metres" value="1.6" />
-						<span class="gs-height-unit">m</span>
-						<div class="gs-height-steps">
-							<button type="button" class="dchat-btn secondary gs-height-step" id="dchat-player-height-up" aria-label="Increase player height by 0.1 m">&#9650;</button>
-							<button type="button" class="dchat-btn secondary gs-height-step" id="dchat-player-height-down" aria-label="Decrease player height by 0.1 m">&#9660;</button>
-						</div>
-						<button type="button" class="dchat-btn secondary gs-height-reset" id="dchat-player-height-reset">Reset</button>
-					</div>
-					<div id="dchat-player-height-help" class="gs-height-help">Eye height above the floor while walking, 0.3&ndash;5 m (default 1.6). Type a value or use the arrows (hold to repeat). Fly moves freely up and down instead (<kbd>R</kbd>/<kbd>F</kbd>).</div>
-				</div>
 				<div class="dchat-controls-help" data-camera-help="fly firstperson" hidden>
 					On-screen joysticks: left stick moves (up/down forward and back, sideways strafes), right stick looks around.
 					<label id="dchat-twin-sticks-opt">
@@ -3473,6 +3458,21 @@
 				<div id="dchat-controls-status"></div>
 				<!-- Key remapping for the selected style (controlBindings.js, filled by main.js) -->
 				<div id="dchat-key-remap" aria-label="Keys for the selected camera mode"></div>
+				<!-- First person eye height (main.js: Player height), right below the First person keys -->
+				<div class="dchat-controls-help" data-camera-help="firstperson" id="dchat-player-height" hidden>
+					<label class="dchat-section-label" for="dchat-player-height-input" style="display:block;margin:2px 0 6px">Player height</label>
+					<div class="gs-height-row">
+						<input type="text" id="dchat-player-height-input" inputmode="decimal" autocomplete="off" spellcheck="false"
+							aria-describedby="dchat-player-height-help" aria-label="Player height in metres" value="1.6" />
+						<span class="gs-height-unit">m</span>
+						<div class="gs-height-steps">
+							<button type="button" class="dchat-btn secondary gs-height-step" id="dchat-player-height-up" aria-label="Increase player height by 0.1 m">&#9650;</button>
+							<button type="button" class="dchat-btn secondary gs-height-step" id="dchat-player-height-down" aria-label="Decrease player height by 0.1 m">&#9660;</button>
+						</div>
+						<button type="button" class="dchat-btn secondary gs-height-reset" id="dchat-player-height-reset">Reset</button>
+					</div>
+					<div id="dchat-player-height-help" class="gs-height-help">Eye height above the floor while walking, 0.3&ndash;5 m (default 1.6). Type a value or use the arrows (hold to repeat). Fly moves freely up and down instead (<kbd>R</kbd>/<kbd>F</kbd>).</div>
+				</div>
 				<div>
 					<div class="dchat-section-label" style="margin:6px 0 8px">Game controller</div>
 					<div id="dchat-gamepad-status" class="dchat-controls-help" role="status"></div>

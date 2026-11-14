@@ -138,6 +138,22 @@ async function focusKey(p, style, action, slot = 0) {
 	return sel;
 }
 
+
+	const orderInfo = (pg) => pg.evaluate(() => {
+		const keys = document.getElementById('dchat-key-remap');
+		const hEl = document.getElementById('dchat-player-height');
+		const rows = keys.querySelectorAll('.gs-remap-row');
+		const last = rows[rows.length - 1];
+		return {
+			style: keys.dataset.style,
+			label: keys.querySelector('.dchat-section-label')?.textContent,
+			prevIsKeys: hEl.previousElementSibling === keys,
+			below: !!last && hEl.getBoundingClientRect().top >= keys.getBoundingClientRect().bottom - 1,
+			between: [...document.querySelectorAll('#dchat-controls .dchat-controls-section[data-controls-section="camera"] > *')]
+				.filter((e) => e.offsetParent !== null).map((e) => e.id || e.className).join(' | ')
+		};
+	});
+
 // ===================================================================== desktop
 const ctx = await b.createBrowserContext();
 let p = await openPage(ctx, { width: 1280, height: 800 });
@@ -373,6 +389,11 @@ await openControls(p);
 	await p.evaluate(() => document.getElementById('dchat-player-height')?.scrollIntoView({ block: 'center' }));
 	await sleep(120);
 	await p.screenshot({ path: `${SHOT_DIR}/desktop-player-height.png` });
+	const ord = await orderInfo(p);
+	check('desktop Player height sits directly below the First person keys', ord.style === 'firstperson' && ord.label === 'First person keys' && ord.prevIsKeys && ord.below, ord);
+	await p.evaluate(() => { const rows = document.querySelectorAll('#dchat-key-remap .gs-remap-row'); rows[0]?.scrollIntoView({ block: 'start' }); });
+	await sleep(120);
+	await p.screenshot({ path: `${SHOT_DIR}/desktop-height-below-keys.png` });
 	await p.reload({ waitUntil: 'networkidle2' });
 	await p.waitForFunction(() => window.gsKeyBindings);
 	await sleep(600);
@@ -553,6 +574,8 @@ await p.close();
 	});
 	check('phone remap list has no horizontal overflow', lay.overflowX <= 1 && lay.outside === 0, lay);
 	check('phone key fields and sub-tabs are ≥44px', lay.minH >= 44 && lay.tabsH >= 44, lay);
+	const clipped = await ph.evaluate(() => [...document.querySelectorAll('#dchat-key-remap input.gs-key-input')].filter((i) => i.scrollWidth > i.clientWidth + 1).map((i) => i.value));
+	check('phone key names fit their fields (ArrowRight not clipped)', clipped.length === 0, clipped);
 	check('phone sub-tabs on one row; header buttons on one row', lay.tabsRow === 1 && lay.headerRows <= 1, lay);
 	await ph.evaluate(() => document.getElementById('dchat-key-remap')?.scrollIntoView({ block: 'start' }));
 	await sleep(150);
@@ -578,6 +601,11 @@ await p.close();
 	const py = await ph.evaluate(() => [document.getElementById('dchat-player-height-input').value, window.camera.position.y]);
 	check('phone ▲ tap raises the eye height', py[0] === '1.7' && Math.abs(py[1] - 1.7) < 1e-6, py);
 	await ph.screenshot({ path: `${SHOT_DIR}/phone-player-height.png` });
+	const pord = await orderInfo(ph);
+	check('phone Player height sits directly below the First person keys', pord.style === 'firstperson' && pord.prevIsKeys && pord.below, pord);
+	await ph.evaluate(() => { const rows = document.querySelectorAll('#dchat-key-remap .gs-remap-row'); rows[rows.length - 1]?.scrollIntoView({ block: 'start' }); });
+	await sleep(150);
+	await ph.screenshot({ path: `${SHOT_DIR}/phone-height-below-keys.png` });
 	await setMode(ph, 'map');
 	await openControls(ph, 'custom');
 	await ph.screenshot({ path: `${SHOT_DIR}/phone-custom-empty.png` });
