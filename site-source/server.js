@@ -9,7 +9,7 @@ import fs from 'fs';
 import selfsigned from 'selfsigned';
 import { randomBytes } from 'crypto';
 import { environmentHdriForRecord, HDRI_FILE_MAX_BYTES, hdriContentType } from './sceneHdri.js';
-import { allowExportFromBody, embedUnavailableHtml, exportAllowed, isSceneOwner, newOwnerKey, OWNER_KEY_HEADER, ownerKeyHash, publicSceneRecord } from './sceneExportPolicy.js';
+import { allowExportFromBody, exportAllowed, isSceneOwner, legacyEmbedRedirectPath, newOwnerKey, OWNER_KEY_HEADER, ownerKeyHash, publicSceneRecord } from './sceneExportPolicy.js';
 import { listThumbFields, parseThumbnailPayload, publicThumbnailField, THUMB_PREFIX, thumbPathname, thumbStub } from './sceneThumbnail.js';
 import { descriptionForList, sanitizeDescription, descriptionPayloadTooLarge, createRateLimiter, clientIpFromHeaders } from './sceneDescription.js';
 
@@ -720,7 +720,7 @@ app.get('/api/load-scene', (req, res) => {
 //
 // Pathname shape: community-scenes/{id}--{encodeURIComponent(name)}.json,
 // or community-scenes/{id}.nx--{name}.json for a scene whose creator turned
-// exports off (see sceneExportPolicy.js), so the list and /embed/:id know the
+// exports off (see sceneExportPolicy.js), so the list and share routes know the
 // setting without fetching every blob body. The id is stable across renames;
 // the encoded name is only for list display without fetching every blob body. Rename rewrites the pathname
 // (put + best-effort delete of the old blob) and list dedupes by id.
@@ -768,8 +768,7 @@ function sceneUrls(req, id) {
 	return {
 		id,
 		editorUrl: `${origin}/e/${id}`,
-		viewUrl: `${origin}/s/${id}`,
-		embedUrl: `${origin}/embed/${id}`
+		viewUrl: `${origin}/s/${id}`
 	};
 }
 
@@ -1089,10 +1088,6 @@ app.get('/api/community-scenes/:id', async (req, res) => {
 		const record = await readCommunitySceneRecord(meta);
 		if (meta.allowExport === false) record.allowExport = false;
 		const isOwner = await isSceneOwner(record, req.get(OWNER_KEY_HEADER));
-		// The embed page asks with ?embed=1: refuse when the creator turned exports off.
-		if (req.query.embed === '1' && !exportAllowed(record) && !isOwner) {
-			return res.status(403).json({ error: 'The creator of this scene turned off exports, so it can\'t be embedded.', exportsDisabled: true });
-		}
 		const pub = publicSceneRecord(record, { isOwner });
 		const thumb = publicThumbnailField({ ...record, ...pub, id: meta.id });
 		if (thumb) pub.thumbnail = thumb;
@@ -1474,8 +1469,7 @@ function sendAppIndex(_req, res) {
 	res.sendFile(join(__dirname, 'index.html'));
 }
 // A scene with exports off gets frame-ancestors 'self' on /s and /e so its
-// share links can't be iframed on other sites; /embed/:id (the app in embed
-// mode, see main.js) is only served for scenes that allow exports.
+// share links can't be iframed on other sites.
 async function shareRouteRecordMeta(id) {
 	if (!process.env.BLOB_READ_WRITE_TOKEN || !SCENE_ID_RE.test(id)) return null;
 	try { return await findCommunityBlob(id); } catch { return null; }
@@ -1487,12 +1481,11 @@ async function sendShareIndex(req, res) {
 }
 app.get('/s/:id', sendShareIndex);
 app.get('/e/:id', sendShareIndex);
-app.get('/embed/:id', async (req, res) => {
-	const meta = await shareRouteRecordMeta(req.params.id);
+// Embedding was removed: old /embed/:id iframes and links go to the scene's
+// view-only share link (see legacyEmbedRedirectPath in sceneExportPolicy.js).
+app.get('/embed/:id', (req, res) => {
 	res.set('Cache-Control', 'no-store');
-	if (!meta) return res.status(404).type('html').send(embedUnavailableHtml({ status: 404, origin: requestOrigin(req) }));
-	if (meta.allowExport === false) return res.status(403).type('html').send(embedUnavailableHtml({ status: 403, name: meta.name, origin: requestOrigin(req) }));
-	sendAppIndex(req, res);
+	res.redirect(302, legacyEmbedRedirectPath(req.params.id));
 });
 
 // Get local network IP for Quest 3 connection

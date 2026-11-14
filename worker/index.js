@@ -1,5 +1,5 @@
 import { environmentHdriForRecord, HDRI_FILE_MAX_BYTES, hdriContentType } from "../site-source/sceneHdri.js";
-import { allowExportFromBody, embedUnavailableHtml, exportAllowed, isSceneOwner, newOwnerKey, OWNER_KEY_HEADER, ownerKeyHash, publicSceneRecord } from "../site-source/sceneExportPolicy.js";
+import { allowExportFromBody, exportAllowed, isSceneOwner, legacyEmbedRedirectPath, newOwnerKey, OWNER_KEY_HEADER, ownerKeyHash, publicSceneRecord } from "../site-source/sceneExportPolicy.js";
 import { listThumbFields, parseThumbnailPayload, publicThumbnailField, thumbKey, thumbStub } from "../site-source/sceneThumbnail.js";
 import { descriptionForList, sanitizeDescription, descriptionPayloadTooLarge, createRateLimiter, clientIpFromHeaders } from "../site-source/sceneDescription.js";
 import { CHAT_PROMPT_REQUIRED, FIX_CODE_PROMPT, MAX_CUSTOM_PROMPT_CHARS, SYSTEM_PROMPT, THEME_SYSTEM_PROMPT } from "./prompts.js";
@@ -10,7 +10,8 @@ const descriptionPatchLimit = createRateLimiter();
 // binding from site-source/server.js are intentionally not included: Workers
 // terminates TLS and does not listen on a port.
 // Static client files are Workers static assets (ASSETS). This module only
-// handles /api/* plus the /s/:id, /e/:id and /embed/:id share routes.
+// handles /api/* plus the /s/:id and /e/:id share routes (and redirects the
+// retired /embed/:id route to /s/:id).
 
 const LLM_BACKEND_DEFAULT = "openai-sol";
 const OPENAI_MODEL_DEFAULT = "gpt-6-astra";
@@ -184,7 +185,7 @@ function requestOrigin(request) {
 
 function sceneUrls(request, id) {
   const origin = requestOrigin(request);
-  return { id, editorUrl: `${origin}/e/${id}`, viewUrl: `${origin}/s/${id}`, embedUrl: `${origin}/embed/${id}` };
+  return { id, editorUrl: `${origin}/e/${id}`, viewUrl: `${origin}/s/${id}` };
 }
 
 function requireStore(env) {
@@ -558,10 +559,6 @@ async function handleApi(request, env) {
     const record = await kvGetJson(env, `cs:${id}`);
     if (!record) return json({ error: "Scene not found" }, 404);
     const isOwner = await isSceneOwner(record, request.headers.get(OWNER_KEY_HEADER));
-    // The embed page asks with ?embed=1: refuse when the creator turned exports off.
-    if (url.searchParams.get("embed") === "1" && !exportAllowed(record) && !isOwner) {
-      return json({ error: "The creator of this scene turned off exports, so it can't be embedded.", exportsDisabled: true }, 403);
-    }
     const pub = publicSceneRecord(record, { isOwner });
     const thumb = publicThumbnailField({ ...record, ...pub, id });
     if (thumb) pub.thumbnail = thumb;
@@ -720,25 +717,14 @@ function withHeaders(res, headers) {
   return out;
 }
 
-function htmlResponse(html, status) {
-  return new Response(html, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
-}
-
-// /s/:id and /e/:id: the app. /embed/:id: the app in embed mode (main.js),
-// only for scenes whose creator allows exports. A scene with exports off
-// also gets frame-ancestors 'self' on /s and /e so its share links can't be
-// iframed on other sites (the embed route is what other sites should use).
+// /s/:id and /e/:id: the app. A scene with exports off gets
+// frame-ancestors 'self' so its share links can't be iframed on other sites.
 async function serveShareRoute(request, env, kind, rawId) {
   let id = "";
   try { id = decodeURIComponent(rawId); } catch { id = ""; }
   let record = null;
   if (env.SCENES && SCENE_ID_RE.test(id)) {
     try { record = await kvGetJson(env, `cs:${id}`); } catch { record = null; }
-  }
-  if (kind === "embed") {
-    if (!record) return htmlResponse(embedUnavailableHtml({ status: 404, origin: requestOrigin(request) }), 404);
-    if (!exportAllowed(record)) return htmlResponse(embedUnavailableHtml({ status: 403, name: record.name, origin: requestOrigin(request) }), 403);
-    return withHeaders(await appIndex(request, env), { "cache-control": "no-store" });
   }
   const res = await appIndex(request, env);
   if (record && !exportAllowed(record)) return withHeaders(res, { "content-security-policy": "frame-ancestors 'self'" });
@@ -752,7 +738,13 @@ export default {
     if (path === "/api" || path.startsWith("/api/")) {
       return handleApi(request, env);
     }
-    const shareMatch = path.match(/^\/(s|e|embed)\/([^/]+)\/?$/);
+    // Embedding was removed: old /embed/:id iframes and links go to the
+    // scene's view-only share link (see legacyEmbedRedirectPath).
+    const embedMatch = path.match(/^\/embed\/([^/]*)\/?$/);
+    if (embedMatch) {
+      return new Response(null, { status: 302, headers: { location: legacyEmbedRedirectPath(embedMatch[1]), "cache-control": "no-store" } });
+    }
+    const shareMatch = path.match(/^\/(s|e)\/([^/]+)\/?$/);
     if (shareMatch) {
       return serveShareRoute(request, env, shareMatch[1], shareMatch[2]);
     }

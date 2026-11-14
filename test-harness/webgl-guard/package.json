@@ -1,0 +1,9 @@
+{
+  "name": "gs-webgl-guard-test",
+  "private": true,
+  "type": "module",
+  "description": "webglGuard.js in the main app: one WebGL context, one restore after context loss, stop with Reload on relapse, friendly page when WebGL is refused.",
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}
