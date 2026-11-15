@@ -9,11 +9,13 @@ This file covers the two Cloudflare environments and the deploy scripts. For the
 | | Production | Development |
 | --- | --- | --- |
 | Worker name | `gs` | `gs-dev` (wrangler `--env dev`) |
-| URLs | https://gsforanything.com, https://www.gsforanything.com, fallback https://gs.krossruiz.workers.dev | https://dev.gsforanything.com, fallback https://gs-dev.krossruiz.workers.dev |
+| URLs | https://gsforanything.com, https://www.gsforanything.com (backup: https://vrclaudeinterface.vercel.app) | https://dev.gsforanything.com |
 | KV namespace | `carl-junior-scenes` (`SCENES` binding id `0e333b55e246449e9f97cb7e90d32f7a`) | `gs-dev-scenes` (`SCENES` binding id `07dcdd515d524614b1d3e2ff0c2faa3a`) |
 | Secrets | `CLAUDE_API_KEY`, `OPENAI_API_KEY`, `LLM_BACKEND` (set with `wrangler secret put`, not in the repo) | Separate secret store on `gs-dev`. Put keys with `npx wrangler secret put NAME --env dev`. Dev must not reuse production KV; secret *values* cannot be read back from production. |
 | How it deploys | **Manual only.** `scripts/deploy-prod.sh --confirm` from a clean `origin/main` (the script calls `wrangler deploy --env=""` so the top-level production environment is explicit). There is no production GitHub Action. | `scripts/deploy-dev.sh` from any branch. GitHub Actions also deploys `gs-dev` on a push to the `dev` branch and on pull requests against `main`. |
 | Backup | Vercel project `vrclaudeinterface` → https://vrclaudeinterface.vercel.app (auto-deploy from `main`) | — |
+
+Both Workers have `workers_dev: false`, so nothing is published to `*.workers.dev`; deploys and smoke checks use only the custom domains (and the Vercel backup for production).
 
 Dev and production are different Workers and different KV namespaces. A save, Community upload, or description edit on `gs-dev` never writes to production KV, and the other way around.
 

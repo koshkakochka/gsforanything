@@ -7,7 +7,7 @@ const B = [`const tex = new THREE.TextureLoader().load("data:image/png;base64,${
 const req = M.buildMergeRequest({ sceneA: { label: 'A', id: 'realA', name: 'Runner', codeBlocks: A }, sceneB: { label: 'B', id: 'realB', name: 'Cat Garden', codeBlocks: B }, prompt: 'Controls from A; use B\'s textured box as the player instead of the plain cube. Keep it short.', picks: { controls: 'A', assets: 'B' } });
 console.log('sent chars', req.message.length, 'assets', req.stats.assets, 'b64 leaked', req.message.includes(B64.slice(0, 40)));
 const t0 = Date.now();
-const res = await fetch((process.env.GS_URL || 'https://gs.krossruiz.workers.dev') + '/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', content: req.message }], backend: 'claude-haiku-55' }) });
+const res = await fetch((process.env.GS_URL || 'https://dev.gsforanything.com') + '/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', content: req.message }], backend: 'claude-haiku-55' }) });
 const data = await res.json();
 const raw = data.content?.[0]?.text || JSON.stringify(data);
 fs.writeFileSync('real-reply.txt', raw);

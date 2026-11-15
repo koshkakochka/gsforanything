@@ -15,6 +15,8 @@ import * as GSContext from './creationContext.js';
 import * as GSMerge from './communityMerge.js';
 import { normalizeEnvironmentHdri, environmentHdriLoadUrl, environmentHdriSignature, hdriFormatFromName, HDRI_FILE_MAX_BYTES } from './sceneHdri.js';
 import * as ChatPrompt from './chatPrompt.js';
+import * as LocalLLM from './localLLM.js';
+import { initLocalModelPanel } from './localModelPanel.js';
 import { gsAlert, gsConfirm, gsPrompt, configureDialogs, dialogCard, refreshDialogMode, installDialogGlobals } from './gsDialog.js';
 import { createRendererOrExplain, watchContextLoss } from './webglGuard.js';
 import { EXPORTS_OFF_MESSAGE, OWNER_KEY_HEADER } from './sceneExportPolicy.js';
@@ -465,9 +467,16 @@ let isLoading = false;
 let selectedBackend = null; // backend key from /api/backends (e.g. 'claude', 'openai-sol', 'ollama') - set once it resolves
 let backendLabels = {}; // id -> display label from /api/backends
 let backendProviders = {}; // id -> 'claude' | 'openai' | 'ollama' from /api/backends
+// Local in-browser models (WebLLM): 'webllm:<key>' options added after the
+// server's backends. See localLLM.js / localModelPanel.js.
+let localModelPanel = null;
+let lastServerBackend = null; // the server model to go back to from a Local one
+let streamingReply = null; // reply text so far while a Local model streams
+const CHAT_BACKEND_STORAGE_KEY = 'gs.chatBackend';
 
 /** Provider for a backend key; falls back to the key prefix for older servers. */
 function backendProvider(id) {
+	if (LocalLLM.isLocalBackend(id)) return 'webllm';
 	if (backendProviders[id]) return backendProviders[id];
 	if (id === 'ollama') return 'ollama';
 	return /^openai/.test(id || '') ? 'openai' : 'claude';
@@ -475,6 +484,9 @@ function backendProvider(id) {
 
 /** Human-readable name for the currently selected model/provider. */
 function getActiveModelDisplayName() {
+	if (LocalLLM.isLocalBackend(selectedBackend)) {
+		return localModelPanel?.displayName() || `${LocalLLM.modelFor(selectedBackend)?.name || 'Local model'} (local)`;
+	}
 	if (selectedBackend === 'ollama') {
 		const name = selectedOllamaModel || desktopOllamaModelSelect?.value;
 		if (name && !/^Checking|^No local|^Could not/.test(name)) return name;
@@ -582,6 +594,18 @@ async function callOllamaDirect(systemPrompt, chatMessages, model, maxTokens = 1
 	}
 	if (!res.ok) throw new Error(data.error || `Ollama error: ${res.status}`);
 	return { content: [{ text: data.message?.content || '' }] };
+}
+
+// Backends the browser calls itself (no /api/* request): Ollama and the
+// Local WebLLM models. Same { content: [{ text }] } result shape.
+function isBrowserBackend(id) { return id === 'ollama' || LocalLLM.isLocalBackend(id); }
+async function callBrowserBackend(systemPrompt, chatMessages, maxTokens, opts = {}) {
+	if (LocalLLM.isLocalBackend(selectedBackend)) {
+		if (!localModelPanel) throw new Error('Local models are not ready yet.');
+		const modelId = localModelPanel.requireLoadedModelId();
+		return LocalLLM.chat(systemPrompt, chatMessages, { modelId, maxTokens, onText: opts.onText });
+	}
+	return callOllamaDirect(systemPrompt, chatMessages, selectedOllamaModel, maxTokens);
 }
 let keyboardShift = false;    // uppercase next character key
 let keyboardSymbols = false;  // symbol layer toggled on
@@ -1406,6 +1430,23 @@ vrSkybox = new THREE.Mesh(skyboxGeo, skyboxMat);
 vrSkybox.visible = false;
 scene.add(vrSkybox);
 
+// A Local model's reply while it streams: finished vr-exec blocks become
+// "[Executed code block N]" like the final text, an unfinished one a note.
+function streamingDisplayText(raw) {
+	let t = raw;
+	let writing = false;
+	const open = t.lastIndexOf('```vr-exec');
+	if (open !== -1 && t.indexOf('```', open + 10) === -1) { t = t.slice(0, open); writing = true; }
+	const shown = t.replace(/```vr-exec\n[\s\S]*?```/g, '[code block]').trim();
+	return writing ? `${shown}${shown ? '\n' : ''}[writing scene code…]` : shown;
+}
+let streamingRenderTimer = 0;
+function showStreamingReply(text) {
+	streamingReply = text;
+	if (streamingRenderTimer) return;
+	streamingRenderTimer = setTimeout(() => { streamingRenderTimer = 0; if (isLoading) renderDomChat(); }, 100);
+}
+
 // Renders the same message list into the desktop (non-XR) DOM chat window.
 function renderDomChat() {
 	if (!desktopChatMessages) return;
@@ -1425,6 +1466,15 @@ function renderDomChat() {
 			bubble.appendChild(strip);
 		}
 		if (msg.history) GSContext.decorateBubble(bubble, msg); // restored creation history
+		desktopChatMessages.appendChild(bubble);
+	}
+	if (isLoading && streamingReply) {
+		const bubble = document.createElement('div');
+		bubble.className = 'dchat-msg assistant streaming';
+		const text = document.createElement('div');
+		text.className = 'dchat-msg-text';
+		text.textContent = streamingDisplayText(streamingReply);
+		bubble.appendChild(text);
 		desktopChatMessages.appendChild(bubble);
 	}
 	if (isLoading) {
@@ -4277,11 +4327,10 @@ async function sendThemeChat() {
 	renderDomChat();
 	try {
 		let data;
-		if (selectedBackend === 'ollama') {
-			data = await callOllamaDirect(
+		if (isBrowserBackend(selectedBackend)) {
+			data = await callBrowserBackend(
 				cachedPrompts?.themePrompt || '',
 				themeChatMessages.map(m => ({ role: m.role, content: m.content })),
-				selectedOllamaModel,
 				4096
 			);
 		} else {
@@ -4938,7 +4987,7 @@ async function attemptAutoFix(failingCode, errorMessage, errorStack, blockKey) {
 
 		try {
 			let data;
-			if (selectedBackend === 'ollama') {
+			if (isBrowserBackend(selectedBackend)) {
 				// Built to match the server's /api/fix-code prompt exactly (see
 				// server.js) - kept client-side too so no code/error content has
 				// to transit the server just to reach the user's own local model.
@@ -4958,10 +5007,9 @@ async function attemptAutoFix(failingCode, errorMessage, errorStack, blockKey) {
 				userContent += `\nFix this code. Return ONLY a single \`vr-exec\` code block.`;
 				userContent += `\n\n${buildGsSettingsNote()}`;
 
-				data = await callOllamaDirect(
+				data = await callBrowserBackend(
 					cachedPrompts?.fixCodePrompt || '',
 					[{ role: 'user', content: userContent }],
-					selectedOllamaModel,
 					8192
 				);
 			} else {
@@ -5647,6 +5695,10 @@ function buildUserContent(userMessage, attachments, backend) {
 	if (images.length === 0) return { content: text };
 
 	const provider = backendProvider(backend);
+	if (provider === 'webllm') {
+		// The Local models read text only.
+		return { content: `${text || ''}\n\n(${images.length} image${images.length > 1 ? 's' : ''} attached; the local model can't see images.)`.trim() };
+	}
 	if (provider === 'ollama') {
 		// Ollama's /api/chat takes images as a separate per-message field
 		// (raw base64, no "data:" prefix), not inline in content.
@@ -5707,12 +5759,15 @@ async function sendMessage(userMessage) {
 
 	try {
 		let data;
-		if (selectedBackend === 'ollama') {
-			data = await callOllamaDirect(
+		if (isBrowserBackend(selectedBackend)) {
+			// Same system prompt (Chat → Prompt aware) and settings note as /api/chat.
+			data = await callBrowserBackend(
 				ChatPrompt.effectivePrompt() || cachedPrompts?.systemPrompt || '',
 				withGsSettingsNote(messages.map(m => ({ role: m.role, content: m.content, ...(m.images ? { images: m.images } : {}) }))),
-				selectedOllamaModel
+				16384,
+				{ onText: (t) => { if (turnEpoch === sceneEpoch) showStreamingReply(t); } }
 			);
+			streamingReply = null;
 		} else {
 			const response = await fetch('/api/chat', {
 				method: 'POST',
@@ -5815,6 +5870,7 @@ async function sendMessage(userMessage) {
 		GSContext.recordAssistantTurn({ raw: errMsg, display: errMsg, backend: turnBackend, model: turnModel, error: true });
 	} finally {
 		isLoading = false;
+		streamingReply = null;
 		sendButton.disabled = false;
 		renderDomChat();
 	}
@@ -5857,8 +5913,8 @@ window.GSContext = GSContext; // console / test access
 // Community scene merge (see communityMerge.js). The AI call uses the same
 // backend path as the scene chat; the result is installed as a new scene.
 async function callSceneChatBackend(apiMessages) {
-	if (selectedBackend === 'ollama') {
-		const data = await callOllamaDirect(ChatPrompt.effectivePrompt() || cachedPrompts?.systemPrompt || '', withGsSettingsNote(apiMessages), selectedOllamaModel);
+	if (isBrowserBackend(selectedBackend)) {
+		const data = await callBrowserBackend(ChatPrompt.effectivePrompt() || cachedPrompts?.systemPrompt || '', withGsSettingsNote(apiMessages), 16384);
 		return data.content[0]?.text || '';
 	}
 	const response = await fetch('/api/chat', {
@@ -7959,9 +8015,18 @@ async function initModelSelect() {
 		const firstUsable = Object.entries(backends).find(([, info]) => info.available && (!info.local || IS_LOCAL_PAGE))?.[0];
 		const defaultUsable = backends[defaultBackend]?.available && (!backends[defaultBackend]?.local || IS_LOCAL_PAGE);
 		selectedBackend = defaultUsable ? defaultBackend : (firstUsable || defaultBackend);
+		appendLocalModelOptions();
+		// Restore the last pick (a Local one only shows its Load button: never auto-downloads).
+		let saved = null;
+		try { saved = localStorage.getItem(CHAT_BACKEND_STORAGE_KEY); } catch { /* ignore */ }
+		const savedOpt = saved ? [...desktopModelSelect.options].find(o => o.value === saved && !o.disabled) : null;
+		if (savedOpt && !LocalLLM.isLocalBackend(saved)) selectedBackend = saved;
+		lastServerBackend = selectedBackend;
+		if (savedOpt && LocalLLM.isLocalBackend(saved)) selectedBackend = saved;
 		desktopModelSelect.value = selectedBackend;
 		updateOllamaRowVisibility();
 		if (selectedBackend === 'ollama') refreshOllamaModelList();
+		if (LocalLLM.isLocalBackend(selectedBackend)) localModelPanel?.select(selectedBackend);
 	} catch (err) {
 		console.error('Failed to load /api/backends:', err);
 	}
@@ -7971,7 +8036,61 @@ desktopModelSelect?.addEventListener('change', () => {
 	selectedBackend = desktopModelSelect.value;
 	updateOllamaRowVisibility();
 	if (selectedBackend === 'ollama') refreshOllamaModelList();
+	if (LocalLLM.isLocalBackend(selectedBackend)) {
+		if (!localModelPanel?.select(selectedBackend)) return; // no WebGPU: reverted
+	} else {
+		lastServerBackend = selectedBackend;
+		localModelPanel?.deselect();
+	}
+	saveChatBackendChoice();
 });
+
+function saveChatBackendChoice() {
+	try { localStorage.setItem(CHAT_BACKEND_STORAGE_KEY, selectedBackend || ''); } catch { /* ignore */ }
+}
+
+// Local (WebLLM) options after the server's models, with their download
+// size in the label. Building them reads only constants: nothing is fetched.
+function appendLocalModelOptions() {
+	if (!desktopModelSelect || desktopModelSelect.querySelector('optgroup[data-webllm]')) return;
+	const group = document.createElement('optgroup');
+	group.dataset.webllm = '1';
+	const webgpu = LocalLLM.hasWebGPU();
+	group.label = webgpu ? 'Runs on this device (WebLLM, downloads once)' : 'Runs on this device (WebLLM) — needs WebGPU';
+	for (const m of LocalLLM.LOCAL_MODELS) {
+		const opt = document.createElement('option');
+		opt.value = LocalLLM.backendIdFor(m.key);
+		opt.textContent = LocalLLM.optionLabel(m) + (webgpu ? '' : ' — needs WebGPU');
+		opt.title = LocalLLM.optionTitle(m);
+		if (!webgpu) opt.disabled = true;
+		group.appendChild(opt);
+	}
+	desktopModelSelect.appendChild(group);
+}
+
+function revertFromLocalModel(message) {
+	const back = lastServerBackend && [...desktopModelSelect.options].some(o => o.value === lastServerBackend && !o.disabled)
+		? lastServerBackend
+		: [...desktopModelSelect.options].find(o => !o.disabled && !LocalLLM.isLocalBackend(o.value))?.value || null;
+	selectedBackend = back;
+	if (back) desktopModelSelect.value = back;
+	updateOllamaRowVisibility();
+	saveChatBackendChoice();
+	if (message) {
+		displayMessages.push({ role: 'assistant', content: message });
+		renderDomChat();
+		updateStatus(message, 'error');
+	}
+}
+
+localModelPanel = initLocalModelPanel({
+	row: document.getElementById('desktop-webllm-row'),
+	confirm: (msg, opts) => gsConfirm(msg, opts),
+	isPhone: () => document.documentElement.classList.contains('gs-phone'),
+	fallbackLabel: () => (lastServerBackend && backendLabels[lastServerBackend]) || 'the server model',
+	onRevert: revertFromLocalModel
+});
+window.__gsLocalModels = { LocalLLM, panel: localModelPanel }; // console / test access
 
 desktopOllamaModelSelect?.addEventListener('change', () => {
 	selectedOllamaModel = desktopOllamaModelSelect.value;

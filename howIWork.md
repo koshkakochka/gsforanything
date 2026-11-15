@@ -39,6 +39,9 @@ Three moving parts:
 | `site-source/index.html` | DOM shell + styles: chat overlay (input/MIC/Send), status pill, `#ui-toggle`, export modal, and the WebXR `overlay-root`. |
 | `site-source/main.js` | The whole client app: scene setup, panels, input, speech, locomotion, and the vr-exec execution engine. |
 | `site-source/chatPrompt.js` | Chat → Prompt: the editable Scene chat prompt. Loads the default from `/api/prompts`, keeps a saved edit in `localStorage` (`gs.customChatPrompt.v1`) and adds it to `/api/chat` requests as `systemPrompt` (Scene chat and community merges; Ollama gets it directly). Shows the required technical section and the read-only fix-code / theme prompts. |
+| `site-source/localLLM.js` | Local in-browser models (WebLLM 0.2.88): the model list with verified download sizes, WebGPU check, lazy library import, engine in a Web Worker, streaming chat, cache clearing. |
+| `site-source/localModelPanel.js` | The panel under the Model menu for a Local model: size confirmation, progress bar, loaded / error states, phone warning, Remove downloaded models. |
+| `site-source/webllmWorker.js` | The Web Worker that runs WebLLM's engine (`WebWorkerMLCEngineHandler`). Started only by Download & load. |
 | `site-source/vrWindows.js` | The one VR window path: DOM element → `htmlInCanvas.js` paint → textured plane, plus ray hover/click/drag/scroll and text-field focus for the menu, keyboard and HUD windows. |
 | `site-source/htmlInCanvas.js` | Paints a DOM subtree (boxes, gradients, borders, outlines, text, SVG) into a 2D canvas for the VR windows. |
 | `site-source/exporter.js` | Share tab + 3D export: collects user content (plus the scene code's directional/point/spot lights; not GS's default rig, ambient or hemisphere), GLB and self-contained .gltf (GLTFExporter, KHR_lights_punctual), binary FBX 7.4 writer, OBJ+MTL+textures .zip, Blender .zip (.glb + `open_in_blender.py`), the export dialog and the Share tab content. Share link reuses main.js `shareCurrentScene()` → the Community share modal / upload flow. In VR the Share tab is used as-is inside the menu window. |
@@ -83,6 +86,46 @@ Three moving parts:
 5. **Auto-fix:** if a block throws, the app sends the failing code + error to
    `/api/fix-code` (a second Claude call with `FIX_CODE_PROMPT`) and retries up to
    3 times, reporting the outcome in chat.
+
+### Local models (WebLLM, runs in the browser)
+
+- The chat's **Model** menu lists four Local models after the server's
+  backends, in a "Runs on this device (WebLLM)" group, smallest first:
+  Gemma 3 1B (603 MB download), Qwen2.5-Coder 1.5B (882 MB), 3B (1.75 GB,
+  recommended) and 7B (4.30 GB). The sizes are the sum of every file WebLLM
+  0.2.88 fetches (weight shards, tensor-cache.json, mlc-chat-config.json,
+  tokenizer.json and the model's WebGPU .wasm), taken from the Hugging Face
+  file listing and the files' Content-Length. See the comment at the top of
+  `localLLM.js`. Gemma 3 1B is a WebLLM 0.2.88 prebuilt (`gemma3-1b-it-q4f16_1-MLC`)
+  with no q4f32_1 build.
+- **Nothing loads until asked.** Building the menu reads constants only. Picking
+  a Local model shows a panel with the size, the GPU memory it needs (WebLLM's
+  `vram_required_MB` plus the KV cache for GS's 16k context) and a
+  **Download & load** button. Only that button imports
+  `@mlc-ai/web-llm@0.2.88` from jsDelivr, starts `webllmWorker.js` and lets
+  WebLLM fetch the weights (Hugging Face) and .wasm (GitHub). Progress comes
+  from `initProgressCallback`. The engine runs in a Web Worker
+  (`CreateWebWorkerMLCEngine`), so the scene keeps rendering.
+- The browser keeps the files in Cache Storage (`webllm/model`, `webllm/wasm`,
+  `webllm/config`). Later loads read them from disk ("Load from cache").
+  **Remove downloaded models** deletes them.
+- The choice is saved in `localStorage['gs.chatBackend']` (server models too).
+  A saved Local model comes back selected after a reload but waits for a click.
+- No WebGPU: the Local options are disabled ("needs WebGPU"); picking one
+  anyway (the VR menu cycles options) explains why and switches back to the
+  previous server model. A GPU without `shader-f16` gets the q4f32_1 build of
+  the same Qwen model (same download size, more GPU memory). Gemma 3 1B has
+  no 32-bit build, so it is refused with an explanation and nothing is
+  downloaded. Phones get a warning about size and support.
+- When a Local model is loaded, the Scene chat, auto-fix, Theme chat and
+  Community merges all run on it with the same prompts the browser already
+  uses for Ollama (`ChatPrompt.effectivePrompt()`, `fixCodePrompt`,
+  `themePrompt` from `/api/prompts`) and the same "[GS editor settings]" note.
+  Scene replies stream into the chat. Old turns are dropped to fit the 16k
+  context; images are not sent (the models read text only).
+- Switching back to a server model unloads the local model to free GPU memory.
+  Server requests are unchanged.
+- Test: `test-harness/webllm-local-model` (WebLLM stubbed, no downloads).
 
 ### Environment, Dependencies & game controllers
 

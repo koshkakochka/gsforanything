@@ -20,7 +20,7 @@ Current shipped version at time of writing this doc workflow: see `GS_VERSION` i
 | PC repo | `C:\Users\KROSS\Desktop\programming projects\carljr\carljr` (machine `Kross_G16`) |
 | GitHub | `koshkakochka/gsforanything` (https://github.com/koshkakochka/gsforanything; owner renamed from `krossruiz`, repo renamed from `gs`, earlier `carljr`; the old URLs redirect); push `origin/main` |
 | Vercel prod | https://vrclaudeinterface.vercel.app |
-| Cloudflare Worker | Worker name **`gs`** → https://gsforanything.com (also https://www.gsforanything.com; fallback https://gs.krossruiz.workers.dev). Custom domains are set in `worker/wrangler.jsonc` `routes`; keep `workers_dev: true` |
+| Cloudflare Worker | Worker name **`gs`** → https://gsforanything.com (also https://www.gsforanything.com). Custom domains are set in `worker/wrangler.jsonc` `routes`; `workers_dev` is `false` (no *.workers.dev URL) |
 | Unrelated | **https://gs.vercel.app is not this project** — ignore it |
 
 Local HTTPS test serve (box): often `/workspace/gs-serve-gh` on `https://localhost:3456` (self-signed). Prefer PC edits; sync client files into the serve copy for browser tests.
@@ -73,7 +73,7 @@ curl -sL -o /dev/null -w "%{http_code} %{size_download}\n" https://HOST/version.
 curl -sL -o /dev/null -w "%{http_code} %{size_download}\n" https://HOST/versions.json
 ```
 
-Replace `HOST` with `vrclaudeinterface.vercel.app`, `gsforanything.com`, `www.gsforanything.com` and `gs.krossruiz.workers.dev` (fallback).
+Replace `HOST` with `vrclaudeinterface.vercel.app`, `gsforanything.com`, and `www.gsforanything.com`.
 
 In the browser: canvas appears, Model dropdown populates, welcome message shows, bottom version control shows the number you set, version picker opens.
 

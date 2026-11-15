@@ -46,30 +46,19 @@ if [[ "$SKIP_SMOKE" -eq 1 ]]; then
   exit 0
 fi
 
-# Assets and custom-domain certificates can 404 / fail TLS for a few seconds
-# after a first deploy. Wait for the workers.dev URL, then try the custom domain.
-echo "Waiting for https://$DEV_WORKERS_HOST to come up…"
+# Assets can 404 / fail TLS for a few seconds after a deploy. workers.dev is
+# off (workers_dev: false), so the custom domain is the only dev host.
+echo "Waiting for https://$DEV_CUSTOM_HOST to come up…"
 up=0
-for _ in 1 2 3 4 5 6 7 8; do
-  if gs_host_ok "$DEV_WORKERS_HOST"; then up=1; break; fi
-  sleep 3
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  if gs_host_ok "$DEV_CUSTOM_HOST"; then up=1; break; fi
+  sleep 5
 done
 if [[ "$up" -ne 1 ]]; then
-  echo "error: https://$DEV_WORKERS_HOST did not become reachable" >&2
+  echo "error: https://$DEV_CUSTOM_HOST did not become reachable" >&2
   exit 1
 fi
-
-hosts=("$DEV_WORKERS_HOST")
-custom_up=0
-for _ in 1 2 3 4 5 6; do
-  if gs_host_ok "$DEV_CUSTOM_HOST"; then custom_up=1; break; fi
-  sleep 3
-done
-if [[ "$custom_up" -eq 1 ]]; then
-  hosts+=("$DEV_CUSTOM_HOST")
-else
-  echo "note: https://$DEV_CUSTOM_HOST is not reachable yet; smoking $DEV_WORKERS_HOST only." >&2
-fi
+hosts=("$DEV_CUSTOM_HOST")
 
 echo "Smoke-checking ${hosts[*]}…"
 smoke_ok=0
@@ -120,7 +109,4 @@ if marker not in ids and data.get("title") != marker:
 print("  OK  save/load round trip (dev KV)")
 PY
 
-echo "Dev deploy OK: https://$DEV_WORKERS_HOST"
-if [[ ${#hosts[@]} -gt 1 ]]; then
-  echo "Custom domain: https://$DEV_CUSTOM_HOST"
-fi
+echo "Dev deploy OK: https://$DEV_CUSTOM_HOST"

@@ -1,7 +1,7 @@
 # GS Cloudflare Worker (`gs`)
 
-Source of https://gsforanything.com (and www.gsforanything.com; fallback
-https://gs.krossruiz.workers.dev). The browser app is the same as on
+Source of https://gsforanything.com (and www.gsforanything.com; no
+*.workers.dev URL: `workers_dev` is false). The browser app is the same as on
 Vercel (`site-source/`); this Worker serves it as static assets and implements
 the `server.js` API on Cloudflare:
 
@@ -36,7 +36,7 @@ npx wrangler deploy
 
 Prefer the repo-root scripts, which also smoke-check the result:
 
-- `../scripts/deploy-dev.sh` — deploys **`gs-dev`** (`--env dev`) to https://dev.gsforanything.com and https://gs-dev.krossruiz.workers.dev, with its own KV namespace. Never touches production.
+- `../scripts/deploy-dev.sh` — deploys **`gs-dev`** (`--env dev`) to https://dev.gsforanything.com, with its own KV namespace. Never touches production.
 - `../scripts/deploy-prod.sh --confirm` — deploys **`gs`** (this Worker) from a clean `origin/main` only.
 
 See [../DEPLOYING.md](../DEPLOYING.md) for the environment map, secrets, and the optional Community-scene seed into dev KV.

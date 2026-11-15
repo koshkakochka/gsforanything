@@ -18,15 +18,14 @@ PROD_WORKER_NAME="gs"
 DEV_WORKER_NAME="gs-dev"
 PROD_KV_ID="0e333b55e246449e9f97cb7e90d32f7a"
 DEV_KV_ID="07dcdd515d524614b1d3e2ff0c2faa3a"
-DEV_WORKERS_HOST="gs-dev.krossruiz.workers.dev"
 DEV_CUSTOM_HOST="dev.gsforanything.com"
 PROD_HOSTS=(
   gsforanything.com
   www.gsforanything.com
-  gs.krossruiz.workers.dev
   vrclaudeinterface.vercel.app
 )
-# Canonical smoke hosts (3 Cloudflare production URLs + the Vercel backup).
+# Canonical smoke hosts (2 Cloudflare production URLs + the Vercel backup).
+# workers.dev is off (workers_dev: false), so it is never deployed or checked.
 # Smoke scenes differ per platform because scene ids are not shared across
 # stores. smoke-gs.py --scene checks /s/ID, /api/community-scenes/ID and that
 # the retired /embed/ID redirects (302) to /s/ID.
