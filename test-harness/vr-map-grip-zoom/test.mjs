@@ -83,6 +83,17 @@ check('Controls: ticking turns it back on', await p.evaluate(() => localStorage.
 // Head 1.6 m up looking 45° down (gaze meets the empty ground 2.26 m away);
 // controllers at chest height pointing out sideways (rays off the menu).
 const P45 = [-Math.sin(Math.PI / 8), 0, 0, Math.cos(Math.PI / 8)];
+// A map to look at in the mirror: a 40 m grid on a ground plane at y = 0 (same
+// pivot as the bare ground) and a few boxes off to the sides of the gaze.
+await p.evaluate(() => {
+	const g = new THREE.GridHelper(40, 40, 0x6366f1, 0x94a3b8); g.name = 'zoomTestGrid'; scene.add(g);
+	const ground = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshBasicMaterial({ color: 0x1f2937 }));
+	ground.rotation.x = -Math.PI / 2; ground.position.y = -0.001; ground.name = 'zoomTestGround'; scene.add(ground);
+	[[-1.2, -2.5, 0xef4444], [1.2, -2.5, 0x22c55e], [-2.5, -5, 0xf59e0b], [2.5, -5, 0x3b82f6]].forEach(([x, z, c]) => {
+		const m = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), new THREE.MeshBasicMaterial({ color: c })); m.position.set(x, 0.25, z); scene.add(m);
+	});
+});
+const mirror = async (name) => { if (OUT) await p.screenshot({ path: `${OUT}/${name}.png` }); };
 await p.evaluate((q) => { const d = window.__xrDevice; d.position.set(0, 1.6, 0); d.quaternion.set(...q); }, P45);
 await p.click('#XRButton').catch(() => {});
 for (let i = 0; i < 40 && !(await p.evaluate(() => renderer.xr.isPresenting)); i++) await sleep(250);
@@ -165,7 +176,8 @@ const gesture = async (from, to, { settle = 900, steps = 6 } = {}) => {
 };
 const moved = (a, b) => Math.hypot(b.player[0] - a.player[0], b.player[1] - a.player[1], b.player[2] - a.player[2]);
 const release = async () => { await p.evaluate(() => __t.squeeze('right', 0)); await sleep(150); await p.evaluate(() => __t.squeeze('left', 0)); await sleep(250); };
-await p.evaluate(() => __t.reset()); await sleep(200);
+await p.evaluate(() => __t.reset()); await sleep(300);
+await mirror('vr-mirror-before-zoom');
 let g = await gesture(0.3, 0.6);
 const d0 = g.start.zoom.info?.startDistance;
 check('Both grips start the gesture (pivot on the ground along the gaze, ~2.26 m)', g.start.zoom.active && Math.abs(d0 - 1.6 * Math.SQRT2) < 0.05 && Math.abs(g.start.zoom.info.pivot.y) < 1e-3, g.start.zoom.info);
@@ -180,10 +192,7 @@ check('Releasing a grip ends the gesture and does not cycle locomotion', !r1.zoo
 await sleep(300);
 const r2 = await st();
 check('No drift after release', JSON.stringify(r2.player) === JSON.stringify(r1.player));
-if (OUT) {
-	const shot = await p.screenshot({ encoding: 'base64' });
-	fs.writeFileSync(`${OUT}/vr-mirror-after-zoom-in.png`, Buffer.from(shot, 'base64'));
-}
+await mirror('vr-mirror-after-zoom-in');
 
 // Rig moved and turned: the pivot is still where you look (world space)
 await p.evaluate(() => { __t.reset(); const pl = __t.player(); pl.position.set(5, 0, 3); pl.rotation.set(0, Math.PI / 2, 0); }); await sleep(300);
@@ -199,6 +208,7 @@ g = await gesture(0.6, 0.3);
 expect = g.start.zoom.info.startDistance * 0.6 / (0.3 + 0.015);
 check('Pinch 0.60 → 0.30 m zooms OUT: distance × 0.6 / 0.315', Math.abs(g.end.dist - expect) < 0.05, { start: g.start.zoom.info.startDistance, end: g.end.dist, expect });
 check('Pinch: the rig moved exactly that much away from the pivot', Math.abs(moved(g.start, g.end) - (expect - g.start.zoom.info.startDistance)) < 0.05, { moved: moved(g.start, g.end), expect: expect - g.start.zoom.info.startDistance });
+await mirror('vr-mirror-after-zoom-out');
 check('Zoom out moves away from the ground point (higher and back)', g.end.head[1] > g.start.head[1] + 0.5 && g.end.head[2] > g.start.head[2] + 0.5, { start: g.start.head, end: g.end.head });
 await release();
 
