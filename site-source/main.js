@@ -8061,7 +8061,7 @@ function appendLocalModelOptions() {
 		const opt = document.createElement('option');
 		opt.value = LocalLLM.backendIdFor(m.key);
 		opt.textContent = LocalLLM.optionLabel(m) + (webgpu ? '' : ' — needs WebGPU');
-		opt.title = `${m.name}: ${m.note}. ${LocalLLM.formatBytes(m.f16.downloadBytes)} download, about ${LocalLLM.formatBytes(LocalLLM.gpuMemoryBytes(m))} of GPU memory.`;
+		opt.title = LocalLLM.optionTitle(m);
 		if (!webgpu) opt.disabled = true;
 		group.appendChild(opt);
 	}

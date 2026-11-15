@@ -36,7 +36,7 @@ const opts = await p.evaluate(() => [...document.querySelectorAll('#desktop-mode
 const gpu = await p.evaluate(async () => { if (!navigator.gpu) return null; const a = await navigator.gpu.requestAdapter(); return a ? { f16: a.features.has('shader-f16'), arch: a.info?.architecture } : 'no adapter'; });
 console.log('host', BASE, 'version', await p.evaluate(() => window.GS_VERSION || document.querySelector('#gs-version, .gs-version')?.textContent || ''), 'webgpu', JSON.stringify(gpu));
 console.log(opts.filter(o => o.v.startsWith('webllm:')).map(o => o.t).join('\n'));
-check('dev: three Local options with sizes', opts.filter(o => o.v.startsWith('webllm:')).map(o => o.t).join('|') === 'Local: Qwen2.5-Coder 1.5B (WebLLM) — 882 MB download|Local: Qwen2.5-Coder 3B (WebLLM) — 1.75 GB download|Local: Qwen2.5-Coder 7B (WebLLM) — 4.30 GB download');
+check('dev: three Local options with download size and GPU memory', opts.filter(o => o.v.startsWith('webllm:')).map(o => o.t).join('|') === 'Local: Qwen2.5-Coder 1.5B (WebLLM) — 882 MB download, needs ~2.1 GB GPU memory|Local: Qwen2.5-Coder 3B (WebLLM) — 1.75 GB download, needs ~3.1 GB GPU memory|Local: Qwen2.5-Coder 7B (WebLLM) — 4.30 GB download, needs ~6.1 GB GPU memory');
 check('dev: page load fetched nothing from WebLLM/jsDelivr/Hugging Face/GitHub', webllmReqs().length === 0, webllmReqs().map(r => r.url));
 check('dev: server default selected', !(await p.evaluate(() => document.getElementById('desktop-model-select').value)).startsWith('webllm:'));
 await p.evaluate(() => { const s = document.getElementById('desktop-model-select'); s.value = 'webllm:qwen-coder-1.5b'; s.dispatchEvent(new Event('change', { bubbles: true })); });

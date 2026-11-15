@@ -52,7 +52,8 @@ export function initLocalModelPanel({ row, confirm, isPhone = () => false, fallb
 		if (!m) { onChange?.(); return; }
 		const v = m[variant];
 		const size = LocalLLM.formatBytes(v.downloadBytes);
-		const mem = LocalLLM.formatBytes(LocalLLM.gpuMemoryBytes(m, variant));
+		const mem = LocalLLM.formatGpuMemory(m, variant);
+		const f32Mem = variant === 'f16' ? ` (about ${LocalLLM.formatGpuMemory(m, 'f32')} on GPUs without 16-bit shader support)` : '';
 		const cached = LocalLLM.isMarkedDownloaded(v.id);
 		titleEl.textContent = `${m.name} — runs on this device (WebLLM)`;
 		const f32Note = variant === 'f32' ? ' This GPU has no 16-bit shader support, so GS uses the 32-bit build of the same model.' : '';
@@ -66,8 +67,8 @@ export function initLocalModelPanel({ row, confirm, isPhone = () => false, fallb
 			infoEl.textContent = errorText;
 		} else {
 			infoEl.textContent = cached
-				? `Already downloaded on this device (${size}), so loading reads it from the browser cache. Needs about ${mem} of GPU memory.${f32Note}`
-				: `First use downloads ${size} (plus the ${LocalLLM.formatBytes(LocalLLM.LIB_BYTES)} WebLLM library) from Hugging Face. Your browser caches it, so later loads don't download it again. Needs WebGPU and about ${mem} of GPU memory.${f32Note}`;
+				? `Already downloaded on this device (${size}), so loading reads it from the browser cache. Needs about ${mem} of free GPU memory${f32Mem}.${f32Note}`
+				: `First use downloads ${size} (plus the ${LocalLLM.formatBytes(LocalLLM.LIB_BYTES)} WebLLM library) from Hugging Face. Your browser caches it, so later loads don't download it again. Needs WebGPU and about ${mem} of free GPU memory${f32Mem}.${f32Note}`;
 		}
 		const phone = isPhone();
 		warnEl.hidden = !(phone && state !== 'ready');

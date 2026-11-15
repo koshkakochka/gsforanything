@@ -76,9 +76,21 @@ export function gpuMemoryBytes(model, variant = 'f16') {
 	return Math.round(v.vram4kMB * 1048576 + perToken * (CONTEXT_WINDOW - WEBLLM_DEFAULT_CONTEXT));
 }
 
-/** Dropdown label, e.g. "Local: Qwen2.5-Coder 3B (WebLLM) — 1.75 GB download". */
+/** GPU memory rounded up to 0.1 GB, e.g. "3.1 GB". */
+export function formatGpuMemory(model, variant = 'f16') {
+	return `${(Math.ceil(gpuMemoryBytes(model, variant) / 1e8) / 10).toFixed(1)} GB`;
+}
+
+/** Dropdown label, e.g. "Local: Qwen2.5-Coder 3B (WebLLM) — 1.75 GB download, needs ~3.1 GB GPU memory". */
 export function optionLabel(model, variant = 'f16') {
-	return `Local: ${model.name} (WebLLM) — ${formatBytes(model[variant].downloadBytes)} download`;
+	return `Local: ${model.name} (WebLLM) — ${formatBytes(model[variant].downloadBytes)} download, needs ~${formatGpuMemory(model, variant)} GPU memory`;
+}
+
+/** Option tooltip: also the 32-bit build's GPU memory (used on GPUs without shader-f16). */
+export function optionTitle(model) {
+	return `${model.name}: ${model.note}. ${formatBytes(model.f16.downloadBytes)} download. Needs about ${formatGpuMemory(model, 'f16')} of free GPU memory ` +
+		`(about ${formatGpuMemory(model, 'f32')} on GPUs without 16-bit shader support, which get the 32-bit build). ` +
+		`WebLLM lists ${(model.f16.vram4kMB * 1048576 / 1e9).toFixed(1)} GB at a 4k context; GS uses a 16k context.`;
 }
 
 // ---------------------------------------------------------------------------

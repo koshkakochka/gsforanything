@@ -150,9 +150,9 @@ const send = async (p, text) => {
 };
 
 const EXPECT = {
-	'webllm:qwen-coder-1.5b': 'Local: Qwen2.5-Coder 1.5B (WebLLM) — 882 MB download',
-	'webllm:qwen-coder-3b': 'Local: Qwen2.5-Coder 3B (WebLLM) — 1.75 GB download',
-	'webllm:qwen-coder-7b': 'Local: Qwen2.5-Coder 7B (WebLLM) — 4.30 GB download'
+	'webllm:qwen-coder-1.5b': 'Local: Qwen2.5-Coder 1.5B (WebLLM) — 882 MB download, needs ~2.1 GB GPU memory',
+	'webllm:qwen-coder-3b': 'Local: Qwen2.5-Coder 3B (WebLLM) — 1.75 GB download, needs ~3.1 GB GPU memory',
+	'webllm:qwen-coder-7b': 'Local: Qwen2.5-Coder 7B (WebLLM) — 4.30 GB download, needs ~6.1 GB GPU memory'
 };
 
 // ───────── 1. Page load fetches nothing from WebLLM; dropdown shows sizes ─────────
@@ -169,7 +169,9 @@ let savedServerDefault;
 	const res = await p.evaluate(() => performance.getEntriesByType('resource').map(e => e.name).filter(n => /mlc|huggingface|webllmWorker/.test(n)));
 	check('page load: Resource Timing has no WebLLM entries', res.length === 0, res);
 	const local = s.options.filter(o => o.value.startsWith('webllm:'));
-	check('three Local options with their download sizes', local.length === 3 && local.every(o => EXPECT[o.value] === o.text), local);
+	check('three Local options with download size and required GPU memory', local.length === 3 && local.every(o => EXPECT[o.value] === o.text), local);
+	const titles = await p.evaluate(() => [...document.querySelectorAll('#desktop-model-select optgroup option')].map(o => o.title));
+	check('option tooltips also give the 32-bit build\'s GPU memory', /about 2\.1 GB of free GPU memory \(about 2\.7 GB on GPUs without 16-bit/.test(titles[0]) && /about 3\.1 GB .*about 4\.0 GB/.test(titles[1]) && /about 6\.1 GB .*about 7\.6 GB/.test(titles[2]), titles);
 	check('Local options sit in their own group after the server models', local.every(o => /WebLLM/.test(o.group || '')) && s.options.findIndex(o => o.value.startsWith('webllm:')) === s.options.length - 3, s.options.map(o => o.group));
 	// Server models unchanged: same ids, order, labels and enabled state as /api/backends
 	const server = s.options.filter(o => !o.value.startsWith('webllm:'));
@@ -199,7 +201,7 @@ let savedServerDefault;
 	await sleep(1500);
 	s = await st(p);
 	check('selecting a Local model shows the panel with the size', s.rowVisible && s.state === 'idle' && /1\.75 GB/.test(s.info) && s.load === 'Download & load (1.75 GB)', s);
-	check('panel mentions caching and GPU memory', /caches it/.test(s.info) && /GPU memory/.test(s.info) && /2\.\d\d GB|3\.\d\d GB/.test(s.info), s.info);
+	check('panel mentions caching and GPU memory (16-bit and 32-bit builds)', /caches it/.test(s.info) && /about 3\.1 GB of free GPU memory \(about 4\.0 GB on GPUs without 16-bit shader support\)/.test(s.info), s.info);
 	check('cancel offers the previous server model', /^Use .+ instead$/.test(s.cancel || ''), s.cancel);
 	check('selection alone fetches nothing (no library, worker or weights)', net.webllm.length === 0 && net.workers.length === 0, { webllm: net.webllm, workers: net.workers });
 	check('selection is saved', s.saved === 'webllm:qwen-coder-3b', s.saved);
