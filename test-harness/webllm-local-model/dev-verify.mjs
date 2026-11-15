@@ -49,6 +49,11 @@ await p.screenshot({ path: `${SHOT_DIR}/dev-confirmation.png`, clip });
 if (REAL) {
 	console.log('REAL LOAD: clicking Download & load', new Date().toISOString());
 	const t0 = Date.now();
+	await p.evaluate(() => {
+		const fill = document.querySelector('#desktop-webllm-row .gs-webllm-fill');
+		window.__fillLog = [];
+		if (fill) new MutationObserver(() => { const w = parseFloat(fill.style.width) || 0; const l = window.__fillLog; if (!l.length || l[l.length - 1] !== w) l.push(w); }).observe(fill, { attributes: true, attributeFilter: ['style'] });
+	});
 	await p.evaluate(() => document.querySelector('#desktop-webllm-row [data-webllm="load"]').click());
 	let last = '', shotMid = false;
 	const LIMIT = Number(process.env.LOAD_LIMIT_MS || 25 * 60000);
@@ -64,6 +69,10 @@ if (REAL) {
 	const hosts = [...new Set(webllmReqs().map(r => new URL(r.url).host))];
 	console.log('WebLLM hosts fetched after the click:', hosts.join(', '), 'requests:', webllmReqs().length);
 	check('dev real load: model loaded with the box WebGPU', fin.state === 'ready' && !!fin.loaded, fin);
+	const widths = await p.evaluate(() => window.__fillLog);
+	console.log('bar widths:', widths.map(w => Math.round(w)).join(' '));
+	check('dev real load: bar never goes backwards', widths.length > 3 && widths.every((w, i) => i === 0 || w >= widths[i - 1]));
+	check('dev real load: bar hits 100% exactly once, at the end', widths.filter(w => w >= 100).length === 1 && widths[widths.length - 1] === 100);
 	if (fin.state === 'ready' && process.env.REAL_CHAT === '1') {
 		const before = Date.now();
 		await p.evaluate(() => { const i = document.getElementById('desktop-chat-input'); i.value = 'Add a red cube named redCube at (0, 1, -2).'; document.getElementById('desktop-send-button').click(); });
