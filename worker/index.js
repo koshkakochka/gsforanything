@@ -2,6 +2,7 @@ import { environmentHdriForRecord, HDRI_FILE_MAX_BYTES, hdriContentType } from "
 import { allowExportFromBody, exportAllowed, isSceneOwner, legacyEmbedRedirectPath, newOwnerKey, OWNER_KEY_HEADER, ownerKeyHash, publicSceneRecord } from "../site-source/sceneExportPolicy.js";
 import { listThumbFields, parseThumbnailPayload, publicThumbnailField, thumbKey, thumbStub } from "../site-source/sceneThumbnail.js";
 import { descriptionForList, sanitizeDescription, descriptionPayloadTooLarge, createRateLimiter, clientIpFromHeaders } from "../site-source/sceneDescription.js";
+import { sanitizeSceneName } from "../site-source/sceneName.js";
 import { CHAT_PROMPT_REQUIRED, FIX_CODE_PROMPT, MAX_CUSTOM_PROMPT_CHARS, SYSTEM_PROMPT, THEME_SYSTEM_PROMPT } from "./prompts.js";
 
 const descriptionPatchLimit = createRateLimiter();
@@ -164,11 +165,6 @@ function newSceneId() {
   crypto.getRandomValues(bytes);
   const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
   return Date.now().toString(36) + hex;
-}
-
-function sanitizeSceneName(name) {
-  const cleaned = String(name ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
-  return (cleaned || "Untitled").slice(0, 80);
 }
 
 function createdAtGuessFromId(id) {

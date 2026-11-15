@@ -12,6 +12,7 @@ import { environmentHdriForRecord, HDRI_FILE_MAX_BYTES, hdriContentType } from '
 import { allowExportFromBody, exportAllowed, isSceneOwner, legacyEmbedRedirectPath, newOwnerKey, OWNER_KEY_HEADER, ownerKeyHash, publicSceneRecord } from './sceneExportPolicy.js';
 import { listThumbFields, parseThumbnailPayload, publicThumbnailField, THUMB_PREFIX, thumbPathname, thumbStub } from './sceneThumbnail.js';
 import { descriptionForList, sanitizeDescription, descriptionPayloadTooLarge, createRateLimiter, clientIpFromHeaders } from './sceneDescription.js';
+import { sanitizeSceneName } from './sceneName.js';
 
 const descriptionPatchLimit = createRateLimiter();
 function requestClientIp(req) {
@@ -735,12 +736,6 @@ const SCENE_ID_RE = /^[A-Za-z0-9_-]{8,40}$/;
 function newSceneId() {
 	return Date.now().toString(36) + randomBytes(4).toString('hex');
 }
-
-function sanitizeSceneName(name) {
-	const cleaned = String(name ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
-	return (cleaned || 'Untitled').slice(0, 80);
-}
-
 
 // List endpoints avoid fetching blob bodies (name lives in the pathname).
 // createdAt/updatedAt still ship for the Community UI:

@@ -74,6 +74,7 @@ async function uploadVia(p, { allow }) {
   if (cur !== allow) await box.click();
   const resP = p.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/api/community-scenes'), { timeout: 20000 });
   ok('  upload clicked', await clickText(p, '#dchat-community-buttons', 'Upload Current Scene'));
+  await p.waitForSelector('#gs-ctx-publish.visible', { timeout: 8000 }); await p.click('#gs-ctx-publish-btn');
   const data = await (await resP).json();
   await p.waitForSelector('#share-modal.visible', { timeout: 20000 });
   await sleep(400);

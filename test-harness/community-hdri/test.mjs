@@ -60,6 +60,7 @@ async function upload(p) {
   const resP = p.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/api/community-scenes'), { timeout: 20000 });
   await tab(p, 'community');
   ok('  upload button clicked', await clickText(p, '#dchat-community-buttons', 'Upload Current Scene'));
+  await p.waitForSelector('#gs-ctx-publish.visible', { timeout: 8000 }); await p.click('#gs-ctx-publish-btn');
   const res = await resP; const data = await res.json();
   await p.waitForSelector('#share-modal.visible', { timeout: 20000 });
   await sleep(500);
