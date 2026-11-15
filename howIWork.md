@@ -280,7 +280,8 @@ content and still redraw every frame. `layoutVrWindows()` places the menu
   | A / X (hold) | Push-to-talk voice |
   | B / Y | Toggle pointer ray *lines* (cursor stays) |
   | Thumbstick press | Collapse / restore all UI |
-  | Right grip | Cycle locomotion mode (off → planar → free-roam) |
+  | Right grip | Cycle locomotion mode (off → planar → free-roam); in Map on release, and not after a two-grip zoom |
+  | Both grips (Map camera) | Hold and move the controllers apart to zoom in, together to zoom out |
   | Left thumbstick | Move (when locomotion on) / scroll what's under the ray (when off) |
   | Right thumbstick | Turn (when locomotion on) / scroll what's under the ray (when off) |
 
@@ -297,6 +298,31 @@ live headset pose). Modes cycle with the right grip button:
 
 Right stick turns (yaw), pivoting around your head so the view doesn't swing.
 Speeds are the `MOVE_SPEED` / `TURN_SPEED` constants.
+
+### VR Map controls (two-grip zoom)
+
+With the Map camera selected, in a headset the left stick pans the whole
+stick (both axes, level with the ground, faster the higher you are: × head
+height / 1.6 m, 1–500), the right stick turns ←/→ and moves up/down ↑/↓
+(Controls → Map, VR column; remappable). Zoom is a gesture
+(`site-source/vrGripZoom.js`, run from `updateVrGripZoom` in main.js): hold
+**both grips** and move the controllers apart to zoom in, closer together to
+zoom out, pinch-zoom style: the distance from your head to the pivot is
+multiplied by `startSpread / spread` (double the spread = half the distance),
+after a 1.5 cm deadzone, smoothed with an ~83 ms time constant, clamped to
+Map's limits (`MAP_MIN_DISTANCE` 0.3 m – `MAP_MAX_DISTANCE` 20 km from the
+pivot; the desktop MapControls use the same limits). The pivot is fixed when
+both grips are down: the nearest front-facing scene surface along your gaze,
+or the y = 0 ground, else 10 m ahead. Releasing either grip ends it; one grip
+alone does nothing. While it is available the right grip's locomotion cycle
+waits for its release and is skipped if the left grip joined in, and a grip
+pressed on the origin gizmo grabs the gizmo instead (no zoom). It is listed in
+Controls → Map as "VR: both grips, spread / pinch" on the zoom rows plus a
+"Zoom in / out (VR gesture)" row with an On switch (localStorage
+`gs.vrMapGripZoom` = `'0'` when off). It pauses while a Map VR row is remapped
+to a grip, while a VR binding is being captured, and while a scene's Custom
+Controls / camera mode binds a grip (the scene has priority while its controls
+exist). Test: `test-harness/vr-map-grip-zoom`.
 
 ### Text & voice input
 

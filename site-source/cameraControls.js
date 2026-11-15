@@ -48,6 +48,10 @@ export function clampPlayerHeight(h) {
 	return Math.round(Math.min(PLAYER_HEIGHT_MAX, Math.max(PLAYER_HEIGHT_MIN, n)) * 100) / 100;
 }
 export const ORBIT_TARGET = Object.freeze(new THREE.Vector3(0, 0, 0));
+// Map zoom limits (m from the point zoomed toward): the desktop MapControls'
+// min / maxDistance and the VR two-grip zoom (vrGripZoom.js) share them.
+export const MAP_MIN_DISTANCE = 0.3;
+export const MAP_MAX_DISTANCE = 20000;
 const TARGET_MODES = new Set(['orbit', 'map']);
 // Modes whose stick input is forwarded (on-screen joysticks are shown for these).
 export const STICK_MODES = new Set(['fly', 'firstperson']);
@@ -231,6 +235,8 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 				c.enableDamping = true;
 				c.target.copy(ORBIT_TARGET);
 				c.maxPolarAngle = Math.PI / 2;
+				c.minDistance = MAP_MIN_DISTANCE;
+				c.maxDistance = MAP_MAX_DISTANCE;
 				// Keys through onMappedKey, like Orbit.
 				c.update();
 				return c;

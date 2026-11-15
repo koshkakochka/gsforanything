@@ -1,0 +1,10 @@
+{
+  "name": "gs-vr-map-grip-zoom-test",
+  "private": true,
+  "type": "module",
+  "description": "Headless checks for the VR Map controls: left stick pans, both grips spread / pinch to zoom (IWER-emulated Meta Quest 3), plus the vrGripZoom.js maths.",
+  "dependencies": {
+    "iwer": "^2.6.0",
+    "puppeteer-core": "24.43.1"
+  }
+}
