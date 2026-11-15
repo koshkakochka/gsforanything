@@ -115,7 +115,9 @@ for (const [H, base] of HOSTS) {
   // Turning the background off makes it a new share carrying background:false
   await tab(e, 'env'); await e.click('#dchat-hdri-bg'); await sleep(200);
   const posted2 = []; e.on('request', r => { if (r.method() === 'POST' && r.url().endsWith('/api/community-scenes')) posted2.push(JSON.parse(r.postData())); });
-  await tab(e, 'share'); await e.click('[data-share="link"]'); await sleep(2500);
+  await tab(e, 'share'); await e.click('[data-share="link"]');
+  // Since 1.03 a share that needs a new upload goes through the same publish dialog (scene name field) as Upload Current Scene.
+  await e.waitForSelector('#gs-ctx-publish.visible', { timeout: 8000 }); await e.click('#gs-ctx-publish-btn'); await sleep(2500);
   ok(`${H} changed background -> new upload, HDRI kept by reference`, posted2.length === 1 && posted2[0].environmentHdri?.url === `/api/community-scenes/${up.id}/hdri` && posted2[0].environmentHdri.background === false, JSON.stringify(posted2[0]?.environmentHdri));
   await e.browserContext().close();
 

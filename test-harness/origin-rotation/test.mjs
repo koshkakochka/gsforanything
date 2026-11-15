@@ -368,7 +368,9 @@ if (!ONLY || ONLY === 'share') {
   const posted = [];
   a.on('request', (r) => { if (r.url().endsWith('/api/community-scenes') && r.method() === 'POST') posted.push(JSON.parse(r.postData())); });
   await tab(a, 'share');
-  await a.evaluate(() => document.querySelector('#dchat-share [data-share="link"]').click());
+  // Since 1.03 a share that needs a new upload goes through the publish dialog (scene name field).
+  const publish = async () => { await a.waitForSelector('#gs-ctx-publish.visible', { timeout: 8000 }); await a.click('#gs-ctx-publish-btn'); };
+  await a.evaluate(() => document.querySelector('#dchat-share [data-share="link"]').click()); await publish();
   for (let i = 0; i < 40 && !posted.length; i++) await sleep(150);
   await sleep(800);
   ok(`${H} uploaded scene carries originRotation`, posted.length === 1 && JSON.stringify(posted[0].originRotation) === JSON.stringify({ yaw: 30, pitch: 15, roll: -45 }), JSON.stringify(posted[0]?.originRotation));
@@ -380,7 +382,7 @@ if (!ONLY || ONLY === 'share') {
   await a.evaluate(() => document.querySelector('#dchat-share [data-share="link"]').click()); await sleep(800);
   ok(`${H} unchanged scene reuses the link`, posted.length === 1, String(posted.length));
   await a.evaluate(() => gsOrigin.set({ yaw: 31, pitch: 15, roll: -45 }));
-  await a.evaluate(() => document.querySelector('#dchat-share [data-share="link"]').click());
+  await a.evaluate(() => document.querySelector('#dchat-share [data-share="link"]').click()); await publish();
   for (let i = 0; i < 40 && posted.length < 2; i++) await sleep(150);
   ok(`${H} changing only the rotation makes a new share`, posted.length === 2 && posted[1].originRotation?.yaw === 31, String(posted.length));
   await a._ctx.close();
