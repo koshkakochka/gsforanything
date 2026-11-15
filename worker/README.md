@@ -12,7 +12,7 @@ the `server.js` API on Cloudflare:
 | `/api/community-scenes` (+ `/:id`, `/:id/context`, `/:id/hdri`) | Community scenes in KV `SCENES`; creation context stored under `scene:<id>:context`; a custom environment HDRI file (one-shot `PUT` right after the upload, max 20 MB) under `scene:<id>:hdri` |
 | `/api/community-themes`, `/api/save-scene`, `/api/load-scene`, `/api/prompts` | themes, private saves (KV), prompts |
 | `GET /api/p5-editor/:user/:id` | relay for p5 web editor projects (only `editor.p5js.org`; same validation as `server.js`) |
-| `/s/*`, `/e/*` | share / embed links |
+| `/s/*`, `/e/*` | share / editor links (`/embed/*` redirects to `/s/*`) |
 
 Files:
 

@@ -27,9 +27,11 @@ PROD_HOSTS=(
   vrclaudeinterface.vercel.app
 )
 # Canonical smoke hosts (3 Cloudflare production URLs + the Vercel backup).
-# Embeds differ per platform because scene ids are not shared across stores.
-PROD_CF_EMBED="/embed/mvziiev10e4f789b"
-PROD_VERCEL_EMBED="/embed/musxb3sm5b31e766"
+# Smoke scenes differ per platform because scene ids are not shared across
+# stores. smoke-gs.py --scene checks /s/ID, /api/community-scenes/ID and that
+# the retired /embed/ID redirects (302) to /s/ID.
+PROD_CF_SCENE="mvziiev10e4f789b"
+PROD_VERCEL_SCENE="musxb3sm5b31e766"
 
 gs_require_node22() {
   local ver major

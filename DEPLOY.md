@@ -32,7 +32,7 @@ Opt-in setting (off by default, saved per browser in `localStorage['gs.technical
 ## Vercel
 
 1. Ask user for version → update `version.js` + `versions.json`.
-2. Ensure `vercel.json` `includeFiles` lists every client module the browser imports (`main.js`, `syntaxHighlight.js`, `version.js`, `versions.json`, `htmlInCanvas.js`, `menuSystem.js`, `vrWindows.js`, `exporter.js`, `creationContext.js`, `p5Import.js`, `communityMerge.js`, `twinSticks.js`, `cameraControls.js`, `chatPrompt.js`, `originGizmo.js`, `sceneFit.js`, `embedExport.js`, `sceneExportPolicy.js` (also imported by `server.js`), `gsDialog.js`, `photoCapture.js`, `passthroughTexture.js`, `technicalMode.js`, `threejsAddons/**`, `vendor_modules/**`, etc.).
+2. Ensure `vercel.json` `includeFiles` lists every client module the browser imports (`main.js`, `syntaxHighlight.js`, `version.js`, `versions.json`, `htmlInCanvas.js`, `menuSystem.js`, `vrWindows.js`, `exporter.js`, `creationContext.js`, `p5Import.js`, `communityMerge.js`, `twinSticks.js`, `cameraControls.js`, `chatPrompt.js`, `originGizmo.js`, `sceneFit.js`, `webglGuard.js`, `sceneExportPolicy.js` (also imported by `server.js`), `gsDialog.js`, `photoCapture.js`, `passthroughTexture.js`, `technicalMode.js`, `threejsAddons/**`, `vendor_modules/**`, etc.).
 3. Commit only the intended files; push `origin/main`.
 4. **GitHub auto-deploy** usually ships Production for `vrclaudeinterface` / `carljr`. If the PC is online and logged into Vercel CLI: `npx vercel --prod --yes` from the repo root.
 5. Verify (below).
@@ -40,7 +40,7 @@ Opt-in setting (off by default, saved per browser in `localStorage['gs.technical
 ## Cloudflare Workers (`gs`)
 
 Since 0.973 the Worker source lives in this repo under **`worker/`** (see `worker/README.md`):
-`index.js` (API: chat, backends, community scenes + creation context, p5 editor relay, `/s/*`, `/e/*`, `/embed/*`),
+`index.js` (API: chat, backends, community scenes + creation context, p5 editor relay, `/s/*`, `/e/*`, and the `/embed/*` → `/s/*` redirect),
 `prompts.js` (generated from `site-source/server.js`), `wrangler.jsonc` (name `gs`, `SCENES` KV binding,
 assets), `gen-prompts.mjs` and `sync-public.sh`. **No secrets are in the repo**; `CLAUDE_API_KEY`,
 `OPENAI_API_KEY`, `LLM_BACKEND`, `OPENAI_MODEL` are Worker secrets in Cloudflare and survive deploys.
@@ -49,7 +49,7 @@ Wrangler is typically authenticated on the **box**, not always on the PC.
 
 1. Ask user for version → same `version.js` / `versions.json` as Vercel (from `origin/main`).
 2. `cd worker && ./sync-public.sh` — copies **all** browser assets into `worker/public/` (gitignored):
-   - `index.html`, `main.js`, `version.js`, `versions.json`, `syntaxHighlight.js`, `htmlInCanvas.js`, `vrWindows.js`, `p5Import.js`, `menuSystem.js`, `exporter.js`, `creationContext.js`, `communityMerge.js`, `twinSticks.js`, `cameraControls.js`, `chatPrompt.js`, `originGizmo.js`, `sceneFit.js`, `gsDialog.js`, `embedExport.js`, `sceneExportPolicy.js`, `photoCapture.js` (the Worker also imports `../site-source/sceneExportPolicy.js` and `sceneHdri.js` directly)
+   - `index.html`, `main.js`, `version.js`, `versions.json`, `syntaxHighlight.js`, `htmlInCanvas.js`, `vrWindows.js`, `p5Import.js`, `menuSystem.js`, `exporter.js`, `creationContext.js`, `communityMerge.js`, `twinSticks.js`, `cameraControls.js`, `chatPrompt.js`, `originGizmo.js`, `sceneFit.js`, `gsDialog.js`, `webglGuard.js`, `sceneExportPolicy.js`, `photoCapture.js` (the Worker also imports `../site-source/sceneExportPolicy.js` and `sceneHdri.js` directly)
    - `threejsAddons/`
    - **full `vendor_modules/`** — especially `vendor_modules/three/build/three.module.js` (the script fails if it is missing)
    - Add any new browser file to `sync-public.sh` **and** `vercel.json` `includeFiles`.
@@ -103,4 +103,5 @@ Follow **`version-log/Version Log Updating Rules.md`** (exact verbatim chat only
 - [ ] CF: full `public/` sync including **`vendor_modules/three/build/`**
 - [ ] CF: SCENES KV kept; secrets untouched
 - [ ] Both hosts: `three.module.js` 200; smoke-test canvas
+- [ ] Smoke scene per platform (`smoke-gs.py --scene`, run by `deploy-prod.sh`): `/s/ID` 200 and `/embed/ID` → `302` to `/s/ID` (embedding was removed; there is no embed page to check)
 - [ ] Updated `version-log/<version>/` with exact conversation transcript (see Version Log Updating Rules.md)

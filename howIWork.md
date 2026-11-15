@@ -42,6 +42,7 @@ Three moving parts:
 | `site-source/vrWindows.js` | The one VR window path: DOM element → `htmlInCanvas.js` paint → textured plane, plus ray hover/click/drag/scroll and text-field focus for the menu, keyboard and HUD windows. |
 | `site-source/htmlInCanvas.js` | Paints a DOM subtree (boxes, gradients, borders, outlines, text, SVG) into a 2D canvas for the VR windows. |
 | `site-source/exporter.js` | Share tab + 3D export: collects user content (plus the scene code's directional/point/spot lights; not GS's default rig, ambient or hemisphere), GLB and self-contained .gltf (GLTFExporter, KHR_lights_punctual), binary FBX 7.4 writer, OBJ+MTL+textures .zip, Blender .zip (.glb + `open_in_blender.py`), the export dialog and the Share tab content. Share link reuses main.js `shareCurrentScene()` → the Community share modal / upload flow. In VR the Share tab is used as-is inside the menu window. |
+| `site-source/webglGuard.js` | Creates the one WebGLRenderer: if the browser refuses WebGL it shows a "3D graphics are unavailable" page; on context loss it waits for one restore, then stops with a Reload button instead of looping. |
 | `site-source/threejsAddons/ARButton.js` | Enter-session button; requests the immersive WebXR session with `local-floor` + `dom-overlay`. |
 | `site-source/node_modules/three` | Three.js (loaded via the import map in `index.html`). |
 

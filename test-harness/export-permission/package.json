@@ -1,0 +1,9 @@
+{
+  "name": "gs-export-permission-test",
+  "private": true,
+  "type": "module",
+  "description": "Per-scene export permission (unit, API on Vercel sim + Worker, browser end-to-end) and checks that the removed Embed feature is gone: /embed/:id redirects to /s/:id.",
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}

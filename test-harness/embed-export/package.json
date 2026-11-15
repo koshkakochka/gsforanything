@@ -1,9 +1,0 @@
-{
-  "name": "gs-embed-export-test",
-  "private": true,
-  "type": "module",
-  "description": "Embed export + per-scene export permission: snippet unit tests, API tests (Vercel sim + Worker) and browser end-to-end checks.",
-  "dependencies": {
-    "puppeteer-core": "^24.0.0"
-  }
-}

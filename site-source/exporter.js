@@ -1106,28 +1106,22 @@ export function initSceneExport(opts) {
 	 * Fills the Share & Export tab: the scene link (main.js passes
 	 * shareCurrentScene, which reuses the Community share flow), the five
 	 * 3D export formats, each opening the export dialog preselected, plus
-	 * the Embed section (main.js passes embedCurrentScene) and the
-	 * "Allow others to export" choice used when the scene is uploaded.
+	 * the "Allow others to export" choice used when the scene is uploaded.
 	 * refreshShareTab() re-reads canExport() / the allow choice.
 	 */
-	function mountShareTab(container, { onShareLink, onEmbed, allowExport = null } = {}) {
+	function mountShareTab(container, { onShareLink, allowExport = null } = {}) {
 		if (!container || container.dataset.gsShareMounted) return;
 		container.dataset.gsShareMounted = '1';
 		addCss();
 		container.innerHTML = `
 			<div class="gs-share">
-				<p class="gs-share-locked" data-share="locked">The creator of this scene turned off exports: 3D model export, embedding and saving its code aren't available. You can still view it and share its link.</p>
+				<p class="gs-share-locked" data-share="locked">The creator of this scene turned off exports: 3D model export and saving its code aren't available. You can still view it and share its link.</p>
 				<div class="gs-share-section">
 					<h4>Link</h4>
 					<button type="button" class="gs-share-link-btn" data-share="link">🔗 Share link to this scene</button>
 					<p class="gs-share-hint">Same link as Community → Share. A scene that isn't in Community yet is uploaded there first (public, like Upload Current Scene).</p>
 					${allowExport ? `<div class="gs-share-allow-wrap"><label class="gs-share-allow"><input type="checkbox" data-share="allow-export" checked> Allow others to export this scene</label>
-					<p class="gs-share-hint">Applies when this scene is uploaded: unchecked, people can view it but not download it as a 3D model, embed it or save its code.</p></div>` : ''}
-				</div>
-				<div class="gs-share-section">
-					<h4>Embed</h4>
-					<button type="button" class="gs-share-link-btn" data-share="embed">&lt;/&gt; Embed this scene on a website</button>
-					<p class="gs-share-hint">HTML code for an &lt;iframe&gt; showing the scene, view only, with an optional Enter VR button. Uses the Community copy of the scene (uploaded first if needed).</p>
+					<p class="gs-share-hint">Applies when this scene is uploaded: unchecked, people can view it but not download it as a 3D model or save its code.</p></div>` : ''}
 				</div>
 				<div class="gs-share-section">
 					<h4>Export 3D model</h4>
@@ -1139,17 +1133,13 @@ export function initSceneExport(opts) {
 				</div>
 			</div>`;
 		container.querySelector('[data-share="link"]').addEventListener('click', () => { if (onShareLink) onShareLink(); });
-		container.querySelector('[data-share="embed"]').addEventListener('click', () => {
-			if (!canExport()) { onBlocked(); return; }
-			if (onEmbed) onEmbed();
-		});
 		container.querySelectorAll('[data-share-format]').forEach((b) => b.addEventListener('click', () => open(b.dataset.shareFormat)));
 		const allowBox = container.querySelector('[data-share="allow-export"]');
 		if (allowBox && allowExport) allowBox.addEventListener('change', () => allowExport.set(allowBox.checked));
 		shareTabRefresh = () => {
 			const locked = !canExport();
 			container.querySelector('.gs-share').classList.toggle('gs-exports-locked', locked);
-			container.querySelectorAll('[data-share-format], [data-share="embed"]').forEach((b) => {
+			container.querySelectorAll('[data-share-format]').forEach((b) => {
 				b.disabled = locked;
 				b.title = locked ? 'The creator of this scene turned off exports' : '';
 			});
