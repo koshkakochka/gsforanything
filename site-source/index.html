@@ -833,6 +833,29 @@
 			font-size: 12px; padding: 4px 6px;
 		}
 		#desktop-ollama-model-select option { background: #1f2030; color: #fff; }
+		#desktop-model-select optgroup { background: #1f2030; color: rgba(255, 255, 255, 0.6); font-style: normal; }
+
+		/* Local (WebLLM) model panel under the Model menu (localModelPanel.js) */
+		#desktop-webllm-row {
+			display: flex; flex-direction: column; gap: 6px;
+			margin: 0 12px 8px; padding: 8px 10px; flex-shrink: 0;
+			box-sizing: border-box; max-width: calc(100% - 24px); min-width: 0;
+			background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(129, 140, 248, 0.45); border-radius: 8px;
+			font-size: 12px; line-height: 1.4; color: rgba(255, 255, 255, 0.86);
+			max-height: 40vh; overflow-y: auto;
+		}
+		#desktop-webllm-row[hidden] { display: none !important; }
+		#desktop-webllm-row .gs-webllm-title { font-weight: 600; color: #fff; }
+		#desktop-webllm-row[data-state="error"] .gs-webllm-info { color: #fca5a5; }
+		#desktop-webllm-row .gs-webllm-warn { color: #fcd34d; }
+		#desktop-webllm-row .gs-webllm-bar { height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.14); overflow: hidden; }
+		#desktop-webllm-row .gs-webllm-fill { height: 100%; width: 0; background: linear-gradient(90deg, #818cf8, #22d3ee); border-radius: 4px; transition: width 0.2s; }
+		#desktop-webllm-row .gs-webllm-progress-text { margin-top: 3px; font-size: 11px; color: rgba(255, 255, 255, 0.7); overflow-wrap: anywhere; }
+		#desktop-webllm-row .gs-webllm-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+		#desktop-webllm-row .gs-webllm-actions .dchat-btn { font-size: 12px; padding: 4px 10px; }
+		#desktop-webllm-row .gs-webllm-load { background: #4f46e5; border-color: #6366f1; color: #fff; }
+		#desktop-webllm-row [hidden] { display: none !important; }
+		html.gs-phone #desktop-webllm-row .gs-webllm-actions .dchat-btn { min-height: 44px; font-size: 14px; }
 
 		#dchat-nav-type {
 			background: rgba(255, 255, 255, 0.08); color: #fff;
@@ -2898,6 +2921,7 @@
 		html.gs-kb-chat #dchat-community-subtabs,
 		html.gs-kb-chat #desktop-model-row,
 		html.gs-kb-chat #desktop-ollama-model-row,
+		html.gs-kb-chat #desktop-webllm-row,
 		html.gs-kb-chat #desktop-chat-tools-row,
 		html.gs-kb-chat #dchat-code-hint,
 		html.gs-kb-chat .dchat-theme-remember,
@@ -3217,6 +3241,8 @@
 					<label for="desktop-ollama-model-select">Local model:</label>
 					<select id="desktop-ollama-model-select"></select>
 				</div>
+				<!-- Local (WebLLM) model: size confirmation, progress, loaded state. Filled by localModelPanel.js. -->
+				<div id="desktop-webllm-row" style="display:none;" hidden></div>
 				<div id="desktop-chat-messages"></div>
 				<!-- Live camera preview (📷, photoCapture.js): between the bubbles and the button row. -->
 				<div id="gs-camera-panel" hidden></div>
