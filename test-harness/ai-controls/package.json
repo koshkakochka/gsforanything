@@ -1,0 +1,8 @@
+{
+  "name": "gs-ai-controls-tests",
+  "private": true,
+  "type": "module",
+  "description": "AI-described controls (aiControls.js): interpreter unit tests (node unit.mjs) and the Controls tab flow with a stubbed /api/chat, mocked gamepad and IWER Quest 3 (node test.mjs)",
+  "scripts": { "test": "node unit.mjs && node test.mjs" },
+  "dependencies": { "iwer": "^2.7.0", "puppeteer-core": "^24.43.1" }
+}

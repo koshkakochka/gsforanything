@@ -547,6 +547,7 @@ if (!SKIP_VR) {
 	// the menu still clicks while a field listens: pointing at another tab and pulling cancels (click elsewhere)
 	await p.evaluate(() => document.querySelector('#gs-cc-car-horn-xr').click()); await sleep(450);
 	const tabEl = '#dchat-controls-subtabs [data-controls-section="camera"]';
+	await p.evaluate((s) => document.querySelector(s).scrollIntoView({ block: 'nearest' }), tabEl); await sleep(400); // the Custom section can be taller than the menu now
 	await p.evaluate((s) => __t.aimAt('right', document.querySelector(s), 'menu'), tabEl);
 	await sleep(500);
 	await p.evaluate(() => __t.btn('right', 'trigger', 1)); await sleep(250); await p.evaluate(() => __t.btn('right', 'trigger', 0)); await sleep(500);

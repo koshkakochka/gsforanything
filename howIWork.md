@@ -214,6 +214,52 @@ Three moving parts:
   `updateGamepadCamera`, `updateLocomotion` (VR column = locomotion; a
   remapped VR button steps GS's own use of it aside), `isDown` / `value` /
   `onPress` / `bindings()`. Test: `test-harness/controller-remap`.
+- **AI-described controls** (`site-source/aiControls.js`, Controls → Camera
+  for each built-in mode, and Controls → Custom Controls for the scene): a
+  "Describe a control" box. The text ("In VR Map, hold both grips and spread
+  hands to zoom in, pinch to zoom out") goes to `/api/chat` (same backend and
+  keys as the chat, with its own system prompt; Ollama direct when picked)
+  together with the mode, its current key / gamepad / VR bindings, GS's own
+  headset button uses and the scene's schemes. The reply must be ONE JSON
+  definition (`gs-control/1`): `when` (0–4 conditions: a button input `held` /
+  `notHeld` / `pressed`) and `bindings` (1–4: `source` → `action`, with
+  `sensitivity`, `invert`, `deadzone`, `smoothing`, `clamp`, `paramMode`).
+  Sources: `key:<code>`, `mouse:Left|Right|Middle|MoveX|MoveY|Wheel`,
+  `pad:<input>` + axes `pad:LS-X…`, `xr:<input>` + axes `xr:L-Stick-X…`,
+  and VR motion `xr:handDistance`, `xr:L-Hand-X|Y|Z`, `xr:R-Hand-…`,
+  `xr:Hands-…` (metres, measured in the rig relative to where you face, from
+  the moment the conditions became true). Actions: `zoom`, `pan.x`, `pan.y`,
+  `fly.up`, `rotate.yaw`, `rotate.pitch`, `move.x`, `move.z`, `resetView`,
+  `recenter`, `param:<name>` (scene value: `gsControls.aiValue(name)` /
+  `onAiValue`) and `param:<scheme>.<param>` (a Custom Controls number). No
+  code is ever run: the reply is parsed and validated against whitelists
+  (unsupported inputs / actions / fields, invalid JSON, an AI `error`, a
+  failed request → a clear message, nothing applied; numbers clamped, strings
+  clipped). A preview card shows what the AI understood, the inputs and the
+  conflicts (stock keys / gamepad / VR rows, mouse gestures, GS's own VR
+  buttons such as the right grip's locomotion cycle, scene schemes, other AI
+  controls); Apply / Edit description (regenerate) / Cancel. Applied controls
+  are rows marked AI with the original description, toggled on/off, edited
+  (regenerate in place) or deleted. The interpreter (`createAiRuntime`) runs
+  every frame after Custom Controls: rate sources (buttons, axes) move at
+  value × sensitivity × speed per second; motion sources apply their per-frame
+  change (deadzone = distance from the engage point before it starts, against
+  jitter). Desktop / phone: `applyCameraAmounts` drives the active stock
+  control (Orbit / Map dolly, rotate, pan; Fly / First person move and look);
+  Off and scene camera modes only get values. VR: the player rig moves (zoom 1
+  = 2 m toward where you look, pan / move in metres, yaw turns around the
+  head). While a control is engaged its pad inputs stop driving the camera and
+  its VR sticks stop locomotion; the VR buttons an enabled control uses are
+  taken from GS's own uses (grip zoom: the right grip no longer cycles
+  locomotion while it is on). Typing (a text field or the VR keyboard),
+  listening for a binding and a new press while that hand points at a VR
+  window pause it (a hold that started in open space, like a grip zoom in
+  progress, keeps going if the ray sweeps over a window). Stored
+  per mode in localStorage `gs.aiControls.v1` (`{ v: 1, modes: { map: [ { id,
+  description, enabled, def } ] } }`), scene ones in the scene file
+  (`aiControls`), both re-validated on load; at most 12 per mode / scene.
+  Tests: `test-harness/ai-controls` (`unit.mjs` interpreter, `test.mjs` UI +
+  runtime with a stubbed `/api/chat`, mocked gamepad and IWER Quest 3).
 - **Game controllers** (Gamepad API, `window.gsGamepad`): Xbox Series X|S
   and other standard pads over USB or Bluetooth drive the desktop/phone
   camera through the stock three.js control picked in the Controls tab

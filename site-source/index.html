@@ -1185,6 +1185,43 @@
 		}
 		/* Key remapping rows (controlBindings.js) and Custom Controls params */
 		#dchat-key-remap:empty { display: none; }
+		/* AI-described controls (aiControls.js) */
+		.gs-ai-panel { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid rgba(160, 120, 255, 0.35); border-radius: 10px; background: rgba(120, 80, 220, 0.08); }
+		.gs-ai-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+		.gs-ai-badge { display: inline-block; padding: 1px 6px; border-radius: 6px; background: linear-gradient(135deg, #8a5cff, #c06cff); color: #fff; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; vertical-align: middle; }
+		.gs-ai-form { display: flex; flex-direction: column; gap: 6px; }
+		.gs-ai-form[hidden], .gs-ai-rows[hidden], .gs-ai-note[hidden], .gs-ai-help[hidden] { display: none; }
+		.gs-ai-form-label { font-size: 12px; font-weight: 600; color: rgba(255, 255, 255, 0.85); }
+		.gs-ai-input { width: 100%; box-sizing: border-box; min-height: 52px; resize: vertical; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(0, 0, 0, 0.35); color: #fff; font: inherit; font-size: 13px; line-height: 1.35; }
+		.gs-ai-input:focus, .gs-ai-input.gs-vr-typing { outline: 2px solid #a07cff; outline-offset: 1px; }
+		.gs-ai-form-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+		.gs-ai-status { font-size: 12px; min-height: 0; color: rgba(255, 255, 255, 0.75); }
+		.gs-ai-status:empty { display: none; }
+		.gs-ai-status[data-kind="error"] { color: #ff9a9a; }
+		.gs-ai-status[data-kind="ok"] { color: #9ff0b0; }
+		.gs-ai-status[data-kind="busy"]::before { content: '⏳ '; }
+		.gs-ai-preview { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 8px; background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(160, 120, 255, 0.5); font-size: 12px; line-height: 1.4; }
+		.gs-ai-preview[hidden] { display: none; }
+		.gs-ai-preview-title { font-weight: 700; font-size: 13px; }
+		.gs-ai-preview-summary { color: rgba(255, 255, 255, 0.9); }
+		.gs-ai-preview-how ul, .gs-ai-preview-conflicts ul { margin: 2px 0 0; padding-left: 18px; }
+		.gs-ai-preview-conflicts { color: rgba(255, 255, 255, 0.7); }
+		.gs-ai-preview-conflicts.has-conflicts { color: #ffd38a; }
+		.gs-ai-preview-conflict-note { margin-top: 2px; color: rgba(255, 255, 255, 0.65); }
+		.gs-ai-preview-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+		.gs-ai-chip { display: inline-block; margin: 2px 4px 0 0; padding: 1px 6px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); font-size: 11px; white-space: nowrap; }
+		.gs-ai-rows { display: flex; flex-direction: column; gap: 6px; }
+		.gs-ai-row { padding: 8px; border-radius: 8px; background: rgba(0, 0, 0, 0.3); border-left: 3px solid #a07cff; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
+		.gs-ai-row.off { opacity: 0.55; border-left-color: rgba(255, 255, 255, 0.3); }
+		.gs-ai-row.editing { outline: 1px dashed #a07cff; }
+		.gs-ai-row-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+		.gs-ai-row-name { flex: 1 1 auto; min-width: 80px; }
+		.gs-ai-row-top .dchat-btn { padding: 3px 8px; font-size: 11px; }
+		.gs-ai-toggle-wrap { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; cursor: pointer; }
+		.gs-ai-row-desc { font-style: italic; color: rgba(255, 255, 255, 0.8); overflow-wrap: anywhere; }
+		.gs-ai-row-how { color: rgba(255, 255, 255, 0.65); overflow-wrap: anywhere; }
+		.gs-ai-row-conflicts { color: #ffd38a; }
+		.gs-ai-note, .gs-ai-help { margin: 0; }
 		.dchat-controls-help kbd.remapped { background: rgba(165, 180, 252, 0.28); color: #fff; }
 		.dchat-controls-help kbd.unbound { opacity: 0.45; }
 		.gs-remap-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
@@ -3506,6 +3543,8 @@
 					</div>
 					<div id="dchat-player-height-help" class="gs-height-help">Eye height above the floor while walking, 0.3&ndash;5 m (default 1.6). Type a value or use the arrows (hold to repeat). Fly moves freely up and down instead (<kbd data-key="fly:up:0">R</kbd>/<kbd data-key="fly:down:0">F</kbd>).</div>
 				</div>
+				<!-- AI-described controls for the selected built-in mode (aiControls.js, filled by main.js) -->
+				<div id="dchat-ai-controls" aria-label="AI-described controls for the selected camera mode"></div>
 				<div>
 					<div class="dchat-section-label" style="margin:6px 0 8px">Game controller</div>
 					<div id="dchat-gamepad-status" class="dchat-controls-help" role="status"></div>
@@ -3540,6 +3579,8 @@
 				<div class="dchat-controls-section" data-controls-section="custom">
 					<div class="dchat-section-label">Custom Controls</div>
 					<div id="dchat-custom-controls"></div>
+					<!-- AI-described controls for this scene (aiControls.js; saved in the scene file) -->
+					<div id="dchat-ai-controls-scene" aria-label="AI-described controls for this scene"></div>
 					<div class="dchat-controls-help" style="color:rgba(255,255,255,0.72)">
 						A custom scheme belongs to the scene that defined it: clearing or loading a scene removes it.
 						Changed settings are saved in this browser and with the scene when you save or share it.
