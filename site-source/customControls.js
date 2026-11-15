@@ -19,6 +19,15 @@
 //   gs.onUpdate((dt) => { if (car.isDown('accelerate')) speed += car.values.topSpeed * dt; });
 //   car.onChange((name, value) => { ... });   car.onPress('horn', () => honk());
 //
+// Key params also work from a game controller and from VR controllers:
+// `gamepad: 'A' | 'LS-Up' | 'RT' | 'DLeft' | …` and `xr: 'R-Trigger' |
+// 'L-Stick-Up' | 'A' | …` (inputBindings.js); omitted ones are generated from
+// the key (W/A/S/D → left stick, Space → A / right trigger, …), '' means none.
+// isDown() and onPress() answer for all three. Pad and headset input is
+// ignored while typing in a text field and, in VR, for a hand whose ray is on
+// a menu window. A scheme that binds a headset thumbstick (or A/B/X/Y) takes it
+// over from locomotion (or push-to-talk / pointer rays) while it exists.
+//
 // Defining the same id again (hot reload, a later reply) replaces the
 // definition and its listeners and keeps the values of params whose name and
 // type are unchanged. Clearing or loading a scene removes every scheme.
@@ -26,6 +35,7 @@
 // (localStorage `gs.customControls.v1`, per scheme id) > the declared default.
 
 import { normalizeCode, parseKeyName, keyLabel, codeMatches, createKeyInput, findDuplicates, describeDuplicates } from './controlBindings.js';
+import { normalizePadBinding, normalizeXrBinding, autoBindings, padValue, xrValue, padLabel, xrLabel, padShort, xrShort, xrStickOf, xrButtonOf } from './inputBindings.js';
 
 export const CUSTOM_CONTROLS_STORAGE_KEY = 'gs.customControls.v1';
 export const PARAM_TYPES = ['key', 'number', 'boolean', 'select'];
@@ -64,6 +74,16 @@ function normalizeParam(p, i) {
 		const d = toKey(p.default);
 		if (d === null) throw new Error(`params[${i}] "${name}": default "${p.default}" is not a key name (e.g. 'W', 'ArrowUp', 'Space', 'Shift')`);
 		out.default = d;
+		if (p.gamepad !== undefined) {
+			const g = normalizePadBinding(p.gamepad);
+			if (g === null) throw new Error(`params[${i}] "${name}": gamepad "${p.gamepad}" is not a controller input (e.g. 'A', 'RT', 'LS-Up', 'DLeft')`);
+			out.gamepad = g;
+		}
+		if (p.xr !== undefined) {
+			const x = normalizeXrBinding(p.xr);
+			if (x === null) throw new Error(`params[${i}] "${name}": xr "${p.xr}" is not a VR controller input (e.g. 'R-Trigger', 'L-Stick-Up', 'A', 'L-Squeeze')`);
+			out.xr = x;
+		}
 	} else if (type === 'number') {
 		const min = Number.isFinite(+p.min) ? +p.min : 0;
 		const max = Number.isFinite(+p.max) ? +p.max : Math.max(min + 1, Number.isFinite(+p.default) ? +p.default * 2 || 1 : 1);
@@ -126,6 +146,46 @@ export function createCustomControls(opts = {}) {
 	window.addEventListener('blur', () => pressed.clear());
 	document.addEventListener('focusin', () => { if (isTyping()) pressed.clear(); });
 
+	function inputValue(p) {
+		return Math.max(padValue(p.gamepad, opts.getPad?.()), xrValue(p.xr, opts.getXr?.()));
+	}
+	// Per frame (main.js, after the pads are polled): onPress for gamepad / VR
+	// presses (rising edge past half travel).
+	function poll() {
+		const typing = isTyping();
+		for (const s of schemes.values()) {
+			for (const p of s.params) {
+				if (p.type !== 'key' || (!p.gamepad && !p.xr)) continue;
+				const down = !typing && inputValue(p) > 0.5;
+				const was = s.inputDown.has(p.name);
+				if (down && !was) {
+					s.inputDown.add(p.name);
+					for (const fn of s.pressListeners.get(p.name) || []) { try { fn({ type: 'controller', param: p.name }); } catch (err) { console.error(err); } }
+				} else if (!down && was) s.inputDown.delete(p.name);
+			}
+		}
+	}
+	/** Inputs the schemes take over: { pad: Set('LS'|'RS'|'DPad'|button), xrSticks: Set(hand), xrButtons: Set('hand:index') }. */
+	function claims() {
+		const pad = new Set(), xrSticks = new Set(), xrButtons = new Set();
+		for (const s of schemes.values()) {
+			for (const p of s.params) {
+				if (p.type !== 'key') continue;
+				if (p.gamepad) {
+					const m = p.gamepad.match(/^(LS|RS)-(Up|Down|Left|Right)$/);
+					pad.add(m ? m[1] : /^D(Up|Down|Left|Right)$/.test(p.gamepad) ? 'DPad' : p.gamepad);
+				}
+				if (p.xr) {
+					const st = xrStickOf(p.xr);
+					if (st) xrSticks.add(st.hand);
+					const b = xrButtonOf(p.xr);
+					if (b) xrButtons.add(`${b.hand}:${b.index}`);
+				}
+			}
+		}
+		return { pad, xrSticks, xrButtons };
+	}
+
 	function isCodeDown(binding) {
 		if (!binding) return false;
 		for (const c of pressed) if (codeMatches(binding, c)) return true;
@@ -149,7 +209,11 @@ export function createCustomControls(opts = {}) {
 			get(name) { return s.values[name]; },
 			set(name, value) { return setValue(s.id, name, value); },
 			/** True while the key bound to a `key` param is held (false while typing in a text field). */
-			isDown(name) { const p = s.byName.get(name); return !!p && p.type === 'key' && !isTyping() && isCodeDown(s.values[name]); },
+			isDown(name) { const p = s.byName.get(name); return !!p && p.type === 'key' && !isTyping() && (isCodeDown(s.values[name]) || inputValue(p) > 0.5); },
+			/** 0..1: the key (1), or how far the bound stick / trigger is pushed (gamepad or VR). */
+			value(name) { const p = s.byName.get(name); if (!p || p.type !== 'key' || isTyping()) return 0; return isCodeDown(s.values[name]) ? 1 : inputValue(p); },
+			/** { gamepad, xr } bindings of a key param ('' = none). */
+			bindings(name) { const p = s.byName.get(name); return p && p.type === 'key' ? { gamepad: p.gamepad || '', xr: p.xr || '' } : null; },
 			/** The bound key's short name ('W', 'ArrowUp', 'Space'). */
 			keyName(name) { return keyLabel(s.values[name]); },
 			onChange(fn) { if (typeof fn === 'function') s.changeListeners.add(fn); return () => s.changeListeners.delete(fn); },
@@ -172,7 +236,7 @@ export function createCustomControls(opts = {}) {
 		if (!Array.isArray(def.params) || !def.params.length) throw new Error('defineCustomScheme: params must be a non-empty array');
 		if (def.params.length > MAX_PARAMS) throw new Error(`defineCustomScheme: at most ${MAX_PARAMS} params`);
 		if (!schemes.has(id) && schemes.size >= MAX_SCHEMES) throw new Error(`defineCustomScheme: at most ${MAX_SCHEMES} schemes`);
-		const params = def.params.map(normalizeParam);
+		const params = autoBindings(def.params.map(normalizeParam));
 		const names = new Set();
 		for (const p of params) { if (names.has(p.name)) throw new Error(`defineCustomScheme: duplicate param "${p.name}"`); names.add(p.name); }
 		const cameraModes = opts.cameraModes || [];
@@ -204,6 +268,7 @@ export function createCustomControls(opts = {}) {
 			values,
 			changeListeners: new Set(),
 			pressListeners: new Map(),
+			inputDown: new Set(),
 			definedAt: old ? old.definedAt : Date.now()
 		};
 		if (!cameraMode && old?.cameraMode) { restoreCamera(old); s.prevCameraMode = null; }
@@ -405,6 +470,32 @@ export function createCustomControls(opts = {}) {
 		}
 		label.htmlFor = fid;
 		row.append(label, ctl);
+		if (p.type === 'key') {
+			// Gamepad and VR controller columns next to the key (read-only):
+			// explicit `gamepad` / `xr` from the scene's code, else generated
+			// from the key ("auto").
+			row.classList.add('gs-cc-keyrow');
+			const cols = document.createElement('div');
+			cols.className = 'gs-bind-cols';
+			for (const [kind, b, auto, short, long] of [['gamepad', p.gamepad, p.gamepadAuto, padShort, padLabel], ['xr', p.xr, p.xrAuto, xrShort, xrLabel]]) {
+				const chip = document.createElement('span');
+				chip.className = 'gs-bind-chip';
+				chip.dataset.kind = kind;
+				chip.dataset.binding = b || '';
+				chip.dataset.auto = auto ? '1' : '0';
+				chip.classList.toggle('none', !b);
+				const what = kind === 'gamepad' ? 'Gamepad' : 'VR';
+				const cap = document.createElement('small');
+				cap.textContent = `${what} `; // textContent reads "Gamepad A"
+				const val = document.createElement('b');
+				val.textContent = short(b);
+				chip.append(cap, val);
+				chip.title = `${what === 'VR' ? 'VR controller' : 'Game controller'}: ${long(b)}${b ? (auto ? ' (generated from the key)' : ' (set by the scene)') : ''}`;
+				chip.setAttribute('aria-label', chip.title);
+				cols.appendChild(chip);
+			}
+			row.appendChild(cols);
+		}
 		fieldSync.set(`${s.id}:${p.name}`, sync);
 		return row;
 	}
@@ -462,6 +553,8 @@ export function createCustomControls(opts = {}) {
 		},
 		remove: removeScheme,
 		reset,
+		poll,
+		claims,
 		forScene,
 		setPendingSceneValues,
 		refreshAllWarnings() { for (const s of schemes.values()) refreshWarnings(s); },

@@ -1194,6 +1194,28 @@
 		.gs-remap-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; }
 		.gs-remap-label { flex: 1 1 auto; min-width: 0; color: rgba(255, 255, 255, 0.88); font-size: 12px; overflow-wrap: anywhere; }
 		.gs-remap-keys { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+		/* Game controller / VR equivalents under a key row (inputBindings.js) */
+		.gs-remap-row.has-bind { flex-wrap: wrap; row-gap: 2px; }
+		.gs-bind-alt { flex-basis: 100%; font-size: 11px; line-height: 1.35; color: rgba(255, 255, 255, 0.66); overflow-wrap: anywhere; }
+		.gs-remap-pad { margin-top: 8px; }
+		/* Custom Controls key rows: Label | Key | Gamepad | VR (wraps when narrow) */
+		.gs-cc-param.gs-cc-keyrow { flex-wrap: wrap; row-gap: 4px; column-gap: 6px; }
+		.gs-cc-keyrow .gs-remap-label { flex: 1 1 52px; }
+		.gs-bind-cols { display: flex; gap: 4px; flex-shrink: 0; margin-left: auto; }
+		.gs-bind-chip {
+			display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 50px; min-height: 30px; box-sizing: border-box;
+			padding: 1px 4px; border-radius: 6px; border: 1px solid rgba(165, 180, 252, 0.45); background: rgba(79, 70, 229, 0.18);
+			color: #e0e7ff; font-size: 11px; line-height: 1.2; white-space: nowrap;
+		}
+		.gs-bind-chip[data-kind="xr"] { border-color: rgba(52, 211, 153, 0.5); background: rgba(16, 185, 129, 0.16); color: #d1fae5; }
+		.gs-bind-chip.none { opacity: 0.55; }
+		.gs-bind-chip small { font-size: 9px; line-height: 1.1; opacity: 0.85; white-space: pre; }
+		.gs-bind-chip b { font-weight: 600; white-space: normal; text-align: center; }
+		.gs-bind-chip[data-kind="gamepad"] { width: 52px; }
+		.gs-bind-chip[data-kind="xr"] { width: 62px; }
+		html.gs-phone .gs-bind-chip[data-kind="gamepad"] { width: 62px; }
+		html.gs-phone .gs-bind-chip[data-kind="xr"] { width: 72px; }
+		html.gs-phone .gs-bind-chip { min-height: 34px; font-size: 12px; }
 		#desktop-chat input.gs-key-input {
 			width: 92px; box-sizing: border-box; padding: 6px 8px; border-radius: 6px;
 			border: 1px solid #6d7088; background: #24253a; color: #fff;
@@ -3469,9 +3491,9 @@
 					<div class="dchat-controls-help" style="margin-top:6px">
 						Xbox Series X|S, Xbox One, PlayStation and other USB or Bluetooth pads.
 						The sticks drive the selected control: Orbit and Map: right stick orbits, left stick pans
-						(Orbit: up/down zooms), <kbd>LT</kbd>/<kbd>RT</kbd> zoom out/in &middot;
+						(Orbit: up/down zooms), <kbd>LT</kbd>/<kbd>RT</kbd> zoom out/in, d-pad = the pan keys &middot;
 						First person: left stick walks, right stick looks &middot;
-						Fly: left stick moves, right stick looks, <kbd>LB</kbd>/<kbd>RB</kbd> down/up &middot;
+						Fly: left stick moves, right stick looks, <kbd>LB</kbd>/<kbd>RB</kbd> down/up, d-pad &larr;/&rarr; roll, left stick press slow &middot;
 						<kbd>Y</kbd> switches Orbit/First person &middot; <kbd>View</kbd> resets the view.
 						Press any button after connecting so the browser picks it up.
 						Headset controllers in VR are separate and keep their own mapping.

@@ -329,9 +329,13 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 	// lx/ly: left stick (y down = positive), rx/ry: right stick, vertical:
 	// up (+) / down (-), zoom: in (+) / out (-). Each value goes into the
 	// active control's own API.
-	function stick(dt, { lx = 0, ly = 0, rx = 0, ry = 0, vertical = 0, zoom = 0 } = {}) {
+	// dpadX / dpadY: d-pad (-1, 0, 1; up = -1): Orbit / Map pan like the pan
+	// keys, Fly rolls (←/→). slow: Fly's Slow (left stick press). See
+	// inputBindings.js BUILTIN_PAD for the whole table.
+	let padSlow = false;
+	function stick(dt, { lx = 0, ly = 0, rx = 0, ry = 0, vertical = 0, zoom = 0, dpadX = 0, dpadY = 0, slow = false } = {}) {
 		if (!controls || !controls.enabled || dt <= 0 || !GAMEPAD_MODES.has(mode)) return;
-		const any = lx || ly || rx || ry || vertical || zoom;
+		const any = lx || ly || rx || ry || vertical || zoom || dpadX || dpadY;
 		if (controls instanceof OrbitControls) { // Orbit and Map (MapControls extends OrbitControls)
 			if (!any) return;
 			const h = domElement.clientHeight || window.innerHeight;
@@ -346,6 +350,8 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 				if (ly) { const s = Math.pow(1 / STICK_ZOOM_SPEED, Math.abs(ly) * dt * 2); if (ly < 0) controls._dollyIn(s); else controls._dollyOut(s); }
 			}
 			if (zoom) { const s = Math.pow(1 / STICK_ZOOM_SPEED, Math.abs(zoom) * dt * 2); if (zoom > 0) controls._dollyIn(s); else controls._dollyOut(s); }
+			// D-pad = the pan keys (Pan up / down / left / right), held to repeat.
+			if (dpadX || dpadY) controls._pan(-dpadX * h * 0.5 * dt, -dpadY * h * 0.5 * dt);
 			return;
 		}
 		if (controls instanceof PointerLockControls) {
@@ -363,8 +369,10 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 			return;
 		}
 		if (controls instanceof FlyControls) {
+			if (slow !== padSlow) { padSlow = slow; controls.movementSpeedMultiplier = slow ? 0.1 : 1; } // stock Shift value
 			if (!any && !stickActive) return;
 			const s = controls._moveState;
+			s.rollLeft = dpadX < 0 ? 1 : 0; s.rollRight = dpadX > 0 ? 1 : 0;
 			s.right = Math.max(0, lx); s.left = Math.max(0, -lx);
 			s.back = Math.max(0, ly); s.forward = Math.max(0, -ly);
 			s.up = Math.max(0, vertical); s.down = Math.max(0, -vertical);

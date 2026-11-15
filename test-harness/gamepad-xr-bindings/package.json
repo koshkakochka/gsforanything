@@ -1,0 +1,8 @@
+{
+  "name": "gs-gamepad-xr-bindings-tests",
+  "private": true,
+  "type": "module",
+  "description": "Gamepad (mocked navigator.getGamepads) and WebXR controller (IWER) bindings for the built-in camera styles, Custom Controls key params and custom camera modes",
+  "scripts": { "test": "node test.mjs" },
+  "dependencies": { "iwer": "^2.7.0", "puppeteer-core": "^24.43.1" }
+}

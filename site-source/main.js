@@ -26,6 +26,7 @@ import { createCameraControls, CAMERA_MODES, CAMERA_MODE_LABELS, STICK_MODES, no
 import * as gsKeyBindings from './controlBindings.js';
 import { createCustomControls } from './customControls.js';
 import { createCustomCameraModes } from './customCameraModes.js';
+import { BUILTIN_PAD, BUILTIN_XR, BUILTIN_GESTURES, BUILTIN_GLOBAL_PAD, padLabel, xrLabel } from './inputBindings.js';
 import { sanitizeDescription, DESCRIPTION_MAX_CHARS, DESCRIPTION_PLACEHOLDER } from './sceneDescription.js';
 import { THUMB_WIDTH, THUMB_HEIGHT, THUMB_MAX_BYTES } from './sceneThumbnail.js';
 import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
@@ -6079,7 +6080,7 @@ function applyLocomotionInput(dt, refCamera, mx, my, rx, ry) {
 	}
 }
 
-function updateLocomotion(dt, session) {
+function updateLocomotion(dt, session, claimedSticks = null) {
 	if (!player || locomotionMode === 'off' || dt <= 0) return;
 
 	const xrCam = renderer.xr.getCamera();
@@ -6091,6 +6092,8 @@ function updateLocomotion(dt, session) {
 		if (!gp || !gp.axes) continue;
 		// That hand's stick is scrolling a VR window (stickScrollVrWindow).
 		if (_stickOwnedByWindow[source.handedness]) continue;
+		// A scene binding (Custom Controls / camera mode) owns this stick.
+		if (claimedSticks && claimedSticks.has(source.handedness)) continue;
 		const axes = gp.axes;
 		const ax = axes.length >= 4 ? axes[2] : (axes[0] || 0);
 		const ay = axes.length >= 4 ? axes[3] : (axes[1] || 0);
@@ -6247,12 +6250,27 @@ customCameraModes = createCustomCameraModes({
 	getMode: () => cameraControls.mode,
 	switchTo: (m) => setCameraControlMode(m),
 	fallbackMode: () => savedBuiltinCameraMode(),
+	// On-screen joysticks + game controller sticks + headset thumbsticks
+	// (each past its deadzone), clamped to -1..1; nothing while typing.
 	stickAxes: () => {
-		if (typeof twinSticks === 'undefined' || !twinSticks.visible) return { lx: 0, ly: 0, rx: 0, ry: 0 };
-		const a = twinSticks.axes();
-		const [lx, ly] = applyStickDeadzone(a.lx, a.ly, gsGamepad.deadzone);
-		const [rx, ry] = applyStickDeadzone(a.rx, a.ry, gsGamepad.deadzone);
-		return { lx, ly, rx, ry };
+		const out = { lx: 0, ly: 0, rx: 0, ry: 0 };
+		if (isTextEntry(document.activeElement)) return out;
+		if (typeof twinSticks !== 'undefined' && twinSticks.visible) {
+			const a = twinSticks.axes();
+			const [lx, ly] = applyStickDeadzone(a.lx, a.ly, gsGamepad.deadzone);
+			const [rx, ry] = applyStickDeadzone(a.rx, a.ry, gsGamepad.deadzone);
+			out.lx += lx; out.ly += ly; out.rx += rx; out.ry += ry;
+		}
+		if (gsGamepad.connected) {
+			out.lx += gsGamepad.axis('leftX'); out.ly += gsGamepad.axis('leftY');
+			out.rx += gsGamepad.axis('rightX'); out.ry += gsGamepad.axis('rightY');
+		}
+		if (gsXrInput.presenting) {
+			const [lx, ly] = gsXrInput.stick('left'), [rx, ry] = gsXrInput.stick('right');
+			out.lx += lx; out.ly += ly; out.rx += rx; out.ry += ry;
+		}
+		for (const k of Object.keys(out)) out[k] = Math.max(-1, Math.min(1, out[k]));
+		return out;
 	},
 	onChange: (ev) => {
 		renderCameraControlsUi();
@@ -6621,6 +6639,15 @@ function renderKeyRemap(force = false) {
 			keys.appendChild(k.input);
 		}
 		row.append(name, keys);
+		// Game controller / headset equivalents (inputBindings.js, read-only).
+		const padB = BUILTIN_PAD[style]?.[a.id] || '', xrB = BUILTIN_XR[style]?.[a.id] || '';
+		row.classList.add('has-bind');
+		const alt = document.createElement('div');
+		alt.className = 'gs-bind-alt';
+		alt.dataset.gamepad = padB;
+		alt.dataset.xr = xrB;
+		alt.textContent = `🎮 ${padLabel(padB)} · VR ${xrB ? xrLabel(xrB) : a.id.startsWith('pitch') ? 'your head' : '—'}`;
+		row.appendChild(alt);
 		list.appendChild(row);
 	}
 	const warn = document.createElement('div');
@@ -6647,6 +6674,32 @@ function renderKeyRemap(force = false) {
 		box.appendChild(n);
 	}
 	box.appendChild(fixed);
+	// Mouse / wheel gestures → game controller and headset equivalents.
+	const pads = document.createElement('div');
+	pads.className = 'gs-remap-fixed gs-remap-pad';
+	pads.id = 'dchat-key-remap-pad';
+	const ph = document.createElement('div');
+	ph.textContent = 'Game controller and VR controllers (not remappable):';
+	pads.appendChild(ph);
+	for (const [gesture, pad, xr] of BUILTIN_GESTURES[style] || []) {
+		const r = document.createElement('div');
+		const b = document.createElement('b');
+		b.textContent = gesture;
+		r.append(b, document.createTextNode(` · 🎮 ${pad} · VR ${xr}`));
+		pads.appendChild(r);
+	}
+	for (const [btn, what] of BUILTIN_GLOBAL_PAD) {
+		const r = document.createElement('div');
+		const b = document.createElement('b');
+		b.textContent = `🎮 ${btn}`;
+		r.append(b, document.createTextNode(` · ${what}`));
+		pads.appendChild(r);
+	}
+	const vrNote = document.createElement('div');
+	vrNote.className = 'gs-remap-note';
+	vrNote.textContent = 'In a headset the camera follows your head and the thumbsticks move you (Environment → Navigation); the VR column lists those equivalents. Pointing a controller at a menu keeps its trigger and stick for the menu.';
+	pads.appendChild(vrNote);
+	box.appendChild(pads);
 	refreshKeyRemap();
 }
 function refreshKeyRemap() {
@@ -6707,6 +6760,8 @@ customControls = createCustomControls({
 	setCameraMode: (m, opts) => setCameraControlMode(m, opts),
 	cameraModes: CAMERA_MODES.slice(),
 	describeCameraKey,
+	getPad: () => gsGamepad,
+	getXr: () => gsXrInput,
 	onAskChat: () => {
 		activateTab('chat');
 		const input = desktopChatInput;
@@ -6736,6 +6791,17 @@ Object.assign(window.gsControls, {
 	removeCustomScheme: (id) => customControls.remove(id),
 	/** Key bindings of a style, e.g. gsControls.keyBindings('fly') → { forward: ['KeyW', ''], … }. */
 	keyBindings: (style) => gsKeyBindings.getStyleBindings(style || cameraControls.mode),
+	/** Keyboard, game controller and VR bindings of a built-in style (tests / console). */
+	inputBindings: (style) => {
+		const st = style || cameraControls.mode;
+		const def = gsKeyBindings.REMAP_STYLES[st];
+		if (!def) return null;
+		return {
+			style: st,
+			actions: def.actions.map((a) => ({ id: a.id, label: a.label, keys: gsKeyBindings.getKeys(st, a.id), gamepad: BUILTIN_PAD[st]?.[a.id] || '', xr: BUILTIN_XR[st]?.[a.id] || '' })),
+			gestures: (BUILTIN_GESTURES[st] || []).map(([gesture, gamepad, xr]) => ({ gesture, gamepad, xr }))
+		};
+	},
 	/** Add a camera mode button run by scene code (customCameraModes.js); returns its handle. */
 	registerCameraMode: (def) => customCameraModes.register(def),
 	getCameraMode: (id) => customCameraModes.get(id),
@@ -7308,7 +7374,7 @@ function buildGsSettingsNote() {
 		const r = originRotation.rotation;
 		lines.push(`Origin rotation: the user turned the scene's frame (yaw ${r.yaw}°, pitch ${r.pitch}°, roll ${r.roll}°) in Environment. Keep writing in scene coordinates with scene.add(...) as usual (floor y = 0); the app rotates it. Convert world points (camera position, raycast hits) with gsOrigin.toLocal(v) before using them as positions.`);
 	}
-	lines.push("Game controllers (Xbox, PlayStation, other USB/Bluetooth pads): `gsGamepad.connected`, `gsGamepad.axis('leftX' | 'leftY' | 'rightX' | 'rightY')` (-1..1, deadzone applied, up is negative), `gsGamepad.button('A' | 'B' | 'X' | 'Y' | 'LB' | 'RB' | 'LT' | 'RT' | 'View' | 'Menu' | 'LS' | 'RS' | 'Up' | 'Down' | 'Left' | 'Right')` (0..1), `gsGamepad.pressed(name)`, `gsGamepad.justPressed(name)` (true for one frame), `gsGamepad.onButton(name, fn)`, `gsGamepad.rumble(ms, strength)`. The sticks move the editor camera by default; set `gsGamepad.captureCamera = true` when the scene uses the sticks itself (a game character, a vehicle). Headset (WebXR) controllers are separate and are not covered by gsGamepad.");
+	lines.push("Game controllers (Xbox, PlayStation, other USB/Bluetooth pads): `gsGamepad.connected`, `gsGamepad.axis('leftX' | 'leftY' | 'rightX' | 'rightY')` (-1..1, deadzone applied, up is negative), `gsGamepad.button('A' | 'B' | 'X' | 'Y' | 'LB' | 'RB' | 'LT' | 'RT' | 'View' | 'Menu' | 'LS' | 'RS' | 'Up' | 'Down' | 'Left' | 'Right')` (0..1), `gsGamepad.pressed(name)`, `gsGamepad.justPressed(name)` (true for one frame), `gsGamepad.onButton(name, fn)`, `gsGamepad.rumble(ms, strength)`. The sticks move the editor camera by default; set `gsGamepad.captureCamera = true` when the scene uses the sticks itself (a game character, a vehicle). Headset (WebXR) controllers are separate: `gsXrInput.presenting`, `gsXrInput.stick('left' | 'right')` → [x, y] (deadzone applied), `gsXrInput.hand(h).buttons` (0 trigger, 1 grip, 3 stick press, 4 A/X, 5 B/Y). Simplest: give every control a Custom Controls key param (defineCustomScheme / registerCameraMode params) with `gamepad` and `xr` bindings (generated from the key when omitted) and read `h.isDown(name)` / `h.value(name)`, so it works from the keyboard, a game controller and VR controllers.");
 	return lines.join('\n');
 }
 
@@ -7400,6 +7466,38 @@ const gsGamepad = {
 	}
 };
 window.gsGamepad = gsGamepad;
+
+// Headset (WebXR) controllers, read by scene bindings (inputBindings.js
+// xrValue): per hand the thumbstick (deadzone applied, up negative), the
+// xr-standard button values (0 trigger, 1 grip, 3 stick press, 4 A/X, 5 B/Y)
+// and whether the UI has that hand (ray on a window: buttons; stick scrolling
+// a window: stick). Filled every frame of an XR session.
+const _emptyXrHand = () => ({ x: 0, y: 0, buttons: [0, 0, 0, 0, 0, 0], stickBlocked: false, buttonsBlocked: false, connected: false });
+const gsXrInput = {
+	presenting: false,
+	_hands: { left: _emptyXrHand(), right: _emptyXrHand() },
+	_rayOnWindow: { left: false, right: false },
+	hand(h) { return this._hands[h] || null; },
+	/** Thumbstick of a hand: [x, y] (deadzone applied; 0 while the UI owns it). */
+	stick(h) { const o = this._hands[h]; return o && !o.stickBlocked ? [o.x, o.y] : [0, 0]; },
+	_resetHands() { this._hands.left = _emptyXrHand(); this._hands.right = _emptyXrHand(); },
+	_setHand(h, x, y, buttons, stickBlocked) {
+		const [dx, dy] = applyStickDeadzone(x || 0, y || 0, THUMBSTICK_DEADZONE);
+		const o = this._hands[h];
+		o.connected = true; o.x = dx; o.y = dy;
+		for (let i = 0; i < 6; i++) { const b = buttons[i]; o.buttons[i] = !b ? 0 : (b.pressed && !b.value ? 1 : b.value || 0); }
+		o.stickBlocked = !!stickBlocked;
+		o.buttonsBlocked = !!this._rayOnWindow[h];
+	}
+};
+window.gsXrInput = gsXrInput;
+const _noClaims = { pad: new Set(), xrSticks: new Set(), xrButtons: new Set() };
+/** What scene bindings took over this frame (Custom Controls params + an active custom camera mode with sticks). */
+function currentXrClaims() {
+	const c = customControls ? customControls.claims() : _noClaims;
+	if (!customCameraModes?.wantsSticks(cameraControls.mode)) return c;
+	return { ...c, xrSticks: new Set([...c.xrSticks, 'left', 'right']) };
+}
 
 function gamepadDisplayName(id) {
 	const s = String(id || 'Game controller');
@@ -7499,16 +7597,25 @@ function updateGamepadCamera(dt) {
 	if (!gsGamepad.connected || dt <= 0) return null;
 	if (cameraControlsSuspended() || gsGamepad.captureCamera) return null;
 	if (cameraControls.mode === 'off' || isCustomCameraMode(cameraControls.mode)) return null; // custom modes read gsGamepad themselves
-	if (gsGamepad.justPressed('Y')) {
+	if (isTextEntry(document.activeElement)) return null; // typing: the pad doesn't move the camera
+	// Inputs a Custom Controls scheme binds are the scheme's, not the camera's.
+	const claimed = customControls ? customControls.claims().pad : _noClaims.pad;
+	const free = (n) => !claimed.has(n);
+	if (free('Y') && gsGamepad.justPressed('Y')) {
 		setCameraControlMode(cameraControls.mode === 'orbit' ? 'firstperson' : 'orbit');
 		return null;
 	}
-	if (gsGamepad.justPressed('View')) { resetCameraView(); return null; }
+	if (free('View') && gsGamepad.justPressed('View')) { resetCameraView(); return null; }
+	const ls = free('LS'), rs = free('RS'), dp = free('DPad');
+	const btn = (n) => (free(n) ? gsGamepad.button(n) : 0);
 	return {
-		lx: gsGamepad.axis('leftX'), ly: gsGamepad.axis('leftY'),
-		rx: gsGamepad.axis('rightX'), ry: gsGamepad.axis('rightY'),
-		vertical: gsGamepad.button('RB') - gsGamepad.button('LB'),
-		zoom: gsGamepad.button('RT') - gsGamepad.button('LT')
+		lx: ls ? gsGamepad.axis('leftX') : 0, ly: ls ? gsGamepad.axis('leftY') : 0,
+		rx: rs ? gsGamepad.axis('rightX') : 0, ry: rs ? gsGamepad.axis('rightY') : 0,
+		vertical: btn('RB') - btn('LB'),
+		zoom: btn('RT') - btn('LT'),
+		dpadX: dp ? (gsGamepad.pressed('Right') ? 1 : 0) - (gsGamepad.pressed('Left') ? 1 : 0) : 0,
+		dpadY: dp ? (gsGamepad.pressed('Down') ? 1 : 0) - (gsGamepad.pressed('Up') ? 1 : 0) : 0,
+		slow: free('LS-Press') && gsGamepad.pressed('LS')
 	};
 }
 
@@ -9975,6 +10082,10 @@ renderer.setAnimationLoop((time) => {
 			const surfHit = updateSurfacePointer(i, _rayOrigin, _rayDir, intersects, reticle);
 			const hit = !surfHit && intersects.length > 0 ? intersects[0] : null;
 			const hitWin = hit ? vrWindows.byMesh(hit.object) : null;
+			// A hand pointing at a window / canvas surface keeps its buttons for
+			// the UI: scene bindings (gsXrInput) read 0 for it.
+			const rayHand = controller.userData.handedness;
+			if (rayHand === 'left' || rayHand === 'right') gsXrInput._rayOnWindow[rayHand] = !!(hitWin || surfHit);
 			if (hit) {
 				reticle.position.copy(hit.point);
 				// Face along hit normal (toward the camera side of the window)
@@ -9997,25 +10108,30 @@ renderer.setAnimationLoop((time) => {
 		// Poll thumbsticks (scrolling) and buttons (ray toggle + push-to-talk)
 		const session = renderer.xr.getSession();
 		if (session) {
+			// Inputs a scene's Custom Controls / camera mode took over (inputBindings.js).
+			const xrClaims = currentXrClaims();
+			gsXrInput.presenting = true;
+			gsXrInput._resetHands();
 			for (const source of session.inputSources) {
 				const gp = source.gamepad;
 				const hand = source.handedness;
 
 				if (gp && (hand === 'left' || hand === 'right')) {
 					const prev = _prevButtons[hand];
+					const mine = (i) => xrClaims.xrButtons.has(`${hand}:${i}`); // claimed: the scene gets it, GS's own use steps aside
 					// B / Y button (index 5): toggle pointer ray lines on press (edge).
 					const b5 = !!(gp.buttons[5] && gp.buttons[5].pressed);
-					if (b5 && !prev[5]) toggleRayVisibility();
+					if (b5 && !prev[5] && !mine(5)) toggleRayVisibility();
 					prev[5] = b5;
 					// A / X button (index 4): push-to-talk — listen while held.
 					const b4 = !!(gp.buttons[4] && gp.buttons[4].pressed);
-					if (b4 && !prev[4]) startPTT(hand);
-					if (!b4 && prev[4]) stopPTT(hand);
+					if (b4 && !prev[4] && !mine(4)) startPTT(hand);
+					if (!b4 && prev[4] && !mine(4)) stopPTT(hand);
 					prev[4] = b4;
 					// Thumbstick press (index 3): collapse / restore all UI. A reliable
 					// fallback for the head-locked Hide/Show-UI button.
 					const b3 = !!(gp.buttons[3] && gp.buttons[3].pressed);
-					if (b3 && !prev[3]) toggleUi();
+					if (b3 && !prev[3] && !mine(3)) toggleUi();
 					prev[3] = b3;
 					// Grip / squeeze (index 1), either hand: with the ray on the
 					// origin gizmo, grab it (rotate the scene with the controller)
@@ -10023,7 +10139,7 @@ renderer.setAnimationLoop((time) => {
 					// mode (off → planar → free-roam).
 					const b1 = !!(gp.buttons[1] && gp.buttons[1].pressed);
 					if (b1 && !prev[1]) {
-						if (!beginVrGizmoGrab(hand) && hand === 'right') cycleLocomotionMode();
+						if (!beginVrGizmoGrab(hand) && hand === 'right' && !mine(1)) cycleLocomotionMode();
 					}
 					if (!b1 && prev[1] && vrGizmoGrab && vrGizmoGrab.hand === hand) endVrGizmoGrab();
 					prev[1] = b1;
@@ -10042,12 +10158,14 @@ renderer.setAnimationLoop((time) => {
 					const dy = Math.abs(thumbY) > THUMBSTICK_DEADZONE ? thumbY * STICK_SCROLL_PX_PER_S * dt : 0;
 					_stickOwnedByWindow[hand] = stickScrollVrWindow(hand, dy);
 				}
+				gsXrInput._setHand(hand, thumbX, thumbY, gp.buttons, _stickOwnedByWindow[hand]);
 			}
 			if (vrGizmoGrab && !session.inputSources.length) endVrGizmoGrab();
 			updateVrGizmoGrab();
 
-			// Locomotion: left stick moves, right stick turns.
-			updateLocomotion(dt, session);
+			// Locomotion: left stick moves, right stick turns (a stick a scene
+			// binding took over is left to the scene).
+			updateLocomotion(dt, session, xrClaims.xrSticks);
 		}
 	} else if (mobileXRMode) {
 		// Hide reticles - no controllers in Cardboard/AR-camera mode
@@ -10060,6 +10178,7 @@ renderer.setAnimationLoop((time) => {
 	} else {
 		// Hide reticles outside XR
 		for (const r of reticles) if (r) r.visible = false;
+		if (gsXrInput.presenting) { gsXrInput.presenting = false; gsXrInput._resetHands(); }
 		// Desktop / phone camera: the active stock three.js control.
 		cameraControls.update(dt);
 	}
@@ -10067,6 +10186,8 @@ renderer.setAnimationLoop((time) => {
 	// Game controllers (Gamepad API): poll once per frame before scene code
 	// runs, so gsGamepad.justPressed() is fresh inside _vrAnimations.
 	updateGamepads(dt);
+	// Custom Controls: onPress for gamepad / VR controller bindings.
+	customControls?.poll();
 
 	// Run user-injected animations from vr-exec code
 	for (const animFn of window._vrAnimations) {

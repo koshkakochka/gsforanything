@@ -14,14 +14,18 @@
 //     deactivate(m) { … }       // the user picked another mode: stop steering the camera
 //   });
 //   tps.isDown('forward'); tps.values; tps.active; tps.activate(); tps.sticks();
+//   (key params work from a game controller and VR controllers too: their
+//   `gamepad` / `xr` bindings, generated from the key when omitted)
 //
 // - Registering activates the mode right away unless `active: false`.
 // - Registering the same id again (hot reload) swaps the hooks, label and
 //   params, and keeps whether it is active.
 // - `params` become a Custom Controls card (customControls.js) whose values
 //   the handle reads (values, get, set, isDown, keyName, onChange, onPress).
-// - `sticks: true` shows the on-screen joysticks while active (phones);
-//   read them with m.sticks() → { lx, ly, rx, ry }.
+// - m.sticks() → { lx, ly, rx, ry }: on-screen joysticks + game controller
+//   sticks + headset thumbsticks while active. `sticks: true` shows the
+//   on-screen joysticks (phones) and, in VR, takes both thumbsticks over from
+//   locomotion while the mode is active.
 // - Leaving the mode calls deactivate, puts the camera back in the rig if
 //   the scene re-parented it, and the built-in control takes over.
 // - The mode is never saved as the camera preference: clearing / replacing
@@ -75,7 +79,10 @@ export function createCustomCameraModes(opts) {
 			onChange(fn) { return scheme() ? scheme().onChange(fn) : () => {}; },
 			onPress(name, fn) { return scheme() ? scheme().onPress(name, fn) : () => {}; },
 			/** On-screen joysticks (and nothing when they are hidden): { lx, ly, rx, ry }. */
-			sticks() { return rec.sticks && this.active ? opts.stickAxes() : { lx: 0, ly: 0, rx: 0, ry: 0 }; },
+			/** 0..1 for a key param: key 1, else how far its gamepad / VR binding is pushed. */
+			value(name) { return scheme() ? scheme().value(name) : 0; },
+			bindings(name) { return scheme() ? scheme().bindings(name) : null; },
+			sticks() { return this.active ? opts.stickAxes() : { lx: 0, ly: 0, rx: 0, ry: 0 }; },
 			/** Switch the camera to this mode. */
 			activate() { if (modes.get(rec.key) === rec) opts.switchTo(rec.key); return this.active; },
 			/** Back to the saved built-in mode (only if this one is active). */

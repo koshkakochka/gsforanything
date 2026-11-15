@@ -173,6 +173,25 @@ Three moving parts:
   to the saved built-in mode (a stale `custom:*` value loads as Map). Same id
   again (hot reload) swaps the hooks and keeps whether it is active. Test:
   `test-harness/dynamic-camera-modes`.
+- **Game controller and VR bindings** (`site-source/inputBindings.js`):
+  every keyboard / mouse control has a pad (Gamepad API standard mapping) and
+  a headset equivalent, shown read-only under each key field and in a
+  "Game controller and VR controllers" list per style. Built-in styles
+  (`BUILTIN_PAD` / `BUILTIN_XR` / `BUILTIN_GESTURES`): Orbit / Map pan keys →
+  d-pad, Fly roll → d-pad ←/→, Fly Slow → left stick press, plus the stick /
+  trigger / bumper mapping below; in a headset the camera follows the head
+  and locomotion (thumbsticks) is the equivalent. Custom Controls key params
+  take `gamepad` / `xr` bindings (generated from the key when omitted:
+  W/A/S/D → left stick, arrows → d-pad / right thumbstick, Space → A on both,
+  F → X / right trigger, …; shown as Key | Gamepad | VR columns in the Custom
+  Controls card, auto and explicit alike); `isDown()`, `value()` (0..1 analog) and `onPress()` answer for
+  keys, pad and VR. A scheme's pad inputs stop driving the camera; a bound
+  headset thumbstick is taken from locomotion and a bound A/B/X/Y from GS's
+  own use (push-to-talk, pointer rays) while the scheme exists. A hand whose
+  ray is on a VR window keeps its buttons for the menu, a stick scrolling a
+  window keeps it; nothing fires while typing. `window.gsXrInput` exposes the
+  headset controllers; `m.sticks()` of a custom camera mode merges on-screen,
+  pad and headset sticks. Test: `test-harness/gamepad-xr-bindings`.
 - **Game controllers** (Gamepad API, `window.gsGamepad`): Xbox Series X|S
   and other standard pads over USB or Bluetooth drive the desktop/phone
   camera through the stock three.js control picked in the Controls tab
