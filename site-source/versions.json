@@ -1,9 +1,21 @@
 {
   "versions": [
     {
-      "id": "1.02",
-      "label": "GS 1.02 (this build)",
+      "id": "1.03",
+      "label": "GS 1.03 (this build)",
       "url": null,
+      "date": "2026-11-14",
+      "changes": [
+        "Scene code can add its own camera mode, such as a Custom 3rd Person Controls button that appears next to Orbit, Map, Fly, First person, and Off in the Controls tab. You can always switch back to the built-in modes, and the custom mode goes away when the scene is cleared or replaced.",
+        "Every keyboard and mouse control now has matching gamepad and VR controller controls. Controls → Camera shows the Gamepad and VR inputs for each action, and Custom Controls shows Key, Gamepad, and VR columns for each control a scene creates.",
+        "Gamepad and VR controller buttons can be remapped: click a Gamepad or VR field and press the input you want, or pick it from the list. Inputs already in use are refused, and each style and scheme has Reset gamepad and Reset VR.",
+        "Upload Current Scene asks for a scene name in its dialog. The name is filled in from the current scene, can be up to 80 characters, and becomes the Community tile's title."
+      ]
+    },
+    {
+      "id": "1.02",
+      "label": "GS 1.02",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-14",
       "changes": [
         "Map is the default camera control on desktop and mobile. Trackball is removed; a saved Trackball choice switches to Map, and any other mode you pick is still remembered.",
