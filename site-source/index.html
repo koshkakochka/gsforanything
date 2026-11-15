@@ -1123,6 +1123,14 @@
 			gap: 6px;
 		}
 		#dchat-camera-mode .dchat-btn { padding: 9px 5px; }
+		/* Scene-registered camera modes: one full row each, label may wrap */
+		#dchat-camera-mode .gs-custom-camera-mode {
+			grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; min-width: 0;
+			border-style: dashed;
+		}
+		#dchat-camera-mode .gs-custom-camera-mode.active { border-style: solid; }
+		#dchat-camera-custom-help .gs-custom-camera-settings { display: block; width: auto; margin-top: 8px; padding: 6px 10px; font-size: 12px; }
+		html.gs-phone #dchat-camera-custom-help .gs-custom-camera-settings { min-height: 44px; }
 		#dchat-twin-sticks-opt { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: rgba(255, 255, 255, 0.8); cursor: pointer; }
 		#dchat-twin-sticks-opt input { width: 16px; height: 16px; margin: 0; accent-color: #7c3aed; }
 		#dchat-window-anchor {
@@ -3396,8 +3404,10 @@
 						<button type="button" class="dchat-btn secondary" data-camera-mode="fly" role="radio">Fly</button>
 						<button type="button" class="dchat-btn secondary" data-camera-mode="firstperson" role="radio">First person</button>
 						<button type="button" class="dchat-btn secondary" data-camera-mode="off" role="radio">Off</button>
+						<!-- Modes registered by scene code (gsControls.registerCameraMode) are added here by main.js -->
 					</div>
 				</div>
+				<div class="dchat-controls-help" id="dchat-camera-custom-help" role="status" hidden></div>
 				<!-- Stock key lists of the three.js controls (r180) -->
 				<div class="dchat-controls-help" data-camera-help="orbit" hidden>
 					<b>OrbitControls</b>, around the scene origin. Left-drag rotate &middot; right-drag or

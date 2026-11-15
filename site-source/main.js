@@ -22,9 +22,10 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { initSceneExport } from './exporter.js';
 import { createTwinSticks } from './twinSticks.js';
-import { createCameraControls, CAMERA_MODES, STICK_MODES, normalizeCameraMode, ORBIT_TARGET, DEFAULT_CAMERA_POSITION, isTextEntry, clampPlayerHeight, PLAYER_HEIGHT_DEFAULT, PLAYER_HEIGHT_STEP, PLAYER_HEIGHT_MIN, PLAYER_HEIGHT_MAX } from './cameraControls.js';
+import { createCameraControls, CAMERA_MODES, CAMERA_MODE_LABELS, STICK_MODES, normalizeCameraMode, isCustomCameraMode, ORBIT_TARGET, DEFAULT_CAMERA_POSITION, isTextEntry, clampPlayerHeight, PLAYER_HEIGHT_DEFAULT, PLAYER_HEIGHT_STEP, PLAYER_HEIGHT_MIN, PLAYER_HEIGHT_MAX } from './cameraControls.js';
 import * as gsKeyBindings from './controlBindings.js';
 import { createCustomControls } from './customControls.js';
+import { createCustomCameraModes } from './customCameraModes.js';
 import { sanitizeDescription, DESCRIPTION_MAX_CHARS, DESCRIPTION_PLACEHOLDER } from './sceneDescription.js';
 import { THUMB_WIDTH, THUMB_HEIGHT, THUMB_MAX_BYTES } from './sceneThumbnail.js';
 import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
@@ -752,6 +753,7 @@ arPlacementRoot.add(gsOriginRoot);
 window.gsOriginRoot = gsOriginRoot;
 let originRotation = null; // createOriginRotation(), set up with the Environment tab below
 let customControls = null; // createCustomControls(), set up with the Controls tab below
+let customCameraModes = null; // createCustomCameraModes(), set up with the camera controls below
 // Scene code removes with scene.remove(obj); that must still work for objects
 // that were moved into the origin / AR placement group.
 {
@@ -2893,6 +2895,7 @@ function clearUserObjects() {
 		try { surf.dispose(); } catch (e) { console.error('surface dispose failed:', e); }
 	}
 	if (typeof gsGamepad !== 'undefined') gsGamepad._reset();
+	customCameraModes?.reset(); // so do the camera modes it registered (back to the saved built-in mode)
 	customControls?.reset(); // custom control schemes belong to the scene code
 	for (let i = scene.children.length - 1; i >= 0; i--) {
 		const child = scene.children[i];
@@ -6225,7 +6228,36 @@ const cameraControls = createCameraControls({
 	domElement: renderer.domElement,
 	isSuspended: cameraControlsSuspended,
 	onModeChange: () => renderCameraControlsUi(),
-	onLockChange: (locked, why) => renderCameraControlsUi(why)
+	onLockChange: (locked, why) => renderCameraControlsUi(why),
+	isExternalMode: (m) => !!customCameraModes?.has(m)
+});
+
+/** The built-in mode saved in this browser (custom modes are never saved). */
+function savedBuiltinCameraMode() {
+	let saved = null;
+	try { saved = localStorage.getItem(CAMERA_CONTROL_STORAGE_KEY); } catch { /* storage blocked */ }
+	return normalizeCameraMode(saved);
+}
+
+// Camera modes registered by scene code (gsControls.registerCameraMode,
+// customCameraModes.js): extra buttons next to the built-in ones.
+customCameraModes = createCustomCameraModes({
+	camera,
+	canvas: renderer.domElement,
+	getMode: () => cameraControls.mode,
+	switchTo: (m) => setCameraControlMode(m),
+	fallbackMode: () => savedBuiltinCameraMode(),
+	stickAxes: () => {
+		if (typeof twinSticks === 'undefined' || !twinSticks.visible) return { lx: 0, ly: 0, rx: 0, ry: 0 };
+		const a = twinSticks.axes();
+		const [lx, ly] = applyStickDeadzone(a.lx, a.ly, gsGamepad.deadzone);
+		const [rx, ry] = applyStickDeadzone(a.rx, a.ry, gsGamepad.deadzone);
+		return { lx, ly, rx, ry };
+	},
+	onChange: (ev) => {
+		renderCameraControlsUi();
+		if (ev.type === 'register') updateStatus(`Camera mode "${ev.label}" added: Controls → Camera`, 'connected');
+	}
 });
 
 function refreshCameraControls() {
@@ -6255,6 +6287,7 @@ function resetPlayerRig() {
 function resetCameraView() {
 	resetPlayerRig();
 	cameraControls.reset();
+	customCameraModes?.resetView(); // a custom mode's reset hook (if any) puts its camera back
 }
 
 // Orbit / Map target, in world space (null in the other modes).
@@ -6298,8 +6331,60 @@ window.gsControls = {
 	});
 }
 
+// One button per registered custom mode, after the built-in ones (full row
+// each so long labels like "Custom 3rd Person Controls" fit).
+function renderCustomCameraModeButtons() {
+	const group = document.getElementById('dchat-camera-mode');
+	if (!group) return;
+	const list = customCameraModes ? customCameraModes.list() : [];
+	const want = new Set(list.map((m) => m.mode));
+	group.querySelectorAll('[data-camera-mode].gs-custom-camera-mode').forEach((btn) => { if (!want.has(btn.dataset.cameraMode)) btn.remove(); });
+	for (const m of list) {
+		let btn = group.querySelector(`[data-camera-mode="${CSS.escape(m.mode)}"]`);
+		if (!btn) {
+			btn = document.createElement('button');
+			btn.type = 'button';
+			btn.className = 'dchat-btn secondary gs-custom-camera-mode';
+			btn.dataset.cameraMode = m.mode;
+			btn.setAttribute('role', 'radio');
+		}
+		if (btn.textContent !== m.label) btn.textContent = m.label;
+		btn.title = m.description || `${m.label} (set up by this scene)`;
+		group.appendChild(btn); // keeps registration order
+	}
+	group.classList.toggle('has-custom-modes', list.length > 0);
+	const help = document.getElementById('dchat-camera-custom-help');
+	if (help) {
+		const mode = cameraControls.mode;
+		const on = !!customCameraModes?.has(mode);
+		help.hidden = !on;
+		if (on) {
+			const label = customCameraModes.labelOf(mode);
+			const desc = customCameraModes.descriptionOf(mode);
+			help.textContent = '';
+			const b = document.createElement('b');
+			b.textContent = label;
+			help.append(b, document.createTextNode(desc ? `. ${desc}` : '. This scene moves the camera.'));
+			const back = document.createElement('div');
+			back.style.marginTop = '4px';
+			back.textContent = `Set up by this scene. ${CAMERA_MODES.map((k) => CAMERA_MODE_LABELS[k]).join(', ')} stay available above; clearing or loading a scene removes this mode.`;
+			help.appendChild(back);
+			if (customCameraModes.hasParams(mode)) {
+				const link = document.createElement('button');
+				link.type = 'button';
+				link.className = 'dchat-btn secondary gs-custom-camera-settings';
+				link.id = 'dchat-camera-custom-settings';
+				link.textContent = 'Keys and settings (Custom Controls)';
+				link.addEventListener('click', () => setControlsSection('custom'));
+				help.appendChild(link);
+			}
+		}
+	}
+}
+
 function renderCameraControlsUi(why) {
 	const mode = cameraControls.mode;
+	renderCustomCameraModeButtons();
 	document.querySelectorAll('#dchat-camera-mode [data-camera-mode]').forEach((btn) => {
 		const on = btn.dataset.cameraMode === mode;
 		btn.classList.toggle('active', on);
@@ -6322,19 +6407,34 @@ function renderCameraControlsUi(why) {
 	if (customControls) renderKeyRemap(); // key remapping (set up below)
 }
 
+// Built-in modes are saved as the preference; a custom mode (scene code) never
+// is, and one that no longer exists falls back to the saved built-in mode.
+// Leaving a custom mode runs its deactivate hook first (customCameraModes.js),
+// so the stock control gets a camera the scene no longer steers.
 function setCameraControlMode(mode, { persist = true } = {}) {
 	const prev = cameraControls.mode;
+	if (isCustomCameraMode(mode) && !customCameraModes?.has(mode)) mode = savedBuiltinCameraMode();
+	if (mode === prev && isCustomCameraMode(mode)) { renderCameraControlsUi(); return prev; }
+	if (isCustomCameraMode(prev)) customCameraModes?.leave();
 	resetPlayerRig();
 	mode = cameraControls.setMode(mode);
-	if (persist) {
+	if (isCustomCameraMode(mode)) {
+		if (!customCameraModes.enter(mode)) {
+			updateStatus(`Camera mode "${customCameraModes.labelOf(mode)}" failed to start (see console); back to ${CAMERA_MODE_LABELS[savedBuiltinCameraMode()]}`, 'error');
+			mode = cameraControls.setMode(savedBuiltinCameraMode());
+		}
+	} else if (persist) {
 		try { localStorage.setItem(CAMERA_CONTROL_STORAGE_KEY, mode); } catch { /* storage blocked */ }
 	}
 	renderCameraControlsUi();
 	return prev;
 }
 
-document.querySelectorAll('#dchat-camera-mode [data-camera-mode]').forEach((btn) => {
-	btn.addEventListener('click', () => setCameraControlMode(btn.dataset.cameraMode));
+// Delegated, so the buttons custom modes add work too (also from the VR menu,
+// which dispatches clicks on the same DOM).
+document.getElementById('dchat-camera-mode')?.addEventListener('click', (e) => {
+	const btn = e.target instanceof Element ? e.target.closest('[data-camera-mode]') : null;
+	if (btn) setCameraControlMode(btn.dataset.cameraMode);
 });
 
 // A picked <select> option keeps keyboard focus (and would swallow the camera
@@ -6621,7 +6721,7 @@ customControls = createCustomControls({
 	onSchemesChange: (ev) => {
 		const tab = document.querySelector('#dchat-controls-subtabs [data-controls-section="custom"]');
 		if (tab) tab.classList.toggle('has-custom', customControls.count > 0);
-		if (ev.type === 'define') {
+		if (ev.type === 'define' && !ev.cameraModeId) { // a camera mode's settings: the mode's own status line says where
 			setControlsSection('custom');
 			updateStatus(`Custom controls "${ev.name}" ready: Controls → Custom Controls`, 'connected');
 		}
@@ -6635,7 +6735,18 @@ Object.assign(window.gsControls, {
 	getCustomScheme: (id) => customControls.get(id),
 	removeCustomScheme: (id) => customControls.remove(id),
 	/** Key bindings of a style, e.g. gsControls.keyBindings('fly') → { forward: ['KeyW', ''], … }. */
-	keyBindings: (style) => gsKeyBindings.getStyleBindings(style || cameraControls.mode)
+	keyBindings: (style) => gsKeyBindings.getStyleBindings(style || cameraControls.mode),
+	/** Add a camera mode button run by scene code (customCameraModes.js); returns its handle. */
+	registerCameraMode: (def) => customCameraModes.register(def),
+	getCameraMode: (id) => customCameraModes.get(id),
+	removeCameraMode: (id) => customCameraModes.remove(id)
+});
+customCameraModes.setCustomControls(customControls);
+/** Every mode the Camera section offers right now: built-in ones, then the scene's. */
+Object.defineProperty(window.gsControls, 'cameraModes', {
+	configurable: true, enumerable: true,
+	get: () => [...CAMERA_MODES.map((m) => ({ mode: m, label: CAMERA_MODE_LABELS[m], builtIn: true, active: cameraControls.mode === m })),
+		...customCameraModes.list().map((m) => ({ ...m, builtIn: false }))]
 });
 Object.defineProperty(window.gsControls, 'customSchemes', { configurable: true, enumerable: true, get: () => customControls.describe() });
 window.gsKeyBindings = gsKeyBindings; // tests / console
@@ -7387,7 +7498,7 @@ function pollGamepads() {
 function updateGamepadCamera(dt) {
 	if (!gsGamepad.connected || dt <= 0) return null;
 	if (cameraControlsSuspended() || gsGamepad.captureCamera) return null;
-	if (cameraControls.mode === 'off') return null;
+	if (cameraControls.mode === 'off' || isCustomCameraMode(cameraControls.mode)) return null; // custom modes read gsGamepad themselves
 	if (gsGamepad.justPressed('Y')) {
 		setCameraControlMode(cameraControls.mode === 'orbit' ? 'firstperson' : 'orbit');
 		return null;
@@ -7426,7 +7537,7 @@ if (dchatTwinSticksToggle) {
 	});
 }
 function refreshTwinSticks() {
-	const want = twinSticksEnabled && STICK_MODES.has(cameraControls.mode) && !cameraControlsSuspended()
+	const want = twinSticksEnabled && (STICK_MODES.has(cameraControls.mode) || !!customCameraModes?.wantsSticks(cameraControls.mode)) && !cameraControlsSuspended()
 		&& !document.body.classList.contains('gs-xr-presenting');
 	if (want !== twinSticks.visible) twinSticks.setVisible(want);
 }
@@ -9965,6 +10076,9 @@ renderer.setAnimationLoop((time) => {
 			// Silently skip broken animation functions
 		}
 	}
+	// A custom camera mode (scene code) steers the windowed camera after the
+	// scene moved its player this frame, so a follow camera doesn't lag.
+	if (!renderer.xr.isPresenting && !mobileXRMode) customCameraModes.update(dt);
 
 	// Rotated origin: pull anything scene code added to `scene` this frame into
 	// the origin root, and repaint the Environment gizmo if the view turned.
