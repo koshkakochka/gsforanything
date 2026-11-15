@@ -1,0 +1,8 @@
+{
+  "name": "gs-dynamic-camera-modes-tests",
+  "private": true,
+  "type": "module",
+  "description": "Camera modes registered by scene code (gsControls.registerCameraMode): Camera section button, hand-over to and from the built-in modes, scene clear / load, VR menu and phone",
+  "scripts": { "test": "node test.mjs" },
+  "dependencies": { "iwer": "^2.7.0", "puppeteer-core": "^24.43.1" }
+}

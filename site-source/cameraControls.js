@@ -11,7 +11,9 @@
 //   - forwards game-controller and on-screen stick values to each control's
 //     own movement / rotation API (see stick()).
 // Modes: map (MapControls, default), orbit (OrbitControls), fly (FlyControls),
-// firstperson (PointerLockControls), off.
+// firstperson (PointerLockControls), off. Scene code can add its own modes
+// ("custom:<id>", customCameraModes.js): GS builds no stock control for them
+// and leaves the camera to the scene's hooks.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { MapControls } from 'three/examples/jsm/controls/MapControls.js';
@@ -25,6 +27,9 @@ export const CAMERA_MODE_LABELS = { orbit: 'Orbit', map: 'Map', fly: 'Fly', firs
 // Values saved by GS 0.976 and earlier (Orbit / Free-roam / Off), plus
 // Trackball which was later removed (falls back to the Map default).
 const LEGACY_MODES = { free: 'firstperson', 'free-roam': 'firstperson', trackball: 'map' };
+// Prefix of the camera modes scene code registers (customCameraModes.js).
+export const CUSTOM_CAMERA_MODE_PREFIX = 'custom:';
+export function isCustomCameraMode(m) { return typeof m === 'string' && m.startsWith(CUSTOM_CAMERA_MODE_PREFIX) && m.length > CUSTOM_CAMERA_MODE_PREFIX.length; }
 export function normalizeCameraMode(saved) {
 	if (CAMERA_MODES.includes(saved)) return saved;
 	return LEGACY_MODES[saved] || DEFAULT_CAMERA_MODE;
@@ -75,7 +80,9 @@ export function isTextEntry(el) {
 	return false;
 }
 
-export function createCameraControls({ camera, domElement, isSuspended = () => false, onModeChange = () => {}, onLockChange = () => {} }) {
+// isExternalMode(m): true for a registered custom mode ("custom:<id>"); those
+// get no stock control and the camera is left exactly where it is.
+export function createCameraControls({ camera, domElement, isSuspended = () => false, onModeChange = () => {}, onLockChange = () => {}, isExternalMode = () => false }) {
 	let mode = 'off';
 	let controls = null;
 	let typing = isTextEntry(document.activeElement);
@@ -269,9 +276,11 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 	}
 
 	function setMode(m) {
-		m = normalizeCameraMode(m);
+		const external = isCustomCameraMode(m) && isExternalMode(m);
+		if (!external) m = normalizeCameraMode(m);
 		disposeControls();
 		mode = m;
+		if (external) { onModeChange(m); return m; }
 		if (TARGET_MODES.has(m)) aimAtTarget();
 		else levelCamera();
 		if (m === 'firstperson') camera.position.y = playerHeight; // walk at the player's eye height

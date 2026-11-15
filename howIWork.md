@@ -157,6 +157,22 @@ Three moving parts:
   scheme id and in scene files as `customControls: { id: { param: value } }`.
   The chat prompt (server.js, copied to worker/prompts.js) documents the API.
   Test: `test-harness/controls-remap`.
+- **Custom camera modes** (`site-source/customCameraModes.js`, Controls →
+  Camera): scene code that drives the camera (e.g. a third-person follow
+  camera) calls `gsControls.registerCameraMode({ id, label, description,
+  params?, sticks?, active?, activate, update(dt), deactivate, reset? })`. It
+  gets a button after Orbit / Map / Fly / First person / Off (mode key
+  `custom:<id>`) and is activated right away unless `active: false`. Picking
+  a built-in mode runs `deactivate`, re-attaches the camera to the rig if the
+  scene re-parented it, and the stock control takes over; the custom button
+  switches back (`activate` again). `update` runs every frame after
+  `gs.onUpdate`. `params` become a Custom Controls card read through the
+  handle (`isDown`, `values`, …); `sticks: true` shows the on-screen
+  joysticks (`h.sticks()`). Custom modes are never saved in
+  `gs.cameraControlMode`; clearing / loading a scene removes them and returns
+  to the saved built-in mode (a stale `custom:*` value loads as Map). Same id
+  again (hot reload) swaps the hooks and keeps whether it is active. Test:
+  `test-harness/dynamic-camera-modes`.
 - **Game controllers** (Gamepad API, `window.gsGamepad`): Xbox Series X|S
   and other standard pads over USB or Bluetooth drive the desktop/phone
   camera through the stock three.js control picked in the Controls tab

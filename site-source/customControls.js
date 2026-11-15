@@ -165,7 +165,7 @@ export function createCustomControls(opts = {}) {
 		return handle;
 	}
 
-	function define(def) {
+	function define(def, meta = null) {
 		if (!def || typeof def !== 'object') throw new Error('defineCustomScheme needs { id, name, params }');
 		const id = String(def.id ?? '');
 		if (!ID_RE.test(id)) throw new Error('defineCustomScheme: id must be 1-48 letters, digits, ".", "_" or "-"');
@@ -214,7 +214,7 @@ export function createCustomControls(opts = {}) {
 		s.handle = makeHandle(s);
 		schemes.set(id, s);
 		render();
-		opts.onSchemesChange?.({ type: old ? 'update' : 'define', id, name: s.name });
+		opts.onSchemesChange?.({ type: old ? 'update' : 'define', id, name: s.name, ...(meta && meta.cameraModeId ? { cameraModeId: meta.cameraModeId } : {}) });
 		return s.handle;
 	}
 
