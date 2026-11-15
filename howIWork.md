@@ -89,13 +89,15 @@ Three moving parts:
 
 ### Local models (WebLLM, runs in the browser)
 
-- The chat's **Model** menu lists three Local models after the server's
-  backends, in a "Runs on this device (WebLLM)" group:
-  Qwen2.5-Coder 1.5B (882 MB download), 3B (1.75 GB, recommended) and 7B
-  (4.30 GB). The sizes are the sum of every file WebLLM 0.2.88 fetches (weight
-  shards, tensor-cache.json, mlc-chat-config.json, tokenizer.json and the
-  model's WebGPU .wasm), taken from the Hugging Face file listing and the
-  files' Content-Length. See the comment at the top of `localLLM.js`.
+- The chat's **Model** menu lists four Local models after the server's
+  backends, in a "Runs on this device (WebLLM)" group, smallest first:
+  Gemma 3 1B (603 MB download), Qwen2.5-Coder 1.5B (882 MB), 3B (1.75 GB,
+  recommended) and 7B (4.30 GB). The sizes are the sum of every file WebLLM
+  0.2.88 fetches (weight shards, tensor-cache.json, mlc-chat-config.json,
+  tokenizer.json and the model's WebGPU .wasm), taken from the Hugging Face
+  file listing and the files' Content-Length. See the comment at the top of
+  `localLLM.js`. Gemma 3 1B is a WebLLM 0.2.88 prebuilt (`gemma3-1b-it-q4f16_1-MLC`)
+  with no q4f32_1 build.
 - **Nothing loads until asked.** Building the menu reads constants only. Picking
   a Local model shows a panel with the size, the GPU memory it needs (WebLLM's
   `vram_required_MB` plus the KV cache for GS's 16k context) and a
@@ -112,8 +114,9 @@ Three moving parts:
 - No WebGPU: the Local options are disabled ("needs WebGPU"); picking one
   anyway (the VR menu cycles options) explains why and switches back to the
   previous server model. A GPU without `shader-f16` gets the q4f32_1 build of
-  the same model (same download size, more GPU memory). Phones get a warning
-  about size and support.
+  the same Qwen model (same download size, more GPU memory). Gemma 3 1B has
+  no 32-bit build, so it is refused with an explanation and nothing is
+  downloaded. Phones get a warning about size and support.
 - When a Local model is loaded, the Scene chat, auto-fix, Theme chat and
   Community merges all run on it with the same prompts the browser already
   uses for Ollama (`ChatPrompt.effectivePrompt()`, `fixCodePrompt`,

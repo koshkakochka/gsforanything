@@ -50,10 +50,11 @@ export function initLocalModelPanel({ row, confirm, isPhone = () => false, fallb
 		row.style.display = m ? '' : 'none';
 		row.dataset.state = state;
 		if (!m) { onChange?.(); return; }
+		if (!m[variant]) variant = 'f16'; // model without a 32-bit build (Gemma 3 1B)
 		const v = m[variant];
 		const size = LocalLLM.formatBytes(v.downloadBytes);
 		const mem = LocalLLM.formatGpuMemory(m, variant);
-		const f32Mem = variant === 'f16' ? ` (about ${LocalLLM.formatGpuMemory(m, 'f32')} on GPUs without 16-bit shader support)` : '';
+		const f32Mem = variant === 'f16' ? (m.f32 ? ` (about ${LocalLLM.formatGpuMemory(m, 'f32')} on GPUs without 16-bit shader support)` : `; it ${LocalLLM.NO_F16_NOTE}`) : '';
 		const cached = LocalLLM.isMarkedDownloaded(v.id);
 		titleEl.textContent = `${m.name} — runs on this device (WebLLM)`;
 		const f32Note = variant === 'f32' ? ' This GPU has no 16-bit shader support, so GS uses the 32-bit build of the same model.' : '';
@@ -96,6 +97,12 @@ export function initLocalModelPanel({ row, confirm, isPhone = () => false, fallb
 		gpu = await LocalLLM.checkWebGPU();
 		if (!gpu.ok) {
 			unsupported(gpu.reason === 'no-adapter' ? LocalLLM.NO_ADAPTER_MSG : LocalLLM.NO_WEBGPU_MSG);
+			return;
+		}
+		if (gpu.variant === 'f32' && !m.f32) {
+			variant = 'f16';
+			errorText = `This GPU has no 16-bit shader support (WebGPU shader-f16), and ${m.name} only comes as a 16-bit build in WebLLM, so it can't run here. Pick a Qwen2.5-Coder Local model instead (they have a 32-bit build).`;
+			setState('error');
 			return;
 		}
 		variant = gpu.variant;

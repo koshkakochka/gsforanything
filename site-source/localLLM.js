@@ -33,6 +33,22 @@ const DOWNLOADED_KEY = 'gs.webllm.downloaded';
 // 4-bit weights, f32 math) is used automatically on GPUs without shader-f16.
 export const LOCAL_MODELS = [
 	{
+		// Gemma 3 1B instruct, WebLLM 0.2.88 prebuilt (q4f16_1 only: WebLLM has no
+		// q4f32_1 build or wasm for it, so it needs shader-f16). Download = 15
+		// shards 562,628,864 B + tensor-cache.json 187,747 + mlc-chat-config.json
+		// 3,042 + tokenizer.json 33,384,568 + gemma3-1b-it-q4f16_1_cs512-webgpu.wasm
+		// 6,584,805. The prebuilt record sets context 4096 and sliding_window -1
+		// (every layer full attention, so the KV cache grows linearly with the
+		// context; Gemma's 512-token sliding window saves nothing in WebLLM).
+		// Trained to 32k tokens (max_position_embeddings 32768), so GS's 16k fits.
+		key: 'gemma3-1b', name: 'Gemma 3 1B', params: '1B',
+		kv: { layers: 26, kvHeads: 1, headDim: 256 },
+		f16: { id: 'gemma3-1b-it-q4f16_1-MLC', downloadBytes: 602789026, weightsBytes: 562628864, vram4kMB: 711.07 },
+		f32: null,
+		chatOpts: { sliding_window_size: -1 },
+		note: 'smallest download; general chat model, weakest at scene code'
+	},
+	{
 		key: 'qwen-coder-1.5b', name: 'Qwen2.5-Coder 1.5B', params: '1.5B',
 		kv: { layers: 28, kvHeads: 2, headDim: 128 },
 		f16: { id: 'Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC', downloadBytes: 881931113, vram4kMB: 1629.75 },
@@ -71,6 +87,7 @@ export function formatBytes(n) {
 /** Estimated GPU memory at GS's 16k context, in bytes. */
 export function gpuMemoryBytes(model, variant = 'f16') {
 	const v = model[variant];
+	if (!v) return null;
 	const bytesPerValue = variant === 'f16' ? 2 : 4;
 	const perToken = model.kv.layers * model.kv.kvHeads * model.kv.headDim * 2 * bytesPerValue;
 	return Math.round(v.vram4kMB * 1048576 + perToken * (CONTEXT_WINDOW - WEBLLM_DEFAULT_CONTEXT));
@@ -78,6 +95,7 @@ export function gpuMemoryBytes(model, variant = 'f16') {
 
 /** GPU memory rounded up to 0.1 GB, e.g. "3.1 GB". */
 export function formatGpuMemory(model, variant = 'f16') {
+	if (!model[variant]) return null;
 	return `${(Math.ceil(gpuMemoryBytes(model, variant) / 1e8) / 10).toFixed(1)} GB`;
 }
 
@@ -87,9 +105,10 @@ export function optionLabel(model, variant = 'f16') {
 }
 
 /** Option tooltip: also the 32-bit build's GPU memory (used on GPUs without shader-f16). */
+export const NO_F16_NOTE = 'needs a GPU with 16-bit shader support (shader-f16): WebLLM has no 32-bit build of it';
 export function optionTitle(model) {
-	return `${model.name}: ${model.note}. ${formatBytes(model.f16.downloadBytes)} download. Needs about ${formatGpuMemory(model, 'f16')} of free GPU memory ` +
-		`(about ${formatGpuMemory(model, 'f32')} on GPUs without 16-bit shader support, which get the 32-bit build). ` +
+	return `${model.name}: ${model.note}. ${formatBytes(model.f16.downloadBytes)} download. Needs about ${formatGpuMemory(model, 'f16')} of free GPU memory` +
+		(model.f32 ? ` (about ${formatGpuMemory(model, 'f32')} on GPUs without 16-bit shader support, which get the 32-bit build). ` : `. It ${NO_F16_NOTE}. `) +
 		`WebLLM lists ${(model.f16.vram4kMB * 1048576 / 1e9).toFixed(1)} GB at a 4k context; GS uses a 16k context.`;
 }
 
@@ -168,7 +187,8 @@ export function load(modelId, { onProgress } = {}) {
 	const p = (async () => {
 		const webllm = await importLib();
 		if (ticket !== loadTicket) throw new Error('cancelled');
-		const chatOpts = { context_window_size: CONTEXT_WINDOW };
+		const m = LOCAL_MODELS.find(x => x.f16?.id === modelId || x.f32?.id === modelId);
+		const chatOpts = { context_window_size: CONTEXT_WINDOW, ...(m?.chatOpts || {}) };
 		const report = (r) => { if (ticket === loadTicket) onProgress?.(r); };
 		if (engine) {
 			loadedId = null;

@@ -150,6 +150,7 @@ const send = async (p, text) => {
 };
 
 const EXPECT = {
+	'webllm:gemma3-1b': 'Local: Gemma 3 1B (WebLLM) — 603 MB download, needs ~1.1 GB GPU memory',
 	'webllm:qwen-coder-1.5b': 'Local: Qwen2.5-Coder 1.5B (WebLLM) — 882 MB download, needs ~2.1 GB GPU memory',
 	'webllm:qwen-coder-3b': 'Local: Qwen2.5-Coder 3B (WebLLM) — 1.75 GB download, needs ~3.1 GB GPU memory',
 	'webllm:qwen-coder-7b': 'Local: Qwen2.5-Coder 7B (WebLLM) — 4.30 GB download, needs ~6.1 GB GPU memory'
@@ -169,10 +170,11 @@ let savedServerDefault;
 	const res = await p.evaluate(() => performance.getEntriesByType('resource').map(e => e.name).filter(n => /mlc|huggingface|webllmWorker/.test(n)));
 	check('page load: Resource Timing has no WebLLM entries', res.length === 0, res);
 	const local = s.options.filter(o => o.value.startsWith('webllm:'));
-	check('three Local options with download size and required GPU memory', local.length === 3 && local.every(o => EXPECT[o.value] === o.text), local);
+	check('four Local options (Gemma 3 1B first, smallest) with download size and required GPU memory', local.length === 4 && local[0].value === 'webllm:gemma3-1b' && local.every(o => EXPECT[o.value] === o.text), local);
 	const titles = await p.evaluate(() => [...document.querySelectorAll('#desktop-model-select optgroup option')].map(o => o.title));
-	check('option tooltips also give the 32-bit build\'s GPU memory', /about 2\.1 GB of free GPU memory \(about 2\.7 GB on GPUs without 16-bit/.test(titles[0]) && /about 3\.1 GB .*about 4\.0 GB/.test(titles[1]) && /about 6\.1 GB .*about 7\.6 GB/.test(titles[2]), titles);
-	check('Local options sit in their own group after the server models', local.every(o => /WebLLM/.test(o.group || '')) && s.options.findIndex(o => o.value.startsWith('webllm:')) === s.options.length - 3, s.options.map(o => o.group));
+	check('option tooltips also give the 32-bit build\'s GPU memory', /about 2\.1 GB of free GPU memory \(about 2\.7 GB on GPUs without 16-bit/.test(titles[1]) && /about 3\.1 GB .*about 4\.0 GB/.test(titles[2]) && /about 6\.1 GB .*about 7\.6 GB/.test(titles[3]), titles);
+	check('Gemma tooltip: 1.1 GB and needs shader-f16 (no 32-bit build)', /about 1\.1 GB of free GPU memory/.test(titles[0]) && /16-bit shader support \(shader-f16\): WebLLM has no 32-bit build/.test(titles[0]), titles[0]);
+	check('Local options sit in their own group after the server models', local.every(o => /WebLLM/.test(o.group || '')) && s.options.findIndex(o => o.value.startsWith('webllm:')) === s.options.length - 4, s.options.map(o => o.group));
 	// Server models unchanged: same ids, order, labels and enabled state as /api/backends
 	const server = s.options.filter(o => !o.value.startsWith('webllm:'));
 	const exp = Object.entries(backends.backends).map(([id, info]) => ({ id, label: info.label }));
@@ -352,7 +354,7 @@ let savedServerDefault;
 	const { p, errors, net, context } = await openPage({ gpu: 'none', storage: { 'gs.chatBackend': 'webllm:qwen-coder-3b' } });
 	let s = await st(p);
 	const local = s.options.filter(o => o.value.startsWith('webllm:'));
-	check('no WebGPU: Local options disabled and marked "needs WebGPU"', local.length === 3 && local.every(o => o.disabled && /needs WebGPU/.test(o.text)), local);
+	check('no WebGPU: Local options disabled and marked "needs WebGPU"', local.length === 4 && local.every(o => o.disabled && /needs WebGPU/.test(o.text)), local);
 	check('no WebGPU: saved Local choice not restored; server model in use', !s.value.startsWith('webllm:'), s.value);
 	await selectModel(p, 'webllm:qwen-coder-3b'); // e.g. the VR menu cycles into it
 	await sleep(400);
@@ -374,6 +376,29 @@ let savedServerDefault;
 	await context.close();
 }
 {
+	// Gemma 3 1B on a shader-f16 GPU: q4f16_1, 16k context, sliding window off, chat works
+	const { p, errors, net, context } = await openPage();
+	await selectModel(p, 'webllm:gemma3-1b');
+	let g = await st(p);
+	check('Gemma panel: 603 MB download, about 1.1 GB GPU memory', /First use downloads 603 MB/.test(g.info) && /about 1\.1 GB of free GPU memory/.test(g.info) && g.load === 'Download & load (603 MB)', g);
+	check('Gemma: selecting downloads nothing', net.webllm.length === 0, net.webllm);
+	await p.evaluate(() => { self.__webllmStepMs = 20; });
+	await p.evaluate(() => document.querySelector('#desktop-webllm-row [data-webllm="load"]').click());
+	await p.waitForFunction(() => document.getElementById('desktop-webllm-row').dataset.state === 'ready', { timeout: 15000 }).catch(() => {});
+	const gc = await p.evaluate(() => self.__webllmStub?.creates?.[0]);
+	check('Gemma loads gemma3-1b-it-q4f16_1-MLC with a 16k context and sliding_window_size -1', gc?.modelId === 'gemma3-1b-it-q4f16_1-MLC' && gc.chatOpts?.context_window_size === 16384 && gc.chatOpts?.sliding_window_size === -1, gc);
+	const prompts = await p.evaluate(() => fetch('/api/prompts').then(r => r.json()));
+	await p.evaluate(() => { self.__webllmChunkMs = 5; });
+	await send(p, 'make a cyan cube');
+	await p.waitForFunction(() => !!scene.getObjectByName('webllmBox'), { timeout: 20000 }).catch(() => {});
+	const gr = await p.evaluate(() => self.__webllmStub.requests[0]);
+	const est = (gr?.messages || []).reduce((n, m) => n + Math.ceil(String(m.content).length / 3) + 8, 0);
+	check('Gemma chat: full system prompt first, ends on the user turn, fits 16k with max_tokens', gr?.modelId === 'gemma3-1b-it-q4f16_1-MLC' && gr.messages[0].role === 'system' && gr.messages[0].content === prompts.systemPrompt && gr.messages[gr.messages.length - 1].role === 'user' && est + gr.max_tokens <= 16384, { est, max: gr?.max_tokens, sysChars: prompts.systemPrompt.length });
+	check('Gemma reply ran its vr-exec block', await p.evaluate(() => !!scene.getObjectByName('webllmBox')));
+	check('no page errors (Gemma)', errors.length === 0, errors);
+	await context.close();
+}
+{
 	// GPU without shader-f16: the q4f32_1 build of the same model
 	const { p, errors, net, context } = await openPage({ gpu: 'f32' });
 	await selectModel(p, 'webllm:qwen-coder-1.5b');
@@ -383,6 +408,16 @@ let savedServerDefault;
 	const s = await st(p);
 	const c = await p.evaluate(() => self.__webllmStub?.creates?.[0]);
 	check('no shader-f16: loads the q4f32_1 build and says so', c?.modelId === 'Qwen2.5-Coder-1.5B-Instruct-q4f32_1-MLC' && /32-bit build/.test(s.info), { c, info: s.info });
+	// Gemma 3 1B has no q4f32_1 build: refuses on this GPU without downloading
+	const nCreates = await p.evaluate(() => self.__webllmStub.creates.length + self.__webllmStub.reloads.length);
+	await selectModel(p, 'webllm:gemma3-1b');
+	const gi = await st(p);
+	check('Gemma panel (no shader-f16 GPU) says it needs 16-bit shader support', /about 1\.1 GB of free GPU memory; it needs a GPU with 16-bit shader support/.test(gi.info), gi.info);
+	await p.evaluate(() => document.querySelector('#desktop-webllm-row [data-webllm="load"]').click());
+	await sleep(800);
+	const ge = await st(p);
+	const nCreates2 = await p.evaluate(() => self.__webllmStub.creates.length + self.__webllmStub.reloads.length);
+	check('Gemma on a GPU without shader-f16: clear error, no load started', ge.state === 'error' && /only comes as a 16-bit build/.test(ge.info) && nCreates2 === nCreates, { ge, nCreates, nCreates2 });
 	// A failed load shows the error with Try again
 	await selectModel(p, 'webllm:qwen-coder-7b');
 	await p.evaluate(() => { self.__webllmFail = 'Device lost: out of memory'; });

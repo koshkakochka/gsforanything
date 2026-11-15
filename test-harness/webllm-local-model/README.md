@@ -19,9 +19,10 @@ Checks:
 
 - Page load requests nothing from WebLLM / jsDelivr / Hugging Face / GitHub,
   starts no worker and has no such Resource Timing entries.
-- Three Local options with their sizes ("— 882 MB download", "— 1.75 GB
-  download", "— 4.30 GB download") in their own group after the server models;
-  server options (ids, order, labels), default and request body unchanged.
+- Four Local options, smallest first, with their sizes ("— 603 MB download"
+  for Gemma 3 1B, "— 882 MB download", "— 1.75 GB download", "— 4.30 GB
+  download") in their own group after the server models; server options (ids,
+  order, labels), default and request body unchanged.
 - Picking one shows the confirmation (size, caching, GPU memory, Download &
   load / Use <server model> instead) and still fetches nothing. Sending before
   loading explains what to click and makes no request.
@@ -38,11 +39,12 @@ Checks:
   downloaded models" asks first.
 - No WebGPU: options disabled with "needs WebGPU"; picking one explains and
   switches back. No adapter: same after the click. No shader-f16: the q4f32_1
-  build. A failed load shows the error and Try again.
+  build of Qwen; Gemma 3 1B (q4f16_1 only) is refused with no download. A
+  failed load shows the error and Try again.
 - Phone: size + support warning, 44 px buttons. VR (IWER Quest 3): the Model
   menu and panel are painted in the menu window; nothing downloads.
 
-`dev-verify.mjs` checks a deployed host with no stubs: the three options and
+`dev-verify.mjs` checks a deployed host with no stubs: the four options and
 their sizes, nothing fetched from WebLLM on page load or on selection, the
 confirmation. `REAL_LOAD=1` then really downloads and loads the 1.5B model
 with the browser's WebGPU (`REAL_CHAT=1` also sends one message).
