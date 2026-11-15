@@ -34,3 +34,5 @@ nothing reaches KV or Blob.
   while typing, Generate + Apply with the controller ray, then the two-hand
   grip zoom (in, out), the right grip no longer cycles locomotion, one grip
   does nothing, toggled off restores both.
+
+With PR #56 (Map built-in two-grip zoom) merged in, the VR part also checks that the built-in zoom steps aside while an AI grip control is on (no double zoom) and takes the grips back when it is toggled off; on builds without it those checks reduce to "no zoom".

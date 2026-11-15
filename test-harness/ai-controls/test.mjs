@@ -367,7 +367,9 @@ if (!ONLY_VR) {
 	await p.evaluate(() => document.querySelector('#dchat-ai-controls .gs-ai-preview').scrollIntoView({ block: 'start' }));
 	await sleep(200);
 	await p.screenshot({ path: `${SHOT_DIR}/phone-preview-card.png` });
-	await p.tap('#dchat-ai-controls .gs-ai-apply'); await sleep(250);
+	await p.evaluate(() => document.querySelector('#dchat-ai-controls .gs-ai-apply').scrollIntoView({ block: 'center' })); await sleep(300);
+	await p.tap('#dchat-ai-controls .gs-ai-apply');
+	await p.waitForFunction(() => document.querySelectorAll('#dchat-ai-controls .gs-ai-row').length === 1, { timeout: 4000 }).catch(() => {});
 	st = await panelState(p);
 	check('phone: Apply adds the AI row', st.rows.length === 1, st.rows);
 	await p.evaluate(() => document.querySelector('#dchat-ai-controls').scrollIntoView({ block: 'start' }));
@@ -479,12 +481,15 @@ if (!SKIP_VR) {
 	await p.evaluate(() => __t.hands(0.3)); await sleep(300);
 	const loco0 = await p.evaluate(() => gsVrInput.locomotionMode);
 	r0 = await rig(); const f0 = await headFwd();
+	const builtin0 = await p.evaluate(() => (gsVrInput.gripZoom ? gsVrInput.gripZoom.count : null)); // Map's built-in grip zoom (PR #56), when present
 	await p.evaluate(() => { __t.btn('left', 'squeeze', 1); __t.btn('right', 'squeeze', 1); }); await sleep(300);
 	for (let s = 0.3; s <= 0.701; s += 0.04) { await p.evaluate((s) => __t.hands(s), s); await sleep(60); }
 	await sleep(500);
 	r1 = await rig();
 	const along = [0, 1, 2].reduce((acc, i) => acc + (r1[i] - r0[i]) * f0[i], 0);
 	check('VR grip zoom: both grips + hands apart (0.3 → 0.7 m) zooms in (moves you toward where you look)', along > 1.0, { along, moved: dist(r0, r1) });
+	const builtin1 = await p.evaluate(() => (gsVrInput.gripZoom ? gsVrInput.gripZoom.count : null));
+	check(builtin0 == null ? 'VR grip zoom: (this build has no built-in Map grip zoom)' : 'VR grip zoom: Map\'s built-in grip zoom steps aside while the AI control holds the grips (no double zoom)', builtin0 === builtin1, { builtin0, builtin1 });
 	// pinch: zoom out
 	if (process.env.DBG) await p.evaluate(() => { const rt = gsAiControls.runtime; const o = rt.step; window.__dbg = []; rt.step = (f, l) => { const r = o(f, l); if (window.__dbg.length < 400) window.__dbg.push({ typing: f.typing, L: f.xr.hands?.left && { b: f.xr.hands.left.blocked, sq: f.xr.hands.left.inputs?.['L-Squeeze'], pos: f.xr.hands.left.pos }, R: f.xr.hands?.right && { b: f.xr.hands.right.blocked, sq: f.xr.hands.right.inputs?.['R-Squeeze'], pos: f.xr.hands.right.pos }, z: r.camera.zoom, n: l.length }); return r; }; });
 	r0 = await rig();
@@ -505,17 +510,24 @@ if (!SKIP_VR) {
 	await p.evaluate(() => __t.btn('left', 'squeeze', 0)); await sleep(200);
 	r1 = await rig();
 	check('VR: one grip + spreading does nothing', dist(r0, r1) < 0.02, dist(r0, r1));
-	// toggled off: no zoom, right grip cycles locomotion again
+	// toggled off: the AI zoom stops (Map's built-in grip zoom, when this build has it, takes the grips back)
 	await p.evaluate(() => gsAiControls.toggle('map', gsAiControls.list('map')[0].id, false)); await sleep(200);
 	await p.evaluate(() => __t.hands(0.3)); await sleep(200);
 	r0 = await rig();
+	const bz0 = await p.evaluate(() => (gsVrInput.gripZoom ? gsVrInput.gripZoom.count : null));
 	await p.evaluate(() => { __t.btn('left', 'squeeze', 1); __t.btn('right', 'squeeze', 1); }); await sleep(200);
 	for (let s = 0.3; s <= 0.701; s += 0.05) { await p.evaluate((s) => __t.hands(s), s); await sleep(50); }
 	await sleep(300);
 	await p.evaluate(() => { __t.btn('left', 'squeeze', 0); __t.btn('right', 'squeeze', 0); }); await sleep(300);
 	r1 = await rig();
-	const loco2 = await p.evaluate(() => gsVrInput.locomotionMode);
-	check('VR: toggled off → no zoom, and the right grip cycles locomotion again', dist(r0, r1) < 0.02 && loco2 !== loco1, { moved: dist(r0, r1), loco1, loco2 });
+	const bz1 = await p.evaluate(() => (gsVrInput.gripZoom ? gsVrInput.gripZoom.count : null));
+	if (bz0 == null) check('VR: toggled off → no zoom', dist(r0, r1) < 0.02, { moved: dist(r0, r1) });
+	else check('VR: toggled off → the AI zoom stops and Map\'s built-in grip zoom has the grips again', bz1 === bz0 + 1, { bz0, bz1, moved: dist(r0, r1) });
+	await p.evaluate(() => __t.hands(0.3)); await sleep(200);
+	const loco3 = await p.evaluate(() => gsVrInput.locomotionMode);
+	await p.evaluate(() => __t.btn('right', 'squeeze', 1)); await sleep(250); await p.evaluate(() => __t.btn('right', 'squeeze', 0)); await sleep(350);
+	const loco4 = await p.evaluate(() => gsVrInput.locomotionMode);
+	check('VR: toggled off → the right grip alone cycles locomotion again', loco4 !== loco3, { loco1, loco3, loco4 });
 	const errs = p._errors.filter((e) => !/Speech error: NotAllowedError/.test(e));
 	check('VR: no console errors', errs.length === 0, errs);
 	await p.close();
