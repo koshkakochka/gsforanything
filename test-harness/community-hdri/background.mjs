@@ -78,6 +78,7 @@ for (const [H, base] of HOSTS) {
   a.on('request', r => { if (r.method() === 'POST' && r.url().endsWith('/api/community-scenes')) posted.push(JSON.parse(r.postData())); });
   await tab(a, 'community');
   await a.evaluate(() => [...document.querySelectorAll('#dchat-community-buttons button')].find(x => x.textContent.trim() === 'Upload Current Scene').click());
+  await a.waitForSelector('#gs-ctx-publish.visible', { timeout: 8000 }); await a.click('#gs-ctx-publish-btn');
   const up = await (await resP).json();
   ok(`${H} upload carries background:true`, posted[0]?.environmentHdri?.url === HDRI_URL && posted[0].environmentHdri.background === true, JSON.stringify(posted[0]?.environmentHdri));
   await a.browserContext().close();

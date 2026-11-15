@@ -33,6 +33,8 @@
  * publish), so it is only ever rendered with textContent.
  */
 
+import { sanitizeSceneName, SCENE_NAME_MAX, DEFAULT_UPLOAD_NAME } from './sceneName.js';
+
 export const CONTEXT_FORMAT = 'gs-creation-context';
 export const CONTEXT_VERSION = 1;
 
@@ -486,22 +488,9 @@ function writePublishPref(pref) {
  */
 export async function preparePublish(sceneData) {
 	const secretsInCode = findSecrets(sceneData.codeBlocks || []);
-	if (!hasSessionContent()) {
-		return sceneData;
-	}
 	const pref = readPublishPref();
-	const inXr = !!host?.isXrActive?.();
-	if (inXr) {
-		if (pref.include) {
-			const packed = await packContext({ sceneName: sceneData.name, includeFileContents: pref.files, purpose: 'publish' });
-			if (packed) sceneData.creationContext = packed.envelope;
-			host?.pushChatNote?.(`📜 Publishing with its creation context (${packed?.summary.messages || 0} messages, ${packed?.summary.files.length || 0} files${pref.files ? '' : ', file names only'}). Anyone with the link can read it. Change this in the desktop publish dialog.`);
-		} else {
-			sceneData.creationContextOmitted = true;
-			host?.pushChatNote?.('📜 Publishing without the creation context (your saved choice).');
-		}
-		return sceneData;
-	}
+	// Always open the dialog so the user can name the scene (desktop, phone,
+	// and in the VR menu). A session with no chat still gets the name field.
 	return new Promise((resolve) => openPublishDialog(sceneData, pref, secretsInCode, resolve));
 }
 
@@ -768,11 +757,61 @@ const CSS = `
 .gs-ctx-check input { margin-top: 3px; }
 .gs-ctx-share-list { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.5; }
 .gs-ctx-warn { color: #fbbf24; font-size: 12px; }
+.gs-ctx-name { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.gs-ctx-name .gs-ctx-name-label { font-weight: 600; }
+.gs-ctx-name-input { box-sizing: border-box; width: 100%; min-height: 44px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.5); background: #2c2e3e; color: #fff; font-family: inherit; font-size: 16px; line-height: 1.4; }
+.gs-ctx-name-input:focus-visible { outline: 3px solid #facc15; outline-offset: 2px; }
+.gs-ctx-inner { overflow: auto; }
+.gs-ctx-inner.html-in-canvas-source { width: 520px !important; max-height: none !important; overflow: visible !important; font-size: 18px; }
+.gs-ctx-inner.html-in-canvas-source .gs-ctx-name-input { min-height: 56px; font-size: 18px; }
+.gs-ctx-inner.html-in-canvas-source .gs-ctx-actions button { min-height: 56px; min-width: 130px; font-size: 18px; }
+.gs-ctx-modal.gs-ctx-modal-xr { background: none; pointer-events: none; inset: auto; width: 0; height: 0; padding: 0; }
+.gs-ctx-modal.gs-ctx-modal-xr .gs-ctx-inner { pointer-events: auto; }
+@media (max-width: 520px) {
+	.gs-ctx-inner { padding: 16px; max-height: 92vh; }
+	.gs-ctx-actions button { min-height: 44px; }
+}
 body.display-only #gs-ctx-history-btn { display: none !important; }
 `;
 
 let viewerEl = null;
 let publishEl = null;
+let publishMode = null; // 'page' | 'xr' | null
+const publishHooks = {
+	isImmersive: () => false,
+	onShow: null,  // (card, { input }) => void
+	onHide: null   // (card) => void
+};
+
+/** main.js hands in the VR hooks (same window as gsDialog). */
+export function configurePublishDialog(h = {}) {
+	Object.assign(publishHooks, h);
+	if (publishEl && publishEl.classList.contains('visible')) refreshPublishDialogMode();
+}
+
+/** The publish card (the VR window's source). */
+export function publishCard() {
+	return publishEl?.querySelector('.gs-ctx-inner') || null;
+}
+
+/** Re-show the open publish dialog in the right mode (XR session started/ended). */
+export function refreshPublishDialogMode() {
+	if (!publishEl || !publishEl.classList.contains('visible')) return;
+	const want = publishHooks.isImmersive?.() ? 'xr' : 'page';
+	if (publishMode === want) return;
+	const card = publishCard();
+	const input = document.getElementById('gs-ctx-publish-name');
+	if (publishMode === 'xr') publishHooks.onHide?.(card);
+	publishMode = want;
+	publishEl.classList.toggle('gs-ctx-modal-xr', want === 'xr');
+	if (want === 'xr') {
+		if (input && document.activeElement === input) input.blur();
+		publishHooks.onShow?.(card, { input, card });
+	} else {
+		input?.focus({ preventScroll: true });
+		try { input?.select(); } catch { /* ignore */ }
+	}
+}
 
 function el(tag, attrs = {}, ...children) {
 	const n = document.createElement(tag);
@@ -950,12 +989,24 @@ export function openViewer(contextKey = null, { payload: forcedPayload = null, t
 
 function openPublishDialog(sceneData, pref, secretsInCode, resolve) {
 	if (!publishEl) {
-		publishEl = el('div', { class: 'gs-ctx-modal', id: 'gs-ctx-publish', role: 'dialog', 'aria-labelledby': 'gs-ctx-publish-title' });
+		publishEl = el('div', { class: 'gs-ctx-modal', id: 'gs-ctx-publish', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'gs-ctx-publish-title' });
 		document.body.appendChild(publishEl);
+		// While the dialog is up every key typed into it stays in it (capture
+		// phase), so WASD / arrows / shortcuts never reach the camera controls.
+		const swallow = (e) => {
+			if (!publishEl.classList.contains('visible')) return;
+			if (publishMode === 'xr' && !publishEl.contains(e.target)) return;
+			e.stopPropagation();
+		};
+		document.addEventListener('keydown', (e) => publishEl._onKey?.(e), true);
+		document.addEventListener('keyup', swallow, true);
+		document.addEventListener('keypress', swallow, true);
 	}
 	publishEl.innerHTML = '';
+	const hasContext = hasSessionContent();
 	let packed = null;
 	let busy = false;
+	let done = false;
 	const include = el('input', { type: 'checkbox', id: 'gs-ctx-include' });
 	include.checked = pref.include;
 	const includeFiles = el('input', { type: 'checkbox', id: 'gs-ctx-include-files' });
@@ -965,11 +1016,56 @@ function openPublishDialog(sceneData, pref, secretsInCode, resolve) {
 	const codeWarn = Object.keys(secretsInCode).length
 		? el('div', { class: 'gs-ctx-warn' }, `⚠ The scene code itself looks like it contains ${Object.entries(secretsInCode).map(([k, v]) => `${v} ${k}`).join(', ')}. Scene code is always published as-is; remove it before uploading.`)
 		: null;
+	// Scene name: prefilled with the current title (if there is one), trimmed
+	// and capped; an empty field falls back to the old default on Publish.
+	const initialName = sceneData.name && sceneData.name !== DEFAULT_UPLOAD_NAME ? String(sceneData.name).slice(0, SCENE_NAME_MAX) : '';
+	const nameInput = el('input', {
+		type: 'text', id: 'gs-ctx-publish-name', class: 'gs-ctx-name-input',
+		maxlength: String(SCENE_NAME_MAX), autocomplete: 'off', spellcheck: 'false',
+		enterkeyhint: 'done', placeholder: DEFAULT_UPLOAD_NAME, 'aria-describedby': 'gs-ctx-publish-name-hint'
+	});
+	nameInput.value = initialName;
+	const title = el('h3', { id: 'gs-ctx-publish-title' }, 'Publish to Community');
 	const finish = (result) => {
-		publishEl.classList.remove('visible');
+		if (done) return;
+		done = true;
+		const card = publishCard();
+		if (publishMode === 'xr') publishHooks.onHide?.(card);
+		if (document.activeElement && publishEl.contains(document.activeElement)) document.activeElement.blur();
+		publishMode = null;
+		publishEl.classList.remove('visible', 'gs-ctx-modal-xr');
+		publishEl._onKey = null;
 		resolve(result);
 	};
+	const submit = async () => {
+		if (busy || done) return;
+		sceneData.name = sanitizeSceneName(nameInput.value, DEFAULT_UPLOAD_NAME);
+		if (hasContext) {
+			writePublishPref({ include: include.checked, files: includeFiles.checked });
+			if (include.checked) {
+				busy = true;
+				try {
+					if (!packed) packed = await packContext({ sceneName: sceneData.name, includeFileContents: includeFiles.checked, purpose: 'publish' });
+				} finally { busy = false; }
+				if (packed) sceneData.creationContext = packed.envelope;
+			} else {
+				delete sceneData.creationContext;
+				sceneData.creationContextOmitted = true;
+			}
+		}
+		finish(sceneData);
+	};
+	publishEl._onKey = (e) => {
+		if (!publishEl.classList.contains('visible')) return;
+		// In VR only keys aimed at the card count (the VR keyboard's Send/Enter).
+		if (publishMode === 'xr' && !publishEl.contains(e.target)) return;
+		e.stopPropagation();
+		if (e.isComposing) return;
+		if (e.key === 'Escape' || e.key === 'Esc') { e.preventDefault(); finish(null); return; }
+		if (e.key === 'Enter' && e.target === nameInput) { e.preventDefault(); submit(); }
+	};
 	const refresh = async () => {
+		if (!hasContext) return;
 		includeFiles.disabled = !include.checked;
 		list.innerHTML = '';
 		warn.textContent = '';
@@ -981,7 +1077,7 @@ function openPublishDialog(sceneData, pref, secretsInCode, resolve) {
 		list.appendChild(el('li', {}, 'Working out what will be shared…'));
 		busy = true;
 		try {
-			packed = await packContext({ sceneName: sceneData.name, includeFileContents: includeFiles.checked, purpose: 'publish' });
+			packed = await packContext({ sceneName: sanitizeSceneName(nameInput.value, DEFAULT_UPLOAD_NAME), includeFileContents: includeFiles.checked, purpose: 'publish' });
 		} finally { busy = false; }
 		list.innerHTML = '';
 		if (!packed) { list.appendChild(el('li', {}, 'Nothing recorded yet in this session.')); return; }
@@ -998,37 +1094,36 @@ function openPublishDialog(sceneData, pref, secretsInCode, resolve) {
 	};
 	include.addEventListener('change', refresh);
 	includeFiles.addEventListener('change', refresh);
-	const inner = el('div', { class: 'gs-ctx-inner', style: 'width:min(520px,94vw)' },
-		el('h3', { id: 'gs-ctx-publish-title' }, `Publish "${sceneData.name || 'Untitled'}" to Community`),
-		el('div', { class: 'gs-ctx-sub' }, 'Community scenes are public: anyone with the link can open them. The creation context lets you (or anyone who opens the scene) see the original chat and files and keep building from where it left off.'),
+	const nameField = el('label', { class: 'gs-ctx-name', for: 'gs-ctx-publish-name' },
+		el('span', { class: 'gs-ctx-name-label' }, 'Scene name'),
+		nameInput,
+		el('span', { class: 'gs-ctx-sub', id: 'gs-ctx-publish-name-hint' }, `Shown on the Community tile. Up to ${SCENE_NAME_MAX} characters.`)
+	);
+	const contextBits = hasContext ? [
 		el('label', { class: 'gs-ctx-check' }, include, el('span', {}, el('strong', {}, 'Include creation context'), ' — the chat log and info log (settings, code edits)')),
 		el('label', { class: 'gs-ctx-check', style: 'margin-left:24px' }, includeFiles, el('span', {}, 'Include the contents of attached files (otherwise only their names and sizes)')),
 		el('div', { class: 'gs-ctx-sub', style: 'opacity:0.9' }, 'What will be shared:'),
 		list,
-		warn,
+		warn
+	] : [];
+	const inner = el('div', { class: 'gs-ctx-inner', style: 'width:min(520px,94vw)' },
+		title,
+		el('div', { class: 'gs-ctx-sub' }, hasContext
+			? 'Community scenes are public: anyone with the link can open them. The creation context lets you (or anyone who opens the scene) see the original chat and files and keep building from where it left off.'
+			: 'Community scenes are public: anyone with the link can open them.'),
+		nameField,
+		...contextBits,
 		codeWarn,
 		el('div', { class: 'gs-ctx-actions' },
-			el('button', { type: 'button', id: 'gs-ctx-preview-btn', onclick: () => { if (packed) openViewer(null, { payload: packed.payload, title: 'Preview: creation context to publish' }); } }, 'Preview'),
+			hasContext ? el('button', { type: 'button', id: 'gs-ctx-preview-btn', onclick: () => { if (packed) openViewer(null, { payload: packed.payload, title: 'Preview: creation context to publish' }); } }, 'Preview') : null,
 			el('button', { type: 'button', id: 'gs-ctx-cancel-btn', onclick: () => finish(null) }, 'Cancel'),
-			el('button', {
-				type: 'button', class: 'primary', id: 'gs-ctx-publish-btn',
-				onclick: async () => {
-					if (busy) return;
-					writePublishPref({ include: include.checked, files: includeFiles.checked });
-					if (include.checked) {
-						if (!packed) packed = await packContext({ sceneName: sceneData.name, includeFileContents: includeFiles.checked, purpose: 'publish' });
-						if (packed) sceneData.creationContext = packed.envelope;
-					} else {
-						delete sceneData.creationContext;
-						sceneData.creationContextOmitted = true;
-					}
-					finish(sceneData);
-				}
-			}, 'Publish')
+			el('button', { type: 'button', class: 'primary', id: 'gs-ctx-publish-btn', onclick: submit }, 'Publish')
 		)
 	);
 	publishEl.appendChild(inner);
 	publishEl.classList.add('visible');
+	publishMode = null;
+	refreshPublishDialogMode();
 	refresh();
 }
 

@@ -673,6 +673,7 @@ let pendingShare = null; // share modal payload { id, name, editorUrl, viewUrl }
 // Community upload: "Allow others to export this scene" (Community tab and
 // Share tab checkboxes). Starts at Allow on every page load.
 let uploadAllowExport = true;
+let lastUploadedName = ''; // name chosen in the last Community upload (prefills the next one)
 let codeEditorDirty = false; // user has unsaved edits in Code tab
 let codeHighlightApi = null; // set when Code tab highlight layer mounts
 // HDRI state (textures filled later by initHdriControls; checked in applyEnvironmentMode)
@@ -3287,7 +3288,9 @@ async function copyText(text) {
 
 async function uploadCurrentSceneToCommunity({ showShare = true, allowExport = uploadAllowExport } = {}) {
 	if (displayOnlyMode) return null;
-	const name = activeScene?.name || 'My Scene';
+	// Prefill for the name field: the loaded scene's title, else the name
+	// used for the last upload this session, else the old default.
+	const name = activeScene?.name || lastUploadedName || 'My Scene';
 	let sceneData = buildSceneData(name);
 	if (sceneData.codeBlocks.length === 0) {
 		updateStatus('Nothing to upload - add or load something first', 'error');
@@ -3325,9 +3328,12 @@ async function uploadCurrentSceneToCommunity({ showShare = true, allowExport = u
 		rememberOwnerKey(sceneId, data.ownerKey);
 		const hdriNote = hdriFile && sceneId ? await uploadSceneHdriFile(sceneId, hdriFile.file) : '';
 		const exportsNote = data.allowExport === false ? ' (exports off)' : '';
-		updateStatus(`Uploaded "${data.scene?.name || name}" to community${exportsNote}${hdriNote}`, hdriNote ? 'error' : 'connected');
+		const uploadedName = data.scene?.name || sceneData.name || name;
+		lastUploadedName = uploadedName;
+		if (activeScene) activeScene.name = uploadedName;
+		updateStatus(`Uploaded "${uploadedName}" to community${exportsNote}${hdriNote}`, hdriNote ? 'error' : 'connected');
 		refreshCommunityScenes();
-		const share = sharePayloadFromMeta(data.scene || { name, id: data.id }, { ...data, ownerKey: undefined });
+		const share = sharePayloadFromMeta(data.scene || { name: uploadedName, id: data.id }, { ...data, ownerKey: undefined });
 		lastUploadedShare = { sig: shareSignature(sceneData.codeBlocks), share };
 		if (showShare) showShareModal(share);
 		lastUploadedShare.hdriSig = uploadHdriSig;
@@ -9962,6 +9968,7 @@ function initVrDialogWindow() {
 	configureDialogs({
 		isImmersive: () => xrSessionActive(),
 		onShow: (card, d) => {
+			vrDialogWindow.setSource(card);
 			_vrDialogPlaceNext = true;
 			if (xrSessionActive()) placeVrDialog();
 			vrDialogWindow.setVisible(true);
@@ -9975,8 +9982,32 @@ function initVrDialogWindow() {
 			layoutVrDialogKeyboard();
 		}
 	});
+	// Community → Upload Current Scene: the publish card (scene name field,
+	// creation-context choice) is shown in the same modal VR window; pointing
+	// at the name field opens the VR keyboard, whose Send key publishes.
+	GSContext.configurePublishDialog({
+		isImmersive: () => xrSessionActive(),
+		onShow: (card, d) => {
+			if (!card) return;
+			vrDialogWindow.setSource(card);
+			_vrDialogPlaceNext = true;
+			if (xrSessionActive()) placeVrDialog();
+			vrDialogWindow.setVisible(true);
+			if (d && d.input) openVrKeyboard(d.input);
+			layoutVrDialogKeyboard();
+		},
+		onHide: (card) => {
+			if (vrKeyboardTarget && card && card.contains(vrKeyboardTarget)) closeVrKeyboard();
+			vrDialogWindow.setVisible(false);
+			for (let i = 0; i < 2; i++) vrDialogWindow.setHover(i, null);
+			vrDialogWindow.setSource(dialogCard());
+			layoutVrDialogKeyboard();
+		}
+	});
 	renderer.xr.addEventListener('sessionstart', refreshDialogMode);
 	renderer.xr.addEventListener('sessionend', refreshDialogMode);
+	renderer.xr.addEventListener('sessionstart', GSContext.refreshPublishDialogMode);
+	renderer.xr.addEventListener('sessionend', GSContext.refreshPublishDialogMode);
 }
 
 // The page's own alert / confirm / prompt (AI-written scene code, p5 helpers,
