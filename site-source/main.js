@@ -22,11 +22,12 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { initSceneExport } from './exporter.js';
 import { createTwinSticks } from './twinSticks.js';
-import { createCameraControls, CAMERA_MODES, CAMERA_MODE_LABELS, STICK_MODES, normalizeCameraMode, isCustomCameraMode, ORBIT_TARGET, DEFAULT_CAMERA_POSITION, isTextEntry, clampPlayerHeight, PLAYER_HEIGHT_DEFAULT, PLAYER_HEIGHT_STEP, PLAYER_HEIGHT_MIN, PLAYER_HEIGHT_MAX } from './cameraControls.js';
+import { createCameraControls, CAMERA_MODES, CAMERA_MODE_LABELS, STICK_MODES, normalizeCameraMode, isCustomCameraMode, ORBIT_TARGET, DEFAULT_CAMERA_POSITION, isTextEntry, clampPlayerHeight, PLAYER_HEIGHT_DEFAULT, PLAYER_HEIGHT_STEP, PLAYER_HEIGHT_MIN, PLAYER_HEIGHT_MAX, MAP_MIN_DISTANCE, MAP_MAX_DISTANCE } from './cameraControls.js';
+import { createGripZoom } from './vrGripZoom.js';
 import * as gsKeyBindings from './controlBindings.js';
 import { createCustomControls } from './customControls.js';
 import { createCustomCameraModes } from './customCameraModes.js';
-import { CONTROLLER_STYLES, GLOBAL_PAD_ROWS, DEFAULT_LOCOMOTION, padValue, xrButtonOf, xrStickOf } from './inputBindings.js';
+import { CONTROLLER_STYLES, GLOBAL_PAD_ROWS, DEFAULT_LOCOMOTION, padValue, xrButtonOf, xrStickOf, MAP_GRIP_ZOOM_STORAGE_KEY, GRIP_ZOOM_LABELS, GRIP_INPUTS } from './inputBindings.js';
 import * as gsPadXrBindings from './controllerBindings.js';
 import { sanitizeDescription, DESCRIPTION_MAX_CHARS, DESCRIPTION_PLACEHOLDER } from './sceneDescription.js';
 import { THUMB_WIDTH, THUMB_HEIGHT, THUMB_MAX_BYTES } from './sceneThumbnail.js';
@@ -623,6 +624,8 @@ vrMenuLight.userData.gsSystem = true;
 
 let player = null;            // rig holding the camera + controllers (locomotion)
 let viewOffset = null;        // child of player holding camera + controllers (identity transform)
+// Map's two-grip VR zoom on / off (Controls → Map; see updateVrGripZoom).
+let vrGripZoomEnabled = (() => { try { return localStorage.getItem(MAP_GRIP_ZOOM_STORAGE_KEY) !== '0'; } catch { return true; } })();
 let locomotionMode = 'free';  // 'off' (thumbsticks scroll) | 'planar' (First Person) | 'free' (WASD) - see dchat-nav-type
 let _locoPrevTime = 0;        // previous frame timestamp for dt
 
@@ -6133,11 +6136,24 @@ function updateLocomotion(dt, session, claimedSticks = null) {
 		return !btn ? 0 : (btn.pressed && !btn.value ? 1 : btn.value || 0);
 	};
 	const loco = locomotionBindings();
-	const mx = val(loco.right) - val(loco.left);
-	const my = val(loco.back) - val(loco.forward);
+	// Map: the pan speed grows with your height above the map (zoomed out
+	// with the grips you still cross it at a useful speed).
+	const pan = cameraControls.mode === 'map' ? mapPanSpeedScale() : 1;
+	const mx = (val(loco.right) - val(loco.left)) * pan;
+	const my = (val(loco.back) - val(loco.forward)) * pan;
 	const rx = val(loco.turnRight) - val(loco.turnLeft);
 	const ry = val(loco.up) - val(loco.down);
 	applyLocomotionInput(dt, xrCam, mx, my, rx, ry);
+}
+const MAP_PAN_SCALE_MAX = 500;
+const _panHead = new THREE.Vector3();
+/** VR Map pan speed factor: head height above the map plane / eye height, 1..500. */
+function mapPanSpeedScale() {
+	// `camera` carries the headset pose under the rig (three's updateCamera),
+	// so its world position includes the rig; the XR ArrayCamera's
+	// getWorldPosition() would rebuild a rig-less pose.
+	camera.getWorldPosition(_panHead);
+	return Math.min(MAP_PAN_SCALE_MAX, Math.max(1, (_panHead.y - ORBIT_TARGET.y) / RENDER_EYE_HEIGHT));
 }
 /** { forward, back, left, right, turnLeft, turnRight, up, down } → VR binding, for the current camera style. */
 function locomotionBindings() {
@@ -6750,6 +6766,37 @@ function renderKeyRemap(force = false) {
 		row.append(name, controllerBindRow(r.style, r.row.id, `${def.label}: ${name.textContent}`, row));
 		plist.appendChild(row);
 	}
+	// Map: the two-grip VR zoom gesture (not remappable; can be turned off).
+	if (style === 'map') {
+		const row = document.createElement('div');
+		row.className = 'gs-ctl-row gs-remap-ctl-row gs-grip-zoom-row';
+		row.id = 'dchat-grip-zoom-row';
+		row.dataset.action = 'gripZoom';
+		const name = document.createElement('div');
+		name.className = 'gs-remap-label';
+		name.textContent = 'Zoom in / out (VR gesture)';
+		const right = document.createElement('div');
+		right.className = 'gs-bind-alt';
+		const chip = document.createElement('span');
+		chip.className = 'gs-bind-head gs-bind-gesture';
+		chip.dataset.kind = 'xr';
+		chip.textContent = 'VR: both grips, spread or pinch';
+		const lab = document.createElement('label');
+		lab.className = 'gs-grip-zoom-toggle';
+		const cb = document.createElement('input');
+		cb.type = 'checkbox';
+		cb.id = 'dchat-grip-zoom';
+		cb.checked = vrGripZoomEnabled;
+		cb.addEventListener('change', () => setVrGripZoomEnabled(cb.checked));
+		lab.append(cb, document.createTextNode(' On'));
+		right.append(chip, lab);
+		const help = document.createElement('div');
+		help.className = 'gs-remap-note gs-grip-zoom-help';
+		help.id = 'dchat-grip-zoom-help';
+		row.append(name, right);
+		plist.appendChild(row);
+		plist.appendChild(help);
+	}
 	const vrNote = document.createElement('div');
 	vrNote.className = 'gs-remap-note';
 	vrNote.textContent = 'In a headset the camera follows your head and the VR bindings move you (Environment → Navigation). Pointing a controller at a menu keeps its trigger and stick for the menu.';
@@ -6786,6 +6833,23 @@ function refreshKeyRemap() {
 	if (padReset) padReset.disabled = !gsPadXrBindings.isStockCustomized(style, 'gamepad') && !gsPadXrBindings.isStockCustomized('global', 'gamepad');
 	const xrReset = document.getElementById('dchat-xr-remap-reset');
 	if (xrReset) xrReset.disabled = !gsPadXrBindings.isStockCustomized(style, 'xr');
+	refreshGripZoomUi();
+}
+/** Map's VR grip zoom row: the switch and why it is (not) working. */
+function refreshGripZoomUi() {
+	const cb = document.getElementById('dchat-grip-zoom');
+	if (cb) cb.checked = vrGripZoomEnabled;
+	const help = document.getElementById('dchat-grip-zoom-help');
+	const blocked = vrGripZoomBlockedBy();
+	document.querySelectorAll('#dchat-key-remap .gs-bind-gesture').forEach((el) => el.classList.toggle('off', !!blocked));
+	if (!help) return;
+	if (blocked === 'off') help.textContent = 'VR grip zoom is off: the grips do what they do in other styles (right grip cycles locomotion).';
+	else if (blocked.startsWith('remapped:')) {
+		const id = blocked.slice(9);
+		const r = CONTROLLER_STYLES.map.find((x) => x.id === id);
+		const label = r?.key ? gsKeyBindings.REMAP_STYLES.map.actions.find((a) => a.id === id)?.label : r?.label;
+		help.textContent = `VR grip zoom is paused: a grip is bound to ${label || id} above. Give it another input to zoom with both grips again.`;
+	} else help.textContent = 'In VR, hold both grips: move the controllers apart to zoom in, closer together to zoom out, toward the point you are looking at. Let go of either grip to stop. A scene whose Custom Controls bind a grip takes it over while its controls exist.';
 }
 /** Gamepad + VR fields of one Controls-tab row (VR: "your head" where the headset does it). */
 const remapBindFields = new Map(); // `${style}:${id}:${device}` -> field
@@ -6799,6 +6863,17 @@ function controllerBindRow(style, id, aria, row) {
 	for (const d of ['gamepad', 'xr']) {
 		const rows = gsPadXrBindings.stockRows(style, d);
 		if (!rows.some((r) => r.id === id)) {
+			const gesture = d === 'xr' && CONTROLLER_STYLES[style]?.find((r) => r.id === id)?.xrGesture;
+			if (gesture) {
+				// Map zoom in VR: the two-grip gesture, not a remappable input.
+				const g = document.createElement('span');
+				g.className = 'gs-bind-head gs-bind-gesture';
+				g.dataset.kind = 'xr';
+				g.dataset.gesture = gesture;
+				g.textContent = `VR: ${GRIP_ZOOM_LABELS[gesture]}`;
+				alt.appendChild(g);
+				continue;
+			}
 			if (d === 'xr' && style !== 'global') {
 				const byHead = !!CONTROLLER_STYLES[style]?.find((r) => r.id === id)?.head;
 				const head = document.createElement('span');
@@ -6915,10 +6990,14 @@ Object.assign(window.gsControls, {
 				return { id: a.id, label: a.label, keys: gsKeyBindings.getKeys(st, a.id), gamepad: r.pad == null ? null : gsPadXrBindings.getStock(st, 'gamepad', a.id), xr: r.xr == null ? null : gsPadXrBindings.getStock(st, 'xr', a.id) };
 			}),
 			// Mouse / wheel gestures and VR-only rows.
-			gestures: CONTROLLER_STYLES[st].filter((r) => !r.key).map((r) => ({ id: r.id, gesture: r.label, gamepad: r.pad == null ? null : gsPadXrBindings.getStock(st, 'gamepad', r.id), xr: r.xr == null ? null : gsPadXrBindings.getStock(st, 'xr', r.id) })),
+			gestures: CONTROLLER_STYLES[st].filter((r) => !r.key).map((r) => ({ id: r.id, gesture: r.label, gamepad: r.pad == null ? null : gsPadXrBindings.getStock(st, 'gamepad', r.id), xr: r.xr == null ? null : gsPadXrBindings.getStock(st, 'xr', r.id), ...(r.xrGesture ? { xrGesture: GRIP_ZOOM_LABELS[r.xrGesture] } : {}) })),
+			// Map's two-grip VR zoom (not remappable; can be turned off).
+			...(st === 'map' ? { vrGripZoom: { gesture: 'both grips, spread or pinch', enabled: vrGripZoomEnabled, blockedBy: vrGripZoomBlockedBy() } } : {}),
 			global: GLOBAL_PAD_ROWS.map((r) => ({ id: r.id, label: r.label, gamepad: gsPadXrBindings.getStock('global', 'gamepad', r.id) }))
 		};
 	},
+	/** Map's two-grip VR zoom on / off (Controls → Map, saved in this browser). */
+	setVrGripZoom: (on) => setVrGripZoomEnabled(on),
 	/** Remap a built-in style's gamepad / VR binding (as the Controls tab does): style ('global' for Y / View), device 'gamepad' | 'xr'. False when refused. */
 	setControllerBinding: (style, device, id, binding) => gsPadXrBindings.setStock(style, device, id, binding),
 	/** Remap a Custom Controls key param's gamepad / VR binding: { ok, error }. */
@@ -7496,7 +7575,7 @@ function buildGsSettingsNote() {
 		const r = originRotation.rotation;
 		lines.push(`Origin rotation: the user turned the scene's frame (yaw ${r.yaw}°, pitch ${r.pitch}°, roll ${r.roll}°) in Environment. Keep writing in scene coordinates with scene.add(...) as usual (floor y = 0); the app rotates it. Convert world points (camera position, raycast hits) with gsOrigin.toLocal(v) before using them as positions.`);
 	}
-	lines.push("Game controllers (Xbox, PlayStation, other USB/Bluetooth pads): `gsGamepad.connected`, `gsGamepad.axis('leftX' | 'leftY' | 'rightX' | 'rightY')` (-1..1, deadzone applied, up is negative), `gsGamepad.button('A' | 'B' | 'X' | 'Y' | 'LB' | 'RB' | 'LT' | 'RT' | 'View' | 'Menu' | 'LS' | 'RS' | 'Up' | 'Down' | 'Left' | 'Right')` (0..1), `gsGamepad.pressed(name)`, `gsGamepad.justPressed(name)` (true for one frame), `gsGamepad.onButton(name, fn)`, `gsGamepad.rumble(ms, strength)`. The sticks move the editor camera by default; set `gsGamepad.captureCamera = true` when the scene uses the sticks itself (a game character, a vehicle). Headset (WebXR) controllers are separate: `gsXrInput.presenting`, `gsXrInput.stick('left' | 'right')` → [x, y] (deadzone applied), `gsXrInput.hand(h).buttons` (0 trigger, 1 grip, 3 stick press, 4 A/X, 5 B/Y). Simplest: give every control a Custom Controls key param (defineCustomScheme / registerCameraMode params) with `gamepad` and `xr` bindings (generated from the key when omitted) and read `h.isDown(name)` / `h.value(name)`, so it works from the keyboard, a game controller and VR controllers.");
+	lines.push("Game controllers (Xbox, PlayStation, other USB/Bluetooth pads): `gsGamepad.connected`, `gsGamepad.axis('leftX' | 'leftY' | 'rightX' | 'rightY')` (-1..1, deadzone applied, up is negative), `gsGamepad.button('A' | 'B' | 'X' | 'Y' | 'LB' | 'RB' | 'LT' | 'RT' | 'View' | 'Menu' | 'LS' | 'RS' | 'Up' | 'Down' | 'Left' | 'Right')` (0..1), `gsGamepad.pressed(name)`, `gsGamepad.justPressed(name)` (true for one frame), `gsGamepad.onButton(name, fn)`, `gsGamepad.rumble(ms, strength)`. The sticks move the editor camera by default; set `gsGamepad.captureCamera = true` when the scene uses the sticks itself (a game character, a vehicle). Headset (WebXR) controllers are separate: `gsXrInput.presenting`, `gsXrInput.stick('left' | 'right')` → [x, y] (deadzone applied), `gsXrInput.hand(h).buttons` (0 trigger, 1 grip, 3 stick press, 4 A/X, 5 B/Y). In the built-in Map camera in a headset the left stick pans and holding both grips zooms (spread apart = zoom in, pinch together = zoom out); a scheme that binds a grip (`xr: 'L-Squeeze'` / `'R-Squeeze'`) takes that grip over while its controls exist, which turns the grip zoom off until then. Simplest: give every control a Custom Controls key param (defineCustomScheme / registerCameraMode params) with `gamepad` and `xr` bindings (generated from the key when omitted) and read `h.isDown(name)` / `h.value(name)`, so it works from the keyboard, a game controller and VR controllers.");
 	return lines.join('\n');
 }
 
@@ -10206,8 +10285,88 @@ function endVrGizmoGrab() {
 	vrGizmoGrab = null;
 	originRotation.endGrab();
 }
+// ---------------------------------------------------------------------------
+// VR Map zoom: hold BOTH grips and move the controllers apart to zoom in,
+// closer together to zoom out (vrGripZoom.js: pinch-zoom style, the
+// distance to the pivot is divided by the spread ratio; 1.5 cm deadzone,
+// smoothed, clamped to Map's 0.3 m – 20 km). The pivot is fixed when the
+// gesture starts: the nearest scene surface or ground point (y = 0) along
+// your gaze, else 10 m ahead. Releasing either grip ends it.
+// Only in Map, only when it is on (Controls → Map → VR grip zoom), when no
+// Map VR row is remapped to a grip, and while no scene Custom Controls /
+// camera mode binds a grip (the scene keeps priority while its controls
+// exist). In Map the right grip's locomotion cycle waits for the release and
+// is skipped if the other grip joined in (a zoom), so a zoom never cycles it.
+// A grip that starts an origin-gizmo grab is the gizmo's, no zoom.
+// ---------------------------------------------------------------------------
+const VR_GRIP_ZOOM_FALLBACK_DIST = 10;
+const vrGripZoom = createGripZoom({ min: MAP_MIN_DISTANCE, max: MAP_MAX_DISTANCE });
+let vrGripZoomLast = null; // last update result (debug hook)
+let vrGripZoomCount = 0;   // gestures started (debug hook)
+let vrPendingLocoCycle = false; // Map: right grip pressed alone, cycle locomotion on release
+const _gzHead = new THREE.Vector3(), _gzDir = new THREE.Vector3(), _gzL = new THREE.Vector3(), _gzR = new THREE.Vector3();
+const _gzRay = new THREE.Raycaster(), _gzN = new THREE.Vector3();
+function setVrGripZoomEnabled(on) {
+	vrGripZoomEnabled = !!on;
+	try { if (vrGripZoomEnabled) localStorage.removeItem(MAP_GRIP_ZOOM_STORAGE_KEY); else localStorage.setItem(MAP_GRIP_ZOOM_STORAGE_KEY, '0'); } catch { /* storage blocked */ }
+	if (!vrGripZoomEnabled) vrGripZoom.end();
+	refreshGripZoomUi();
+}
+/** Why the grip zoom is unavailable in Map right now ('' = available), ignoring the scene. */
+function vrGripZoomBlockedBy() {
+	if (!vrGripZoomEnabled) return 'off';
+	const xr = gsPadXrBindings.stockBindings('map', 'xr');
+	for (const [id, b] of Object.entries(xr)) if (GRIP_INPUTS.includes(b)) return `remapped:${id}`;
+	return '';
+}
+function vrGripZoomAvailable(claims) {
+	if (cameraControls.mode !== 'map' || vrGizmoGrab) return false;
+	if (gsPadXrBindings.capture.busy === 'xr') return false;
+	if (claims && (claims.xrButtons.has('left:1') || claims.xrButtons.has('right:1'))) return false;
+	return !vrGripZoomBlockedBy();
+}
+/** Point the gesture zooms toward (world): nearest front-facing scene surface or the y = 0 ground along the gaze, else 10 m ahead. */
+function vrGripZoomPivot() {
+	camera.getWorldPosition(_gzHead); // the headset pose with the rig (see mapPanSpeedScale)
+	camera.getWorldDirection(_gzDir);
+	let best = Infinity;
+	_gzRay.set(_gzHead, _gzDir);
+	_gzRay.far = MAP_MAX_DISTANCE;
+	try {
+		for (const h of _gzRay.intersectObjects(userContentRoots(), true)) {
+			if (!h.object.visible || !h.face) continue;
+			_gzN.copy(h.face.normal).transformDirection(h.object.matrixWorld);
+			if (_gzN.dot(_gzDir) > 0) continue; // inside a dome / back face
+			best = h.distance; break;
+		}
+	} catch { /* odd geometry: fall back to the ground */ }
+	if (_gzDir.y < -1e-3) {
+		const t = (ORBIT_TARGET.y - _gzHead.y) / _gzDir.y;
+		if (t > 0 && t < best) best = t;
+	}
+	if (!Number.isFinite(best)) best = VR_GRIP_ZOOM_FALLBACK_DIST;
+	return _gzHead.clone().addScaledVector(_gzDir, best);
+}
+function gripHeld(gp) { const b = gp && gp.buttons && gp.buttons[1]; return !!(b && (b.pressed || b.value > 0.5)); }
+/** Every XR frame after the button loop: run / end the two-grip zoom. */
+function updateVrGripZoom(dt, session, available) {
+	const grips = { left: false, right: false };
+	for (const src of session.inputSources) if (src.handedness === 'left' || src.handedness === 'right') grips[src.handedness] = gripHeld(src.gamepad);
+	const lc = xrControllerForHand('left'), rc = xrControllerForHand('right');
+	if (!available || !player || !lc || !rc || !grips.left || !grips.right) { vrGripZoom.end(); vrGripZoomLast = null; return; }
+	camera.getWorldPosition(_gzHead);
+	lc.controller.getWorldPosition(_gzL);
+	rc.controller.getWorldPosition(_gzR);
+	const starting = !vrGripZoom.active;
+	const r = vrGripZoom.update(dt, { enabled: true, left: true, right: true, leftPos: _gzL, rightPos: _gzR, head: _gzHead, pivot: () => vrGripZoomPivot() });
+	if (starting && vrGripZoom.active) { vrGripZoomCount++; vrPendingLocoCycle = false; }
+	vrGripZoomLast = r;
+	if (r) player.position.set(player.position.x + r.offset.x, player.position.y + r.offset.y, player.position.z + r.offset.z);
+}
+
 // Read-only test / debug hook (test-harness/vr-input).
 window.gsVrInput = {
+	get gripZoom() { return { active: vrGripZoom.active, enabled: vrGripZoomEnabled, blockedBy: vrGripZoomBlockedBy(), count: vrGripZoomCount, info: vrGripZoom.info, last: vrGripZoomLast, min: MAP_MIN_DISTANCE, max: MAP_MAX_DISTANCE }; },
 	get locomotionMode() { return locomotionMode; },
 	get gizmoGrab() { return vrGizmoGrab ? { hand: vrGizmoGrab.hand } : null; },
 	get stickOwnedByWindow() { return { ..._stickOwnedByWindow }; },
@@ -10294,6 +10453,8 @@ renderer.setAnimationLoop((time) => {
 			// remapped VR buttons and while a VR binding is being captured.
 			const asideButtons = gsButtonsSteppingAside(xrClaims);
 			const capturingXr = gsPadXrBindings.capture.busy === 'xr';
+			const zoomable = vrGripZoomAvailable(xrClaims);
+			if (!zoomable) vrPendingLocoCycle = false;
 			gsXrInput.presenting = true;
 			gsXrInput._resetHands();
 			for (const source of session.inputSources) {
@@ -10321,11 +10482,24 @@ renderer.setAnimationLoop((time) => {
 					// origin gizmo, grab it (rotate the scene with the controller)
 					// until released. Otherwise the right grip cycles locomotion
 					// mode (off → planar → free-roam).
+					// Map with the two-grip zoom available: the second grip
+					// starts the zoom (updateVrGripZoom) instead, and the right
+					// grip's locomotion cycle waits for its release (skipped
+					// if a zoom happened meanwhile).
 					const b1 = !!(gp.buttons[1] && gp.buttons[1].pressed);
 					if (b1 && !prev[1]) {
-						if (!beginVrGizmoGrab(hand) && hand === 'right' && !mine(1)) cycleLocomotionMode();
+						const other = _prevButtons[hand === 'left' ? 'right' : 'left'];
+						if (zoomable && other[1] && !vrGizmoGrab) vrPendingLocoCycle = false;
+						else if (!beginVrGizmoGrab(hand) && hand === 'right' && !mine(1)) {
+							if (zoomable) vrPendingLocoCycle = true;
+							else cycleLocomotionMode();
+						}
 					}
 					if (!b1 && prev[1] && vrGizmoGrab && vrGizmoGrab.hand === hand) endVrGizmoGrab();
+					if (!b1 && prev[1] && hand === 'right' && vrPendingLocoCycle) {
+						vrPendingLocoCycle = false;
+						if (!vrGripZoom.active && !mine(1)) cycleLocomotionMode();
+					}
 					prev[1] = b1;
 				}
 
@@ -10349,6 +10523,8 @@ renderer.setAnimationLoop((time) => {
 			}
 			if (vrGizmoGrab && !session.inputSources.length) endVrGizmoGrab();
 			updateVrGizmoGrab();
+			// Map: both grips held → zoom (after the loop, so both hands' grips are known).
+			updateVrGripZoom(dt, session, zoomable && !vrGizmoGrab);
 
 			// Locomotion: left stick moves, right stick turns (a stick a scene
 			// binding took over is left to the scene).

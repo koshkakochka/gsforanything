@@ -1199,6 +1199,13 @@
 		.gs-bind-alt { flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px; font-size: 11px; line-height: 1.35; color: rgba(255, 255, 255, 0.66); }
 		.gs-remap-ctl-row .gs-bind-alt { flex-basis: auto; margin-left: auto; }
 		.gs-bind-head { display: inline-flex; align-items: center; justify-content: center; min-height: 30px; width: 62px; text-align: center; font-size: 10px; line-height: 1.2; opacity: 0.7; }
+		/* Map's two-grip VR zoom (not remappable): a chip like the fields, dimmed when off / paused */
+		.gs-bind-gesture { opacity: 0.95; color: #c7d2fe; border: 1px dashed rgba(165, 180, 252, 0.55); border-radius: 6px; padding: 2px 4px; box-sizing: border-box; }
+		.gs-bind-gesture.off { opacity: 0.45; text-decoration: line-through; }
+		.gs-grip-zoom-row .gs-bind-gesture { width: auto; min-width: 124px; }
+		.gs-grip-zoom-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; margin-left: 6px; cursor: pointer; }
+		.gs-grip-zoom-toggle input { width: 16px; height: 16px; margin: 0; }
+		.gs-grip-zoom-help { margin: 2px 0 6px; }
 		.gs-remap-pad { margin-top: 12px; }
 		.gs-remap-resets, .gs-cc-resets { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
 		.gs-cc-head { flex-wrap: wrap; }
@@ -3465,6 +3472,7 @@
 					<kbd data-key="map:panLeft:0">&larr;</kbd><kbd data-key="map:panUp:0">&uarr;</kbd><kbd data-key="map:panRight:0">&rarr;</kbd><kbd data-key="map:panDown:0">&darr;</kbd> pan &middot;
 					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + pan keys rotate.
 					Touch: one finger pans, two fingers zoom and rotate.
+					In VR: left stick pans, right stick turns and moves up/down, hold both grips and move the controllers apart to zoom in or together to zoom out.
 				</div>
 				<div class="dchat-controls-help" data-camera-help="fly" hidden>
 					<b>FlyControls</b>. <kbd data-key="fly:forward:0">W</kbd>/<kbd data-key="fly:back:0">S</kbd> forward/back &middot; <kbd data-key="fly:left:0">A</kbd>/<kbd data-key="fly:right:0">D</kbd> left/right &middot;
@@ -3517,7 +3525,7 @@
 						Fly: left stick moves, right stick looks, <kbd>LB</kbd>/<kbd>RB</kbd> down/up, d-pad &larr;/&rarr; roll, left stick press slow &middot;
 						<kbd>Y</kbd> switches Orbit/First person &middot; <kbd>View</kbd> resets the view.
 						Press any button after connecting so the browser picks it up.
-						Headset controllers in VR are separate and keep their own mapping.
+						Headset controllers in VR are separate and keep their own mapping (Map in VR: left stick pans, both grips spread / pinch to zoom).
 					</div>
 				</div>
 				<div>

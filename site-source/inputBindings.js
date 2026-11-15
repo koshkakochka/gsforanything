@@ -243,8 +243,11 @@ export const CONTROLLER_STYLES = {
 		{ id: 'dragPanLeft', label: 'Pan left (left-drag)', pad: 'LS-Left', xr: null },
 		{ id: 'dragPanRight', label: 'Pan right (left-drag)', pad: 'LS-Right', xr: null },
 		...ROT('right-drag'),
-		{ id: 'zoomIn', label: 'Zoom in (wheel)', pad: 'RT', xr: null },
-		{ id: 'zoomOut', label: 'Zoom out (wheel)', pad: 'LT', xr: null },
+		// VR: not a single input but the two-hand grip gesture (vrGripZoom.js):
+		// hold both grips, spread to zoom in, pinch to zoom out. It can be
+		// turned off in Controls (MAP_GRIP_ZOOM_STORAGE_KEY).
+		{ id: 'zoomIn', label: 'Zoom in (wheel)', pad: 'RT', xr: null, xrGesture: 'spread' },
+		{ id: 'zoomOut', label: 'Zoom out (wheel)', pad: 'LT', xr: null, xrGesture: 'pinch' },
 		...RISE
 	],
 	fly: [
@@ -274,6 +277,11 @@ export const CONTROLLER_STYLES = {
 		...RISE
 	]
 };
+// Map's VR zoom gesture (both grips held): its labels, and where turning it
+// off is saved ('0' = off; anything else / nothing = on).
+export const MAP_GRIP_ZOOM_STORAGE_KEY = 'gs.vrMapGripZoom';
+export const GRIP_ZOOM_LABELS = { spread: 'both grips, spread', pinch: 'both grips, pinch' };
+export const GRIP_INPUTS = ['L-Squeeze', 'R-Squeeze'];
 // Game controller buttons that work in every style (gamepad only).
 export const GLOBAL_PAD_ROWS = [
 	{ id: 'switchMode', label: 'Switch Orbit / First person', pad: 'Y' },
