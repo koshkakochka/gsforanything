@@ -28,6 +28,7 @@ import { createCustomControls } from './customControls.js';
 import { createCustomCameraModes } from './customCameraModes.js';
 import { CONTROLLER_STYLES, GLOBAL_PAD_ROWS, DEFAULT_LOCOMOTION, padValue, xrButtonOf, xrStickOf } from './inputBindings.js';
 import * as gsPadXrBindings from './controllerBindings.js';
+import { createAiControls, applyCameraAmounts, staticXrButtonClaims, buildSystemPrompt, buildUserMessage } from './aiControls.js';
 import { sanitizeDescription, DESCRIPTION_MAX_CHARS, DESCRIPTION_PLACEHOLDER } from './sceneDescription.js';
 import { THUMB_WIDTH, THUMB_HEIGHT, THUMB_MAX_BYTES } from './sceneThumbnail.js';
 import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
@@ -757,6 +758,7 @@ window.gsOriginRoot = gsOriginRoot;
 let originRotation = null; // createOriginRotation(), set up with the Environment tab below
 let customControls = null; // createCustomControls(), set up with the Controls tab below
 let customCameraModes = null; // createCustomCameraModes(), set up with the camera controls below
+let aiControls = null; // createAiControls() (aiControls.js), set up with the Controls tab below
 // Scene code removes with scene.remove(obj); that must still work for objects
 // that were moved into the origin / AR placement group.
 {
@@ -2954,6 +2956,7 @@ function setActiveScene(sc) {
 	sceneEpoch += 1;
 	communityLoadTicket += 1; // a slower Community fetch must not replace this scene
 	clearUserObjects();
+	aiControls?.clearScene(); // the scene's AI-described controls (Custom Controls) go with it; loadSceneData loads the new one's
 	executedCodeBlocks = [];
 	activeScene = sc;
 	resetSceneChat();
@@ -2999,6 +3002,7 @@ function buildSceneData(name) {
 		codeBlocks,
 		...originRotationForScene(), // { originRotation } only when rotated
 		...customControls.forScene(), // { customControls: { schemeId: changed values } } when set
+		...(aiControls ? aiControls.forScene() : {}), // { aiControls: [...] } AI-described controls of this scene (Custom Controls)
 		...GSMerge.sceneCredits(activeScene) // mergedFrom / credits of a merged scene
 	};
 }
@@ -3098,6 +3102,7 @@ async function loadSceneData(data, fallbackName, { key, source = 'file', extra =
 	const hdriApplied = applySceneEnvironmentHdri(data);
 	applySceneOriginRotation(data);
 	customControls.setPendingSceneValues(data); // its code re-defines the schemes with these values
+	aiControls?.loadScene(data); // the scene's AI-described controls (validated again)
 	await runLoadedSceneCode(sc);
 	customControls.setPendingSceneValues(null);
 	if (activeScene !== sc) return { sc, hdriApplied }; // replaced while its code ran
@@ -6458,6 +6463,7 @@ function renderCameraControlsUi(why) {
 	}
 	window.gsRefreshTwinSticks?.(); // set up with the twin sticks further down
 	if (customControls) renderKeyRemap(); // key remapping (set up below)
+	aiControls?.refreshPanels(); // AI-described controls follow the selected mode
 }
 
 // Built-in modes are saved as the preference; a custom mode (scene code) never
@@ -6937,6 +6943,258 @@ Object.defineProperty(window.gsControls, 'cameraModes', {
 });
 Object.defineProperty(window.gsControls, 'customSchemes', { configurable: true, enumerable: true, get: () => customControls.describe() });
 window.gsKeyBindings = gsKeyBindings; // tests / console
+
+// ============================================================================
+// AI-described controls (aiControls.js): Controls → Camera ("Describe a
+// control" for the selected built-in mode) and Controls → Custom Controls
+// (controls for this scene, saved in the scene file). The description goes to
+// the chat backend (/api/chat, same provider / keys) and comes back as a
+// declarative definition that the interpreter in aiControls.js applies every
+// frame here; nothing it returns runs as code.
+// ============================================================================
+const AI_GS_VR_USES = { 'R-Squeeze': 'GS: cycles VR locomotion (grip press)', A: 'GS: push-to-talk', X: 'GS: push-to-talk', B: 'GS: shows / hides the pointer rays', Y: 'GS: shows / hides the pointer rays', 'L-StickPress': 'GS: hides / shows the UI', 'R-StickPress': 'GS: hides / shows the UI' };
+const AI_MOUSE_USES = {
+	orbit: { Left: 'Orbit: rotate (left-drag)', Right: 'Orbit: pan (right-drag)', Middle: 'Orbit: zoom (middle-drag)', Wheel: 'Orbit: zoom (wheel)' },
+	map: { Left: 'Map: pan (left-drag)', Right: 'Map: rotate (right-drag)', Middle: 'Map: zoom (middle-drag)', Wheel: 'Map: zoom (wheel)' },
+	fly: { Left: 'Fly: look (drag)' },
+	firstperson: { Left: 'First person: click for mouse look' }
+};
+const aiBuiltInMode = (m) => (CAMERA_MODES.includes(m) && m !== 'off' ? m : null);
+const aiModeLabel = (m) => CAMERA_MODE_LABELS[m] || (customCameraModes?.has(m) ? customCameraModes.labelOf(m) : m);
+/** Mode whose bindings a scope is about: a built-in mode, or (scene) the active one. */
+const aiScopeMode = (scope) => (scope === 'scene' ? cameraControls.mode : scope);
+function aiConflictContext(scope) {
+	const mode = aiScopeMode(scope);
+	const ctx = { keys: {}, gamepad: {}, xr: {}, reservedXr: { ...AI_GS_VR_USES }, mouse: {} };
+	const ib = CONTROLLER_STYLES[mode] ? window.gsControls.inputBindings(mode) : null;
+	if (ib) {
+		const lab = aiModeLabel(mode);
+		for (const a of ib.actions) {
+			for (const k of a.keys) if (k) ctx.keys[k] = `${lab}: ${a.label}`;
+			if (a.gamepad) ctx.gamepad[a.gamepad] = `${lab}: ${a.label}`;
+			if (a.xr) ctx.xr[a.xr] = `${lab}: ${a.label}`;
+		}
+		for (const g of ib.gestures) {
+			if (g.gamepad) ctx.gamepad[g.gamepad] = `${lab}: ${g.gesture}`;
+			if (g.xr) ctx.xr[g.xr] = `${lab}: ${g.gesture}`;
+		}
+		// Map's built-in two-grip VR zoom (when this build has it): it steps
+		// aside while an AI control holds a grip (currentXrClaims).
+		if (ib.vrGripZoom && ib.vrGripZoom.enabled && !ib.vrGripZoom.blockedBy) {
+			const w = `${lab}: built-in VR grip zoom (both grips; steps aside while this control is on)`;
+			for (const b of ['L-Squeeze', 'R-Squeeze']) ctx.xr[b] = ctx.xr[b] ? `${ctx.xr[b]}; ${w}` : w;
+		}
+		for (const g of ib.global) if (g.gamepad) ctx.gamepad[g.gamepad] = `${g.label} (every style)`;
+		Object.assign(ctx.mouse, AI_MOUSE_USES[mode] || {});
+	} else if (mode === 'off' || !mode) {
+		Object.assign(ctx.xr, DEFAULT_LOCOMOTION && Object.fromEntries(Object.entries(DEFAULT_LOCOMOTION).map(([k, b]) => [b, `VR locomotion (${k})`])));
+	}
+	// The scene's Custom Controls key params (keyboard / gamepad / VR).
+	for (const s of customControls ? customControls.describe() : []) {
+		for (const p of s.params) {
+			if (p.type !== 'key') continue;
+			const who = `${s.name}: ${p.label || p.name}`;
+			const code = s.values[p.name];
+			if (code) ctx.keys[code] = who;
+			const b = s.bindings[p.name] || {};
+			if (b.gamepad) ctx.gamepad[b.gamepad] = who;
+			if (b.xr) ctx.xr[b.xr] = who;
+		}
+	}
+	return ctx;
+}
+function aiRequestContext(scope) {
+	const mode = aiScopeMode(scope);
+	const ib = CONTROLLER_STYLES[mode] ? window.gsControls.inputBindings(mode) : null;
+	return {
+		mode, modeLabel: aiModeLabel(mode),
+		bindings: ib ? { actions: ib.actions, gestures: ib.gestures, mouse: AI_MOUSE_USES[mode] || {} } : null,
+		reserved: Object.entries(AI_GS_VR_USES).map(([b, w]) => `xr:${b} = ${w}`).join('; ') + '; the trigger of a hand pointing at the menu clicks it',
+		schemes: (customControls ? customControls.describe() : []).map((s) => ({ id: s.id, name: s.name, params: s.params.filter((p) => p.type === 'number').map((p) => ({ name: p.name, min: p.min, max: p.max })) }))
+	};
+}
+/** Ask the chat backend for one definition; resolves with the reply text, throws when the AI is unavailable. */
+async function requestAiControl(description, ctx) {
+	const system = buildSystemPrompt();
+	const user = buildUserMessage(description, ctx);
+	if (selectedBackend === 'ollama') {
+		const d = await callOllamaDirect(system, [{ role: 'user', content: user }], selectedOllamaModel, 2000);
+		return d.content?.[0]?.text || '';
+	}
+	let res;
+	try {
+		res = await fetchWithTimeout('/api/chat', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ messages: [{ role: 'user', content: user }], backend: selectedBackend, systemPrompt: system, purpose: 'ai-control' })
+		}, 90000);
+	} catch (e) {
+		throw new Error(e && e.name === 'AbortError' ? 'no reply in 90 s' : 'could not reach the server');
+	}
+	const text = await res.text();
+	let data = null;
+	try { data = JSON.parse(text); } catch { /* below */ }
+	if (!res.ok) throw new Error((data && data.error) || `server error ${res.status}`);
+	if (!data) throw new Error(`the server returned non-JSON (${res.status})`);
+	return data.content?.[0]?.text || '';
+}
+aiControls = createAiControls({
+	request: requestAiControl,
+	contextFor: aiRequestContext,
+	conflictContext: aiConflictContext,
+	modeLabel: aiModeLabel
+});
+aiControls.mountPanel(document.getElementById('dchat-ai-controls'), {
+	getScope: () => aiBuiltInMode(cameraControls.mode),
+	title: 'AI-described controls',
+	note: (scope) => (scope ? '' : isCustomCameraMode(cameraControls.mode)
+		? 'This camera mode belongs to the scene: describe controls for it in Custom Controls.'
+		: 'Pick Orbit, Map, Fly or First person to describe a control for it.')
+});
+aiControls.mountPanel(document.getElementById('dchat-ai-controls-scene'), {
+	getScope: () => 'scene',
+	title: 'AI-described controls for this scene'
+});
+window.addEventListener('storage', (e) => { if (e.key === 'gs.aiControls.v1') aiControls.reload(); });
+
+// Keyboard / mouse state for the interpreter (text fields keep their keys).
+const aiKeysDown = new Set();
+const aiMouse = { buttons: new Set(), dx: 0, dy: 0, wheel: 0 };
+const AI_MOUSE_BUTTON = ['Left', 'Middle', 'Right'];
+window.addEventListener('keydown', (e) => {
+	if (isTextEntry(e.target) || isTextEntry(document.activeElement)) return;
+	aiKeysDown.add(e.code); const n = gsKeyBindings.normalizeCode(e.code); if (n) aiKeysDown.add(n);
+}, true);
+window.addEventListener('keyup', (e) => { aiKeysDown.delete(e.code); const n = gsKeyBindings.normalizeCode(e.code); if (n) aiKeysDown.delete(n); }, true);
+window.addEventListener('blur', () => { aiKeysDown.clear(); aiMouse.buttons.clear(); });
+renderer.domElement.addEventListener('pointerdown', (e) => { if (AI_MOUSE_BUTTON[e.button]) aiMouse.buttons.add(AI_MOUSE_BUTTON[e.button]); });
+window.addEventListener('pointerup', (e) => { if (AI_MOUSE_BUTTON[e.button]) aiMouse.buttons.delete(AI_MOUSE_BUTTON[e.button]); });
+window.addEventListener('pointermove', (e) => { if (e.target === renderer.domElement || aiMouse.buttons.size) { aiMouse.dx += e.movementX || 0; aiMouse.dy += e.movementY || 0; } });
+renderer.domElement.addEventListener('wheel', (e) => { aiMouse.wheel += -(e.deltaMode === 1 ? e.deltaY / 3 : e.deltaMode === 2 ? e.deltaY * 3 : e.deltaY / 100); }, { passive: true });
+
+// What engaged AI controls hold this frame (the stock camera / locomotion leave it alone).
+let aiEngaged = new Set();
+let aiPadGroups = new Set();
+let aiStaticXrClaims = new Set();
+const aiPadGroup = (n) => { const m = n.match(/^(LS|RS)-(Up|Down|Left|Right|X|Y)$/); return m ? m[1] : /^D(Up|Down|Left|Right)$/.test(n) ? 'DPad' : n; };
+function withAiXrClaims(c) {
+	if (!aiStaticXrClaims.size && !aiEngaged.size) return c;
+	const xrButtons = new Set([...c.xrButtons, ...aiStaticXrClaims]);
+	const xrSticks = new Set(c.xrSticks);
+	for (const i of aiEngaged) {
+		const m = i.match(/^xr:(L|R)-Stick-/);
+		if (m) xrSticks.add(m[1] === 'L' ? 'left' : 'right');
+	}
+	return { ...c, xrButtons, xrSticks };
+}
+const _aiHeadQ = new THREE.Quaternion();
+const _aiRigQ = new THREE.Quaternion();
+const _aiFwd = new THREE.Vector3();
+const _aiFwd3 = new THREE.Vector3();
+const _aiRight = new THREE.Vector3();
+const _aiHead = new THREE.Vector3();
+const _aiEuler = new THREE.Euler();
+const AI_VR_ZOOM_METRES = 2; // zoom 1 in a headset = 2 m toward where you look
+function aiXrHand(hand) {
+	const h = gsXrInput.hand(hand);
+	if (!h || !h.connected) return { connected: false };
+	const H = hand === 'left' ? 'L' : 'R';
+	const b = h.buttons;
+	const inputs = { [`${H}-Trigger`]: b[0], [`${H}-Squeeze`]: b[1], [`${H}-StickPress`]: b[3], [hand === 'left' ? 'X' : 'A']: b[4], [hand === 'left' ? 'Y' : 'B']: b[5],
+		[`${H}-Stick-Up`]: Math.max(0, -h.y), [`${H}-Stick-Down`]: Math.max(0, h.y), [`${H}-Stick-Left`]: Math.max(0, -h.x), [`${H}-Stick-Right`]: Math.max(0, h.x) };
+	const found = xrControllerForHand(hand);
+	return { connected: true, inputs, blocked: h.buttonsBlocked, stickBlocked: h.stickBlocked, stick: [h.x, h.y], pos: found ? found.controller.position.toArray() : null };
+}
+function aiFrame(dt) {
+	const presenting = renderer.xr.isPresenting;
+	const frame = {
+		dt,
+		typing: isTextEntry(document.activeElement) || vrKeyboardOpen || !!gsPadXrBindings.capture.busy || (presenting && !!vrGizmoGrab),
+		keys: aiKeysDown,
+		mouse: { buttons: aiMouse.buttons, dx: aiMouse.dx, dy: aiMouse.dy, wheel: aiMouse.wheel },
+		pad: { connected: false },
+		xr: { presenting: false }
+	};
+	if (gsGamepad.connected) {
+		const raw = gsGamepad.raw();
+		const inputs = {};
+		for (const n of ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'DUp', 'DDown', 'DLeft', 'DRight', 'LS-Press', 'RS-Press', 'LS-Up', 'LS-Down', 'LS-Left', 'LS-Right', 'RS-Up', 'RS-Down', 'RS-Left', 'RS-Right']) inputs[n] = padValue(n, gsGamepad);
+		frame.pad = { connected: !!raw, inputs, axes: { leftX: gsGamepad.axis('leftX'), leftY: gsGamepad.axis('leftY'), rightX: gsGamepad.axis('rightX'), rightY: gsGamepad.axis('rightY') } };
+	}
+	if (presenting && gsXrInput.presenting) {
+		_aiEuler.setFromQuaternion(renderer.xr.getCamera().quaternion, 'YXZ'); // head in the rig (controllers share that frame)
+		frame.xr = { presenting: true, headYaw: _aiEuler.y, hands: { left: aiXrHand('left'), right: aiXrHand('right') } };
+	}
+	return frame;
+}
+function applyAiVrAmounts(a) {
+	if (!player || vrGizmoGrab) return;
+	const zoom = a.zoom || 0, px = (a['pan.x'] || 0) + (a['move.x'] || 0), pz = (a['pan.y'] || 0) + (a['move.z'] || 0), up = a['fly.up'] || 0, yaw = a['rotate.yaw'] || 0;
+	if (!zoom && !px && !pz && !up && !yaw) return;
+	const xrCam = renderer.xr.getCamera();
+	_aiHeadQ.copy(xrCam.quaternion);
+	viewOffset.getWorldQuaternion(_aiRigQ);
+	_aiHeadQ.premultiply(_aiRigQ);
+	_aiFwd3.set(0, 0, -1).applyQuaternion(_aiHeadQ);
+	_aiFwd.copy(_aiFwd3).setY(0);
+	if (_aiFwd.lengthSq() < 1e-8) _aiFwd.set(0, 0, -1);
+	_aiFwd.normalize();
+	_aiRight.crossVectors(_aiFwd, _LOCO_UP).normalize();
+	player.position.addScaledVector(_aiRight, px).addScaledVector(_aiFwd, pz).addScaledVector(_aiFwd3, zoom * AI_VR_ZOOM_METRES);
+	player.position.y += up;
+	if (yaw) { // turn around your head, like locomotion's turn
+		const angle = -yaw;
+		camera.getWorldPosition(_aiHead);
+		player.position.sub(_aiHead).applyAxisAngle(_LOCO_UP, angle).add(_aiHead);
+		player.rotateOnWorldAxis(_LOCO_UP, angle);
+	}
+}
+const aiValueListeners = new Map(); // name -> Set(fn)
+function aiControlsTick(dt) {
+	const mode = cameraControls.mode;
+	const list = aiControls.activeFor(aiBuiltInMode(mode) || '');
+	aiStaticXrClaims = staticXrButtonClaims(list);
+	if (!list.length) { aiEngaged = new Set(); aiPadGroups = new Set(); aiMouse.dx = aiMouse.dy = aiMouse.wheel = 0; return; }
+	// "add" params of a Custom Controls scheme start from its current value
+	for (const c of list) for (const b of c.def.bindings) {
+		const m = b.action.match(/^param:([^.]+)\.(.+)$/);
+		if (!m || b.paramMode === 'set') continue;
+		const h = customControls.get(m[1]);
+		if (h && typeof h.values[m[2]] === 'number') aiControls.runtime.setValue(`${m[1]}.${m[2]}`, h.values[m[2]]);
+	}
+	const frame = aiFrame(dt);
+	aiMouse.dx = aiMouse.dy = aiMouse.wheel = 0;
+	const out = aiControls.runtime.step(frame, list);
+	aiEngaged = out.engaged;
+	aiPadGroups = new Set([...out.engaged].filter((i) => i.startsWith('pad:')).map((i) => aiPadGroup(i.slice(4))));
+	for (const [name, value] of Object.entries(out.params)) {
+		const m = name.match(/^([^.]+)\.(.+)$/);
+		if (m) customControls.get(m[1])?.set(m[2], value);
+		for (const fn of aiValueListeners.get(name) || []) { try { fn(value, name); } catch (e) { console.error('gsControls.onAiValue handler error:', e); } }
+	}
+	for (const ev of out.events) {
+		if (ev === 'resetView') resetCameraView();
+		else if (ev === 'recenter') { if (renderer.xr.isPresenting) resetPlayerRig(); else cameraControls.recenter(); }
+	}
+	if (renderer.xr.isPresenting) applyAiVrAmounts(out.camera);
+	else if (!mobileXRMode && !cameraControlsSuspended() && aiBuiltInMode(mode)) applyCameraAmounts(THREE, { camera, controls: cameraControls.controls, mode }, out.camera);
+}
+Object.assign(window.gsControls, {
+	/** A value an AI-described control sets ("param:<name>" actions); 0 until then. */
+	aiValue: (name) => aiControls.runtime.value(String(name)),
+	/** Call fn(value) whenever an AI-described control changes that value. Returns an unsubscribe function. */
+	onAiValue: (name, fn) => {
+		const n = String(name);
+		if (!aiValueListeners.has(n)) aiValueListeners.set(n, new Set());
+		aiValueListeners.get(n).add(fn);
+		return () => aiValueListeners.get(n)?.delete(fn);
+	},
+	/** AI-described controls: { modes: { map: [...] }, scene: [...] } (tests / console). */
+	get aiControls() { return { modes: Object.fromEntries(CAMERA_MODES.filter((m) => m !== 'off').map((m) => [m, aiControls.list(m)])), scene: aiControls.list('scene') }; }
+});
+window.gsAiControls = aiControls; // tests / console
+// Scene file round trip for tests (buildSceneData / loadSceneData; no network).
+window.gsSceneFileForTest = { build: (name) => buildSceneData(name), load: (data) => loadSceneData(data, data?.name || 'Test scene') };
 window.gsControllerBindings = gsPadXrBindings; // tests / console
 renderKeyRemap(true);
 
@@ -7617,9 +7875,9 @@ const _noClaims = { pad: new Set(), xrSticks: new Set(), xrButtons: new Set() };
 let xrClaimsCache = null; // scene claims of this frame (updateLocomotion)
 /** What scene bindings took over this frame (Custom Controls params + an active custom camera mode with sticks). */
 function currentXrClaims() {
-	const c = customControls ? customControls.claims() : _noClaims;
-	if (!customCameraModes?.wantsSticks(cameraControls.mode)) return c;
-	return { ...c, xrSticks: new Set([...c.xrSticks, 'left', 'right']) };
+	let c = customControls ? customControls.claims() : _noClaims;
+	if (customCameraModes?.wantsSticks(cameraControls.mode)) c = { ...c, xrSticks: new Set([...c.xrSticks, 'left', 'right']) };
+	return withAiXrClaims(c);
 }
 /** Headset buttons GS's own uses (push-to-talk, ray toggle, UI toggle, locomotion cycle) leave alone this frame: the scene's, the ones the camera style's VR column was remapped to, or all while a VR binding is being captured. */
 function gsButtonsSteppingAside(sceneClaims) {
@@ -7739,7 +7997,7 @@ function updateGamepadCamera(dt) {
 	// (a stick direction claims the whole stick, a d-pad direction the d-pad).
 	const claimed = customControls ? customControls.claims().pad : _noClaims.pad;
 	const group = (b) => { const m = b.match(/^(LS|RS)-(Up|Down|Left|Right)$/); return m ? m[1] : /^D(Up|Down|Left|Right)$/.test(b) ? 'DPad' : b; };
-	const v = (b) => (!b || claimed.has(group(b)) ? 0 : padValue(b, gsGamepad));
+	const v = (b) => (!b || claimed.has(group(b)) || aiPadGroups.has(group(b)) ? 0 : padValue(b, gsGamepad));
 	// Buttons for every style (Y / View by default): on the press.
 	for (const r of GLOBAL_PAD_ROWS) {
 		const now = v(gsPadXrBindings.getStock('global', 'gamepad', r.id)) > 0.5;
@@ -10375,6 +10633,8 @@ renderer.setAnimationLoop((time) => {
 	updateGamepads(dt);
 	// Custom Controls: onPress for gamepad / VR controller bindings.
 	customControls?.poll();
+	// AI-described controls (Controls tab → Describe a control).
+	aiControlsTick(dt);
 
 	// Run user-injected animations from vr-exec code
 	for (const animFn of window._vrAnimations) {
