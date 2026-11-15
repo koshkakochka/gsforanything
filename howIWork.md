@@ -173,6 +173,47 @@ Three moving parts:
   to the saved built-in mode (a stale `custom:*` value loads as Map). Same id
   again (hot reload) swaps the hooks and keeps whether it is active. Test:
   `test-harness/dynamic-camera-modes`.
+- **Game controller and VR bindings** (`site-source/inputBindings.js`):
+  every keyboard / mouse control has a pad (Gamepad API standard mapping) and
+  a headset equivalent, shown under each key field and in a
+  "Game controller and VR controllers" list per style (remappable, below).
+  Built-in styles (`CONTROLLER_STYLES`, `GLOBAL_PAD_ROWS`): Orbit / Map pan keys →
+  d-pad, Fly roll → d-pad ←/→, Fly Slow → left stick press, plus the stick /
+  trigger / bumper mapping below; in a headset the camera follows the head
+  and locomotion (thumbsticks) is the equivalent. Custom Controls key params
+  take `gamepad` / `xr` bindings (generated from the key when omitted:
+  W/A/S/D → left stick, arrows → d-pad / right thumbstick, Space → A on both,
+  F → X / right trigger, …; shown as Key | Gamepad | VR columns in the Custom
+  Controls card, auto and explicit alike); `isDown()`, `value()` (0..1 analog) and `onPress()` answer for
+  keys, pad and VR. A scheme's pad inputs stop driving the camera; a bound
+  headset thumbstick is taken from locomotion and a bound A/B/X/Y from GS's
+  own use (push-to-talk, pointer rays) while the scheme exists. A hand whose
+  ray is on a VR window keeps its buttons for the menu, a stick scrolling a
+  window keeps it; nothing fires while typing. `window.gsXrInput` exposes the
+  headset controllers; `m.sticks()` of a custom camera mode merges on-screen,
+  pad and headset sticks. Test: `test-harness/gamepad-xr-bindings`.
+- **Remapping gamepad / VR bindings** (`site-source/controllerBindings.js`):
+  every Gamepad / VR field (Controls → Camera rows of `CONTROLLER_STYLES` +
+  the global Y / View buttons; every Custom Controls key param, custom camera
+  mode params included) is a button: click it and it listens ("Press…") with
+  a picker of every input (+ None, Cancel) under the row for people without
+  the device. The next input pushed from rest past the threshold (buttons /
+  triggers ½, sticks ¾ in one direction) is assigned; one already held must
+  be let go first; the assigned input is ignored by GS and the scene until
+  released. Esc, a click elsewhere or Cancel stops listening. VR: the trigger
+  of a hand whose ray is on a menu window is never captured (it is the menu's
+  click: pick / Cancel / clicking elsewhere cancels); every other input of
+  either hand counts after 300 ms. While listening the camera, locomotion,
+  stick scrolling, push-to-talk / ray / UI toggles and scene bindings pause.
+  An input another row of the same style (+ the global buttons) / the same
+  scheme uses is refused, like keys. Reset gamepad / Reset VR per style and
+  per scheme. Stored in localStorage `gs.controllerBindings.v1`
+  (`{ styles: { style: { gamepad, xr } }, schemes: { id: { gamepad, xr } } }`,
+  only differences; scheme overrides also go into the scene file as
+  `customControllerBindings`). Runtime reads the live bindings every frame:
+  `updateGamepadCamera`, `updateLocomotion` (VR column = locomotion; a
+  remapped VR button steps GS's own use of it aside), `isDown` / `value` /
+  `onPress` / `bindings()`. Test: `test-harness/controller-remap`.
 - **Game controllers** (Gamepad API, `window.gsGamepad`): Xbox Series X|S
   and other standard pads over USB or Bluetooth drive the desktop/phone
   camera through the stock three.js control picked in the Controls tab
