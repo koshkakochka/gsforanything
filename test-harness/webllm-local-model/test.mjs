@@ -39,11 +39,15 @@ class Engine {
 }
 export async function CreateWebWorkerMLCEngine(worker, modelId, engineConfig, chatOpts) {
 	S.creates.push({ modelId, chatOpts, isWorker: worker instanceof Worker });
+	// Same phases as WebLLM 0.2.88: each one reports its own 0 → 1.
 	const steps = self.__webllmSteps ?? 8;
-	for (let i = 1; i <= steps; i++) {
-		await sleep(self.__webllmStepMs ?? 250);
-		engineConfig?.initProgressCallback?.({ progress: i / steps, timeElapsed: i, text: 'Fetching param cache[' + i + '/' + steps + ']: ' + Math.round(1750 * i / steps) + 'MB fetched.' });
-	}
+	const cb = (progress, text) => engineConfig?.initProgressCallback?.({ progress, timeElapsed: 1, text });
+	const wait = () => sleep(self.__webllmStepMs ?? 250);
+	cb(0, 'Start to fetch params');
+	if (!self.__webllmCached) for (let i = 1; i <= steps; i++) { await wait(); cb(i / steps, 'Fetching param cache[' + i + '/' + steps + ']: ' + Math.round(1750 * i / steps) + 'MB fetched. ' + Math.floor(100 * i / steps) + '% completed, ' + i + ' secs elapsed. It can take a while when we first visit this page to populate the cache. Later refreshes will become faster.'); }
+	for (let i = 1; i <= steps; i++) { await wait(); cb(i / steps, 'Loading model from cache[' + i + '/' + steps + ']: ' + Math.round(1750 * i / steps) + 'MB loaded. ' + Math.floor(100 * i / steps) + '% completed, ' + i + ' secs elapsed.'); }
+	for (let i = 1; i <= 2; i++) { await wait(); cb(i / 2, 'Loading GPU shader modules[' + i + '/2]: ' + (50 * i) + '% completed, 1 secs elapsed.'); }
+	cb(1, 'Finish loading on WebGPU - test');
 	if (self.__webllmFail) throw new Error(self.__webllmFail);
 	return new Engine(modelId);
 }
@@ -218,6 +222,12 @@ let savedServerDefault;
 	await selectModel(p, 'webllm:qwen-coder-3b');
 	await sleep(200);
 	await p.evaluate(() => { self.__webllmStepMs = 300; self.__webllmSteps = 8; });
+	// Record every width the bar takes during the load.
+	await p.evaluate(() => {
+		const fill = document.querySelector('#desktop-webllm-row .gs-webllm-fill');
+		window.__fillLog = [];
+		new MutationObserver(() => { const w = parseFloat(fill.style.width) || 0; const l = window.__fillLog; if (!l.length || l[l.length - 1].w !== w) l.push({ w, state: document.getElementById('desktop-webllm-row').dataset.state }); }).observe(fill, { attributes: true, attributeFilter: ['style'] });
+	});
 	await p.evaluate(() => document.querySelector('#desktop-webllm-row [data-webllm="load"]').click());
 	await sleep(1250);
 	s = await st(p);
@@ -228,6 +238,11 @@ let savedServerDefault;
 	const fps = await p.evaluate(() => new Promise((res) => { let n = 0; const t0 = performance.now(); const f = () => { n++; if (performance.now() - t0 < 500) requestAnimationFrame(f); else res(n * 2); }; requestAnimationFrame(f); }));
 	check('page keeps rendering while loading (worker, not main thread)', fps > 10, fps);
 	await p.waitForFunction(() => document.getElementById('desktop-webllm-row').dataset.state === 'ready', { timeout: 15000 });
+	const fillLog = await p.evaluate(() => window.__fillLog);
+	const widths = fillLog.map(e => e.w);
+	check('progress bar never goes backwards across download + GPU load + shaders', widths.length > 10 && widths.every((w, i) => i === 0 || w >= widths[i - 1]), widths);
+	check('progress bar reaches 100% exactly once, only when the model is ready', widths.filter(w => w >= 100).length === 1 && widths[widths.length - 1] === 100 && widths.slice(0, -1).every(w => w <= 99), widths);
+	check('download phase stays at or below 80%, GPU load continues above it', fillLog.some(e => e.w > 0 && e.w <= 80) && fillLog.some(e => e.w > 80 && e.w < 100), widths);
 	s = await st(p);
 	check('ready state after load', s.state === 'ready' && /Loaded/.test(s.info) && s.loaded === 'Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC', s);
 	const create = await p.evaluate(() => self.__webllmStub.creates[0]);

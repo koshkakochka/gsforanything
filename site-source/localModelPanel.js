@@ -38,7 +38,8 @@ export function initLocalModelPanel({ row, confirm, isPhone = () => false, fallb
 	let variant = 'f16';
 	let gpu = null;          // last checkWebGPU() result
 	let errorText = '';
-	let progress = { progress: 0, text: '' };
+	let tracker = LocalLLM.createProgressTracker();
+	let progress = tracker.snapshot(); // one monotonic 0–1 bar for download + GPU load
 
 	const model = () => LocalLLM.modelFor(backend);
 	const modelId = () => model()?.[variant]?.id;
@@ -73,10 +74,10 @@ export function initLocalModelPanel({ row, confirm, isPhone = () => false, fallb
 		warnEl.textContent = phone
 			? `⚠ Phones usually can't run this: it needs WebGPU and about ${mem} of free GPU memory, and the ${size} download counts against your data plan. A desktop or laptop with a recent Chrome or Edge works best.`
 			: '';
-		progEl.hidden = state !== 'loading';
+		progEl.hidden = state !== 'loading' || progress.done;
 		const pct = Math.max(0, Math.min(1, Number(progress.progress) || 0));
 		fillEl.style.width = `${(pct * 100).toFixed(1)}%`;
-		progTextEl.textContent = `${Math.floor(pct * 100)}% · ${progress.text || 'Starting…'}`;
+		progTextEl.textContent = `${Math.floor(pct * 100)}% · ${progress.label || 'Starting'}${progress.text ? ` — ${progress.text}` : '…'}`;
 		loadBtn.hidden = state === 'loading' || state === 'ready';
 		loadBtn.textContent = state === 'error' ? 'Try again' : cached ? 'Load from cache' : `Download & load (${size})`;
 		cancelBtn.hidden = state === 'ready';
@@ -97,15 +98,19 @@ export function initLocalModelPanel({ row, confirm, isPhone = () => false, fallb
 			return;
 		}
 		variant = gpu.variant;
-		progress = { progress: 0, text: '' };
+		tracker = LocalLLM.createProgressTracker();
+		progress = tracker.snapshot();
 		setState('loading');
 		const id = modelId();
 		const forBackend = backend;
 		try {
 			await LocalLLM.load(id, {
-				onProgress: (r) => { if (backend === forBackend) { progress = r || progress; render(); } }
+				onProgress: (r) => { if (backend === forBackend) { progress = tracker.update(r); render(); } }
 			});
 			if (backend !== forBackend) return;
+			// 100% only now, when the engine is ready (not when a phase reports 1).
+			progress = tracker.complete();
+			render();
 			setState('ready');
 		} catch (err) {
 			if (backend !== forBackend || String(err?.message) === 'cancelled') return;

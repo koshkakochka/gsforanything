@@ -11,6 +11,10 @@ never a real AI call, never production KV or Blob.
     CLAUDE_API_KEY=dummy OPENAI_API_KEY=dummy PORT=5028 node ../../site-source/server.js
     BASE=https://localhost:5028 SHOT_DIR=/workspace/gs-webllm-shots node test.mjs
 
+`unit.mjs` (`node unit.mjs`): the one-bar progress tracker. WebLLM's
+multi-phase reports (download, cache → GPU, shaders, finish) never move the
+bar backwards and it reaches 100% once, only when the engine is ready.
+
 Checks:
 
 - Page load requests nothing from WebLLM / jsDelivr / Hugging Face / GitHub,
@@ -22,7 +26,8 @@ Checks:
   load / Use <server model> instead) and still fetches nothing. Sending before
   loading explains what to click and makes no request.
 - Download & load: the pinned library is imported, the worker starts, the
-  progress bar follows `initProgressCallback`, the page keeps rendering,
+  progress bar follows `initProgressCallback` as one bar over all phases
+  (never backwards, 100% once, at ready), the page keeps rendering,
   `CreateWebWorkerMLCEngine` gets a Worker, the q4f16_1 model and a 16k context.
 - Chat goes to the local engine (no `/api/chat`) with the default Scene prompt
   and the "[GS editor settings]" note, streams into the chat, and its vr-exec

@@ -260,3 +260,52 @@ export async function chat(systemPrompt, chatMessages, { modelId, maxTokens = 40
 	}
 	return { content: [{ type: 'text', text }] };
 }
+
+// ---------------------------------------------------------------------------
+// One progress bar for the whole load. WebLLM's initProgressCallback reports
+// several phases that each run 0 → 1: "Fetching param cache" (download, only
+// when not cached yet), "Loading model from cache" (cache → GPU), "Loading GPU
+// shader modules", then "Finish loading". Showing its `progress` as-is filled
+// the bar to 100% once for the download and again for the GPU load. The
+// tracker maps each phase onto its own slice of one 0–1 bar, never moves
+// backwards and stops at 99% until the engine is actually ready (complete()).
+const PHASES_WITH_DOWNLOAD = { start: [0, 0], fetch: [0, 0.8], load: [0.8, 0.95], shader: [0.95, 0.99], finish: [0.99, 0.99] };
+const PHASES_CACHED = { start: [0, 0], fetch: [0, 0], load: [0, 0.9], shader: [0.9, 0.99], finish: [0.99, 0.99] };
+const PHASE_LABEL = { start: 'Starting', fetch: 'Downloading', load: 'Loading onto the GPU', shader: 'Preparing the GPU', finish: 'Finishing' };
+
+export function progressPhase(text = '') {
+	if (/^Fetching param cache/i.test(text)) return 'fetch';
+	if (/^Loading model from cache/i.test(text)) return 'load';
+	if (/shader modules/i.test(text)) return 'shader';
+	if (/^Finish loading/i.test(text)) return 'finish';
+	if (/^Start to fetch/i.test(text)) return 'start';
+	return null;
+}
+
+export function createProgressTracker() {
+	let value = 0;
+	let downloading = null; // true once a Fetching report is seen; false if loading began without one (cached)
+	let label = '';
+	let detail = '';
+	let done = false;
+	return {
+		update(report) {
+			if (done || !report) return this.snapshot();
+			const text = String(report.text || '');
+			const phase = progressPhase(text);
+			if (phase === 'fetch') downloading = true;
+			else if ((phase === 'load' || phase === 'shader') && downloading === null) downloading = false;
+			if (phase) {
+				const [a, b] = (downloading === false ? PHASES_CACHED : PHASES_WITH_DOWNLOAD)[phase];
+				const p = Math.max(0, Math.min(1, Number(report.progress) || 0));
+				value = Math.max(value, Math.min(0.99, a + (b - a) * p));
+				label = PHASE_LABEL[phase];
+			}
+			// WebLLM's own "N% completed" is per phase: drop it so only one % shows.
+			detail = text.replace(/\s*\d+% completed,?\s*/i, ' ').replace(/\s*It can take a while[\s\S]*$/i, '').trim();
+			return this.snapshot();
+		},
+		complete() { done = true; value = 1; label = 'Ready'; return this.snapshot(); },
+		snapshot() { return { progress: value, label, text: detail, done }; }
+	};
+}
