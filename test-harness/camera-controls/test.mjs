@@ -1,4 +1,4 @@
-// Stock three.js camera controls (Orbit, Map, Trackball, Fly, First person, Off): headless, desktop + phone.
+// Stock three.js camera controls (Map (default), Orbit, Fly, First person, Off): headless, desktop + phone.
 // BASE=https://localhost:3488 node test.mjs   (npm i: iwer + puppeteer-core; needs /usr/bin/google-chrome)
 import puppeteer from 'puppeteer-core';
 import fs from 'fs';
@@ -10,7 +10,7 @@ const results = []; const ok = (n, c, e = '') => { results.push(`${c ? 'PASS' : 
 const b = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--ignore-certificate-errors', '--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 const V = { sub: (a, c) => a.map((v, i) => v - c[i]), len: a => Math.hypot(...a), dot: (a, c) => a.reduce((s, v, i) => s + v * c[i], 0) };
 const f2 = a => JSON.stringify(a.map(v => +(+v).toFixed(2)));
-const MODES = ['orbit', 'map', 'trackball', 'fly', 'firstperson', 'off'];
+const MODES = ['orbit', 'map', 'fly', 'firstperson', 'off'];
 
 for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone', width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }]) {
   const T = `[${vp.name}]`; const touch = !!vp.hasTouch;
@@ -57,22 +57,31 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
 
   // ---- defaults
   let s = await st();
-  ok(`${T} default is Orbit (OrbitControls) at (0,1.6,4) around the origin`, s.mode === 'orbit' && s.cls === 'OrbitControls' && f2(s.cam) === '[0,1.6,4]' && f2(s.target) === '[0,0,0]' && s.enabled, JSON.stringify({ m: s.mode, c: s.cls, cam: f2(s.cam) }));
+  ok(`${T} default is Map (MapControls) at (0,1.6,4) around the origin`, s.mode === 'map' && s.cls === 'MapControls' && f2(s.cam) === '[0,1.6,4]' && f2(s.target) === '[0,0,0]' && s.enabled, JSON.stringify({ m: s.mode, c: s.cls, cam: f2(s.cam) }));
   ok(`${T} page load: camera.position (local) and world position both at eye height y = 1.6 (quaternion x ≈ -0.189 is the downward look at the origin, not a height)`, await p.evaluate(() => Math.abs(camera.position.y - 1.6) < 1e-6 && Math.abs(camera.getWorldPosition(new THREE.Vector3()).y - 1.6) < 1e-6 && Math.abs(camera.quaternion.x + 0.1891) < 1e-3));
-  ok(`${T} window.controls and gsControls.controls are the active stock control`, s.same && await p.evaluate(() => gsControls.modes.join() === 'orbit,map,trackball,fly,firstperson,off'));
+  ok(`${T} window.controls and gsControls.controls are the active stock control`, s.same && await p.evaluate(() => gsControls.modes.join() === 'orbit,map,fly,firstperson,off'));
   await tab('controls');
   const btns = await p.evaluate(() => [...document.querySelectorAll('#dchat-camera-mode [data-camera-mode]')].map(e => e.dataset.cameraMode + ':' + e.textContent.trim()));
-  ok(`${T} Controls tab offers Orbit, Map, Trackball, Fly, First person, Off`, btns.join() === 'orbit:Orbit,map:Map,trackball:Trackball,fly:Fly,firstperson:First person,off:Off', btns.join());
-  const helpKeys = await p.evaluate(() => Object.fromEntries(['orbit', 'map', 'trackball', 'fly', 'firstperson'].map(m => [m, document.querySelector(`[data-camera-help="${m}"]`)?.textContent.replace(/\s+/g, ' ').trim().slice(0, 40)])));
+  ok(`${T} Controls tab offers Orbit, Map, Fly, First person, Off (no Trackball)`, btns.join() === 'orbit:Orbit,map:Map,fly:Fly,firstperson:First person,off:Off', btns.join());
+  const ui = await p.evaluate(() => { const btn = document.querySelector('#dchat-camera-mode [data-camera-mode="map"]'); return { active: btn?.classList.contains('active'), aria: btn?.getAttribute('aria-checked'), saved: localStorage.getItem('gs.cameraControlMode'), helpHidden: !!document.querySelector('[data-camera-help="map"]')?.hidden }; });
+  ok(`${T} Controls tab shows Map selected and does not persist the default`, ui.active && ui.aria === 'true' && ui.saved === null && ui.helpHidden === false, JSON.stringify(ui));
+  const helpKeys = await p.evaluate(() => Object.fromEntries(['orbit', 'map', 'fly', 'firstperson'].map(m => [m, document.querySelector(`[data-camera-help="${m}"]`)?.textContent.replace(/\s+/g, ' ').trim().slice(0, 40)])));
   ok(`${T} each mode has its stock key list`, Object.values(helpKeys).every(Boolean) && /OrbitControls/.test(helpKeys.orbit) && /PointerLockControls/.test(helpKeys.firstperson), JSON.stringify(helpKeys));
   // layout: buttons don't overflow the panel
   const lay = await p.evaluate(() => { const g = document.getElementById('dchat-camera-mode').getBoundingClientRect(); return [...document.querySelectorAll('#dchat-camera-mode .dchat-btn')].every(e => { const r = e.getBoundingClientRect(); return r.left >= g.left - 1 && r.right <= g.right + 1 && e.scrollWidth <= e.clientWidth + 1; }); });
   ok(`${T} mode buttons fit (no overflow)`, lay);
   if (touch) { await p.screenshot({ path: SHOT }); }
 
+  // Default Map input (same gestures as the Map section below), then reset for Orbit.
+  await tab('chat');
+  let a = await st(); await drag(100, 60); let c = await st();
+  ok(`${T} default Map: ${touch ? 'one-finger' : 'left'} drag pans over the ground`, V.len(V.sub(c.target, a.target)) > 0.2 && Math.abs(c.target[1]) < 1e-6 && Math.abs(c.cam[1] - a.cam[1]) < 1e-3, `target -> ${f2(c.target)} cam y ${c.cam[1].toFixed(3)}`);
+  await tab('env'); await p.click('#dchat-reset-camera'); await sleep(500); c = await st();
+  ok(`${T} Reset Camera View keeps Map and restores (0,1.6,4) / origin target`, c.mode === 'map' && f2(c.cam) === '[0,1.6,4]' && f2(c.target) === '[0,0,0]', `${c.mode} ${f2(c.cam)} ${f2(c.target)}`);
+
   // ---- Orbit
   await mode('orbit'); await tab('chat');
-  let a = await st(); await drag(120, 0); let c = await st();
+  a = await st(); await drag(120, 0); c = await st();
   ok(`${T} Orbit: ${touch ? 'one-finger' : 'left'} drag rotates around the target`, moved(a, c) > 0.5 && Math.abs(dist(a) - dist(c)) < 0.1 && f2(c.target) === f2(a.target), `${f2(a.cam)} -> ${f2(c.cam)}`);
   a = c;
   if (touch) { await pinch(80); c = await st(); ok(`${T} Orbit: pinch zooms`, Math.abs(dist(c) - dist(a)) > 0.3, `${dist(a).toFixed(2)} -> ${dist(c).toFixed(2)}`); }
@@ -96,17 +105,6 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
     a = c; await taps('ArrowUp'); c = await st(); ok(`${T} Map: arrow keys pan`, V.len(V.sub(c.target, a.target)) > 0.1, `target -> ${f2(c.target)}`);
   } else { a = c; await pinch(80); c = await st(); ok(`${T} Map: pinch zooms`, Math.abs(dist(c) - dist(a)) > 0.3); }
   await farOk('Map');
-
-  // ---- Trackball
-  await mode('trackball'); await tab('chat'); s = await st();
-  ok(`${T} Trackball uses TrackballControls`, s.cls === 'TrackballControls' && f2(s.target) === '[0,0,0]');
-  a = s; await drag(120, 40); c = await st();
-  ok(`${T} Trackball: ${touch ? 'one-finger' : 'left'} drag rotates`, moved(a, c) > 0.3 && Math.abs(dist(a) - dist(c)) < 0.2, `${f2(a.cam)} -> ${f2(c.cam)}`);
-  if (!touch) {
-    a = c; await wheel(-400); c = await st(); ok(`${T} Trackball: wheel zooms`, Math.abs(dist(c) - dist(a)) > 0.2, `${dist(a).toFixed(2)} -> ${dist(c).toFixed(2)}`);
-    a = c; await drag(-80, 0, { button: 'right' }); c = await st(); ok(`${T} Trackball: right-drag pans`, V.len(V.sub(c.target, a.target)) > 0.05, `target -> ${f2(c.target)}`);
-  }
-  await farOk('Trackball');
 
   // ---- Fly
   await mode('fly'); s = await st();
@@ -230,11 +228,11 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   for (let k = 0; k < 3; k++) for (const m of MODES) { await p.evaluate(m => gsControls.setMode(m), m); await sleep(30); }
   await p.evaluate(() => gsControls.setMode('orbit')); await sleep(100);
   const l1 = await listenerCounts();
-  ok(`${T} switching modes 18 times leaks no listeners`, JSON.stringify(l0) === JSON.stringify(l1), `${JSON.stringify(l0)} -> ${JSON.stringify(l1)}`);
+  ok(`${T} switching every mode three times leaks no listeners`, JSON.stringify(l0) === JSON.stringify(l1), `${JSON.stringify(l0)} -> ${JSON.stringify(l1)}`);
 
   // ---- joysticks: only First person and Fly
   const vis = {}; for (const m of MODES) { await p.evaluate(m => gsControls.setMode(m), m); await sleep(80); vis[m] = await p.evaluate(() => gsTwinSticks.visible); }
-  ok(`${T} on-screen joysticks only in Fly and First person`, JSON.stringify(vis) === JSON.stringify({ orbit: false, map: false, trackball: false, fly: true, firstperson: true, off: false }), JSON.stringify(vis));
+  ok(`${T} on-screen joysticks only in Fly and First person`, JSON.stringify(vis) === JSON.stringify({ orbit: false, map: false, fly: true, firstperson: true, off: false }), JSON.stringify(vis));
   const stickRect = id => p.evaluate(id => { const r = document.getElementById(id).getBoundingClientRect(); return [(r.left + r.right) / 2, (r.top + r.bottom) / 2, r.width / 2]; }, id);
   async function stickHold(list, ms) { // list of [stickId, dx, dy, pointerId]
     const pts = []; for (const [id, dx, dy, pid] of list) { const [x, y, r] = await stickRect(id); pts.push([x, y, x + dx * r, y + dy * r, pid]); }
@@ -273,9 +271,6 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
     await p.evaluate(() => gsControls.setMode('map')); await sleep(200);
     a = await st(); await pad(() => { fakePad.axes[0] = 1; }); c = await st();
     ok(`${T} gamepad Map: left stick pans`, V.len(V.sub(c.target, a.target)) > 0.2);
-    await p.evaluate(() => gsControls.setMode('trackball')); await sleep(200);
-    a = await st(); await pad(() => { fakePad.axes[0] = 1; fakePad.axes[2] = 1; }); c = await st();
-    ok(`${T} gamepad Trackball: sticks not used`, moved(a, c) < 1e-3);
     await p.evaluate(() => { gsControls.setMode('fly'); gsControls.reset(); }); await sleep(200);
     a = await st(); await pad(() => { fakePad.axes[1] = -1; }); c = await st();
     ok(`${T} gamepad Fly: left stick forward`, V.dot(V.sub(c.cam, a.cam), a.dir) > 0.8);
@@ -304,12 +299,12 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   await p.evaluate(() => renderer.xr.getSession().end());
   for (let i = 0; i < 40 && (await p.evaluate(() => renderer.xr.isPresenting)); i++) await sleep(250);
   await sleep(600); c = await st();
-  ok(`${T} leaving VR returns to the default desktop view (Orbit at (0,1.6,4) facing the origin)`, f2(c.cam) === '[0,1.6,4]' && f2(c.target) === '[0,0,0]' && c.enabled && c.dir[2] < -0.9, `${f2(c.cam)} dir ${f2(c.dir)}`);
+  ok(`${T} leaving VR returns to the default desktop view at (0,1.6,4) facing the origin`, f2(c.cam) === '[0,1.6,4]' && f2(c.target) === '[0,0,0]' && c.enabled && c.dir[2] < -0.9, `${f2(c.cam)} dir ${f2(c.dir)}`);
   await farOk('after VR');
 
-  // ---- saved values from 0.976 and earlier
+  // ---- saved values: explicit picks stick; Trackball / unknown fall back to Map
   const legacy = {};
-  for (const [saved, want] of [['free', 'firstperson'], ['orbit', 'orbit'], ['off', 'off'], ['map', 'map'], ['bogus', 'orbit']]) {
+  for (const [saved, want] of [['free', 'firstperson'], ['orbit', 'orbit'], ['off', 'off'], ['map', 'map'], ['trackball', 'map'], ['bogus', 'map']]) {
     await p.evaluate(v => localStorage.setItem('gs.cameraControlMode', v), saved);
     await p.reload({ waitUntil: 'networkidle2' }); await sleep(1500);
     legacy[saved] = await p.evaluate(() => [gsControls.mode, localStorage.getItem('gs.cameraControlMode'), +camera.getWorldPosition(new THREE.Vector3()).y.toFixed(3)]);
@@ -317,7 +312,19 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
     if (legacy[saved][0] !== want) legacy[saved].push('WANT ' + want);
   }
   ok(`${T} page load in every saved mode starts at eye height (y = 1.6)`, Object.values(legacy).every(v => v[2] === 1.6), JSON.stringify(legacy));
-  ok(`${T} old saved modes map orbit→Orbit, free→First person, off→Off (and are rewritten)`, legacy.free.slice(0, 2).join() === 'firstperson,firstperson' && legacy.orbit[0] === 'orbit' && legacy.off[0] === 'off' && legacy.map[0] === 'map' && legacy.bogus[0] === 'orbit', JSON.stringify(legacy));
+  ok(`${T} old saved modes map orbit→Orbit, free→First person, off→Off (and are rewritten)`, legacy.free.slice(0, 2).join() === 'firstperson,firstperson' && legacy.orbit[0] === 'orbit' && legacy.off[0] === 'off' && legacy.map[0] === 'map', JSON.stringify(legacy));
+  ok(`${T} saved Trackball and unknown values fall back to Map and are rewritten`, legacy.trackball.slice(0, 2).join() === 'map,map' && legacy.bogus.slice(0, 2).join() === 'map,map', JSON.stringify({ trackball: legacy.trackball, bogus: legacy.bogus }));
+  // Explicit Orbit pick persists; clearing storage restores the Map default without writing it.
+  await p.evaluate(() => { gsControls.setMode('orbit'); });
+  await p.reload({ waitUntil: 'networkidle2' }); await sleep(1500);
+  const kept = await p.evaluate(() => [gsControls.mode, localStorage.getItem('gs.cameraControlMode')]);
+  ok(`${T} an explicit Orbit pick is kept after reload`, kept[0] === 'orbit' && kept[1] === 'orbit', JSON.stringify(kept));
+  await p.evaluate(() => localStorage.removeItem('gs.cameraControlMode'));
+  await p.reload({ waitUntil: 'networkidle2' }); await sleep(1500);
+  const fresh = await p.evaluate(() => [gsControls.mode, localStorage.getItem('gs.cameraControlMode'), document.querySelector('#dchat-camera-mode [data-camera-mode="map"]')?.classList.contains('active')]);
+  ok(`${T} clearing the saved mode restores Map and does not write a default`, fresh[0] === 'map' && fresh[1] === null && fresh[2] === true, JSON.stringify(fresh));
+  const forced = await p.evaluate(() => { gsControls.setMode('orbit'); gsControls.setMode('trackball'); return [gsControls.mode, gsControls.controls?.constructor?.name]; });
+  ok(`${T} setMode('trackball') becomes Map`, forced[0] === 'map' && forced[1] === 'MapControls', JSON.stringify(forced));
   await p.evaluate(() => localStorage.removeItem('gs.cameraControlMode'));
   ok(`${T} no console/page errors`, errs.length === 0, JSON.stringify(errs.slice(0, 4)));
   await p.close();

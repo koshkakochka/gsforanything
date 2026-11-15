@@ -3257,8 +3257,8 @@
 				<div>
 					<div class="dchat-section-label" style="margin-bottom:8px">Camera</div>
 					<div style="font-size:12px;color:rgba(255,255,255,0.72);margin-bottom:8px">
-						Pick a camera mode (Orbit, Map, Trackball, Fly, First person or Off) in the Controls tab.
-						Reset returns to the start view (4 m back at eye height; Orbit circles the scene origin).
+						Pick a camera mode (Orbit, Map, Fly, First person or Off) in the Controls tab.
+						Reset returns to the start view (4 m back at eye height; Map and Orbit look at the scene origin).
 					</div>
 					<button id="dchat-reset-camera" class="dchat-btn secondary" style="width:100%">Reset Camera View</button>
 				</div>
@@ -3346,31 +3346,25 @@
 					<div id="dchat-camera-mode" role="radiogroup" aria-label="Camera controls">
 						<button type="button" class="dchat-btn secondary" data-camera-mode="orbit" role="radio">Orbit</button>
 						<button type="button" class="dchat-btn secondary" data-camera-mode="map" role="radio">Map</button>
-						<button type="button" class="dchat-btn secondary" data-camera-mode="trackball" role="radio">Trackball</button>
 						<button type="button" class="dchat-btn secondary" data-camera-mode="fly" role="radio">Fly</button>
 						<button type="button" class="dchat-btn secondary" data-camera-mode="firstperson" role="radio">First person</button>
 						<button type="button" class="dchat-btn secondary" data-camera-mode="off" role="radio">Off</button>
 					</div>
 				</div>
 				<!-- Stock key lists of the three.js controls (r180) -->
-				<div class="dchat-controls-help" data-camera-help="orbit">
+				<div class="dchat-controls-help" data-camera-help="orbit" hidden>
 					<b>OrbitControls</b>, around the scene origin. Left-drag rotate &middot; right-drag or
 					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + left-drag pan &middot; wheel or middle-drag zoom &middot;
 					<kbd>&larr;</kbd><kbd>&uarr;</kbd><kbd>&rarr;</kbd><kbd>&darr;</kbd> pan &middot;
 					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + arrows rotate.
 					Touch: one finger rotates, two fingers zoom and pan.
 				</div>
-				<div class="dchat-controls-help" data-camera-help="map" hidden>
+				<div class="dchat-controls-help" data-camera-help="map">
 					<b>MapControls</b>. Left-drag pan &middot; right-drag or
 					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + left-drag rotate &middot; wheel or middle-drag zoom &middot;
 					<kbd>&larr;</kbd><kbd>&uarr;</kbd><kbd>&rarr;</kbd><kbd>&darr;</kbd> pan &middot;
 					<kbd>Shift</kbd>/<kbd>Ctrl</kbd>/<kbd>&#8984;</kbd> + arrows rotate.
 					Touch: one finger pans, two fingers zoom and rotate.
-				</div>
-				<div class="dchat-controls-help" data-camera-help="trackball" hidden>
-					<b>TrackballControls</b>, around the scene origin. Left-drag rotate &middot; middle-drag or wheel zoom &middot;
-					right-drag pan &middot; hold <kbd>A</kbd> + drag rotate, <kbd>S</kbd> + drag zoom, <kbd>D</kbd> + drag pan.
-					Touch: one finger rotates, two fingers zoom and pan.
 				</div>
 				<div class="dchat-controls-help" data-camera-help="fly" hidden>
 					<b>FlyControls</b>. <kbd>W</kbd>/<kbd>S</kbd> forward/back &middot; <kbd>A</kbd>/<kbd>D</kbd> left/right &middot;
@@ -3391,7 +3385,7 @@
 				<div class="dchat-controls-help" data-camera-help="off" hidden>
 					Camera input is off. The camera stays where it is until you pick another mode.
 				</div>
-				<div class="dchat-controls-help" data-camera-help="orbit map trackball fly firstperson" style="color:rgba(255,255,255,0.72)">
+				<div class="dchat-controls-help" data-camera-help="orbit map fly firstperson" style="color:rgba(255,255,255,0.72)">
 					Keys work unless you are typing in a text field. Reset Camera View (Env tab) returns to the default view.
 				</div>
 				<div id="dchat-controls-status"></div>
@@ -3404,7 +3398,6 @@
 						(Orbit: up/down zooms), <kbd>LT</kbd>/<kbd>RT</kbd> zoom out/in &middot;
 						First person: left stick walks, right stick looks &middot;
 						Fly: left stick moves, right stick looks, <kbd>LB</kbd>/<kbd>RB</kbd> down/up &middot;
-						Trackball: sticks not used &middot;
 						<kbd>Y</kbd> switches Orbit/First person &middot; <kbd>View</kbd> resets the view.
 						Press any button after connecting so the browser picks it up.
 						Headset controllers in VR are separate and keep their own mapping.
