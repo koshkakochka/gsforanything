@@ -18,7 +18,7 @@ const SRC = new URL('../../site-source/', import.meta.url);
 
 // ---------------------------------------------------------------- static scan
 if (want('static')) {
-  const files = ['main.js', 'chatPrompt.js', 'vrWindows.js', 'htmlInCanvas.js', 'communityMerge.js', 'creationContext.js', 'exporter.js', 'p5Import.js', 'cameraControls.js', 'originGizmo.js', 'twinSticks.js', 'menuSystem.js', 'syntaxHighlight.js', 'sceneHdri.js', 'version.js', 'index.html'];
+  const files = ['main.js', 'chatPrompt.js', 'vrWindows.js', 'htmlInCanvas.js', 'communityMerge.js', 'creationContext.js', 'exporter.js', 'p5Import.js', 'cameraControls.js', 'controlBindings.js', 'customControls.js', 'originGizmo.js', 'twinSticks.js', 'menuSystem.js', 'syntaxHighlight.js', 'sceneHdri.js', 'version.js', 'index.html'];
   const hits = [];
   for (const f of files) {
     let text = fs.readFileSync(new URL(f, SRC), 'utf8');

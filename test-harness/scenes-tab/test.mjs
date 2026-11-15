@@ -1,4 +1,4 @@
-// Scenes tab has only Import / Clear; Share & Export is its own menu tab (link, embed, 3D export).
+// Scenes tab has only Import / Clear; Share & Export is its own menu tab (link, 3D export; no Embed section).
 // BASE=https://localhost:3588 SHOT_DIR=/workspace/gs-scenes-tab-shots node test.mjs
 import fs from 'fs';
 import os from 'os';
@@ -209,15 +209,16 @@ const phone = (w, h, dpr = 2) => ({ width: w, height: h, isMobile: true, hasTouc
 			headings: saveHead,
 			hasDownloadCopy: /Download \.vrscene\.json|Save to Device/i.test(text),
 			hasLink: !!(link && link.getBoundingClientRect().height > 0),
-			hasEmbed: !!(embed && embed.getBoundingClientRect().height > 0),
+			hasEmbed: !!embed,
+			embedText: /embed/i.test(text),
 			formats
 		};
 	});
 	check('desktop: Share & Export tab is its own menu tab', share.shareActive && share.panelShown && /Share & Export/.test(share.header), share);
 	check('desktop: Share & Export tab has no Download .vrscene.json / Save to Device section',
 		!share.hasVrsceneBtn && !share.headings.some((h) => /Save to Device|Download/i.test(h)) && !share.hasDownloadCopy, share);
-	check('desktop: Share & Export tab still has share link, embed and 3D formats',
-		share.hasLink && share.hasEmbed
+	check('desktop: Share & Export tab still has share link and 3D formats, no Embed section',
+		share.hasLink && !share.hasEmbed && !share.embedText
 		&& ['glb', 'gltf', 'fbx', 'obj', 'blender'].every((id) => share.formats.includes(id)), share);
 	const headerRow = await p.evaluate(() => {
 		const box = (s) => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return { t: r.top, b: r.bottom, h: r.height, r: r.right, l: r.left }; };

@@ -1,9 +1,23 @@
 {
   "versions": [
     {
-      "id": "1.01",
-      "label": "GS 1.01 (this build)",
+      "id": "1.02",
+      "label": "GS 1.02 (this build)",
       "url": null,
+      "date": "2026-11-14",
+      "changes": [
+        "Map is the default camera control on desktop and mobile. Trackball is removed; a saved Trackball choice switches to Map, and any other mode you pick is still remembered.",
+        "The Controls tab lets you remap the keys for Map, Orbit, Fly, and First person, with a main and an alternate key for each action, a warning when a key is used twice, and Reset to defaults for each style. The D key moves right in First person again.",
+        "First person has a Player Height field (0.3 to 5 m, default 1.6 m) with up and down arrows, below the First Person Keys section.",
+        "A new Custom Controls tab shows the settings (keys, numbers, switches, and lists) of any control scheme the chat creates for a scene.",
+        "Embedding is removed: the Share & Export tab and Community rows no longer offer embed code. Old /embed links go to the scene's view-only share page.",
+        "If your browser can't start 3D graphics, or keeps losing them, GS shows a message with a Reload button instead of a broken page."
+      ]
+    },
+    {
+      "id": "1.01",
+      "label": "GS 1.01",
+      "url": "https://vrclaudeinterface.vercel.app",
       "date": "2026-11-13",
       "changes": [
         "The Scenes tab has only Import .vrscene.json and Clear All From Scene. Share & Export is its own menu tab, with the share link, the setting that lets others export, the embed code, and 3D model exports (GLB, glTF, FBX, OBJ, and Blender). There is no Download .vrscene.json button.",

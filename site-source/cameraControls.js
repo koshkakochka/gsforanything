@@ -5,30 +5,45 @@
 //     type into a text field or while WebXR / Cardboard drives the camera,
 //   - runs First person's WASD the way the official
 //     misc_controls_pointerlock example does,
+//   - applies the key remapping from controlBindings.js (Controls tab): a
+//     pressed key is looked up in the active style's bindings and handed to
+//     the stock control as the stock key it stands for,
 //   - forwards game-controller and on-screen stick values to each control's
 //     own movement / rotation API (see stick()).
-// Modes: orbit (OrbitControls, default), map (MapControls), trackball
-// (TrackballControls), fly (FlyControls), firstperson (PointerLockControls), off.
+// Modes: map (MapControls, default), orbit (OrbitControls), fly (FlyControls),
+// firstperson (PointerLockControls), off.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { MapControls } from 'three/examples/jsm/controls/MapControls.js';
-import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 import { FlyControls } from 'three/examples/jsm/controls/FlyControls.js';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
+import { actionForCode } from './controlBindings.js';
 
-export const CAMERA_MODES = ['orbit', 'map', 'trackball', 'fly', 'firstperson', 'off'];
-export const CAMERA_MODE_LABELS = { orbit: 'Orbit', map: 'Map', trackball: 'Trackball', fly: 'Fly', firstperson: 'First person', off: 'Off' };
-// Values saved by GS 0.976 and earlier (Orbit / Free-roam / Off).
-const LEGACY_MODES = { free: 'firstperson', 'free-roam': 'firstperson' };
+export const DEFAULT_CAMERA_MODE = 'map';
+export const CAMERA_MODES = ['orbit', 'map', 'fly', 'firstperson', 'off'];
+export const CAMERA_MODE_LABELS = { orbit: 'Orbit', map: 'Map', fly: 'Fly', firstperson: 'First person', off: 'Off' };
+// Values saved by GS 0.976 and earlier (Orbit / Free-roam / Off), plus
+// Trackball which was later removed (falls back to the Map default).
+const LEGACY_MODES = { free: 'firstperson', 'free-roam': 'firstperson', trackball: 'map' };
 export function normalizeCameraMode(saved) {
 	if (CAMERA_MODES.includes(saved)) return saved;
-	return LEGACY_MODES[saved] || 'orbit';
+	return LEGACY_MODES[saved] || DEFAULT_CAMERA_MODE;
 }
 
 // Default desktop view: 4 m back from the scene origin at eye height.
 export const DEFAULT_CAMERA_POSITION = Object.freeze(new THREE.Vector3(0, 1.6, 4));
+// First person eye height (Controls tab → First person → Player height).
+export const PLAYER_HEIGHT_DEFAULT = 1.6;
+export const PLAYER_HEIGHT_MIN = 0.3;
+export const PLAYER_HEIGHT_MAX = 5;
+export const PLAYER_HEIGHT_STEP = 0.1;
+export function clampPlayerHeight(h) {
+	const n = Number(h);
+	if (!Number.isFinite(n)) return null;
+	return Math.round(Math.min(PLAYER_HEIGHT_MAX, Math.max(PLAYER_HEIGHT_MIN, n)) * 100) / 100;
+}
 export const ORBIT_TARGET = Object.freeze(new THREE.Vector3(0, 0, 0));
-const TARGET_MODES = new Set(['orbit', 'map', 'trackball']);
+const TARGET_MODES = new Set(['orbit', 'map']);
 // Modes whose stick input is forwarded (on-screen joysticks are shown for these).
 export const STICK_MODES = new Set(['fly', 'firstperson']);
 const GAMEPAD_MODES = new Set(['orbit', 'map', 'fly', 'firstperson']);
@@ -66,6 +81,7 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 	let typing = isTextEntry(document.activeElement);
 	let stickActive = false;
 	let flyDrag = null; // Fly drag-to-look pointer { id, x, y }
+	let playerHeight = PLAYER_HEIGHT_DEFAULT; // First person eye height (m above the floor)
 	// First person keyboard state (pointerlock example).
 	const fp = { forward: false, backward: false, left: false, right: false, velocity: new THREE.Vector3(), direction: new THREE.Vector3() };
 	const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -100,14 +116,33 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 		if (mode !== 'firstperson' || !controls || !controls.enabled) return;
 		if (e.altKey || e.ctrlKey || e.metaKey) return;
 		const down = e.type === 'keydown';
-		switch (e.code) {
-			case 'ArrowUp': case 'KeyW': fp.forward = down; break;
-			case 'ArrowLeft': case 'KeyA': fp.left = down; break;
-			case 'ArrowDown': case 'KeyS': fp.backward = down; break;
-			case 'ArrowRight': case 'KeyD': fp.right = down; break;
-			default: return;
-		}
+		const a = actionForCode('firstperson', e.code); // remappable; defaults W/A/S/D + arrows
+		if (!a) return;
+		fp[a.id] = down;
 		e.preventDefault();
+	}
+	// ---- Orbit / Map / Fly keys through the remapping ----
+	// The stock listeners are not attached (see build()); each bound key is
+	// passed on as the stock code of its action, modifiers kept.
+	function stockKeyEvent(e, code) {
+		return {
+			code, key: e.key, type: e.type, repeat: e.repeat,
+			altKey: e.altKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey,
+			preventDefault: () => e.preventDefault(), stopPropagation: () => {}
+		};
+	}
+	function onMappedKey(e) {
+		if (!controls || !controls.enabled) return;
+		if (mode === 'orbit' || mode === 'map') {
+			if (e.type !== 'keydown') return;
+			const a = actionForCode(mode, e.code);
+			if (a) controls._handleKeyDown(stockKeyEvent(e, a.stock));
+		} else if (mode === 'fly' && controls instanceof FlyControls) {
+			const a = actionForCode('fly', e.code);
+			if (!a) return;
+			if (e.type === 'keydown') controls._onKeyDown(stockKeyEvent(e, a.stock));
+			else controls._onKeyUp(stockKeyEvent(e, a.stock));
+		}
 	}
 	// Click the scene (mouse) to lock the pointer. Panels never lock it, and a
 	// press that a p5 / canvas panel in the scene takes (stopImmediatePropagation
@@ -153,13 +188,12 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 	window.addEventListener('pointercancel', onFlyPointerUp);
 	document.addEventListener('keydown', onFpKey);
 	document.addEventListener('keyup', onFpKey);
+	window.addEventListener('keydown', onMappedKey);
+	window.addEventListener('keyup', onMappedKey);
 	domElement.addEventListener('pointerdown', onFpPointerDown);
 	document.addEventListener('focusin', onFocusChange);
 	document.addEventListener('focusout', () => setTimeout(onFocusChange, 0));
 	window.addEventListener('blur', onBlur);
-	const onResize = () => { if (controls instanceof TrackballControls) controls.handleResize(); };
-	window.addEventListener('resize', onResize);
-
 	function levelCamera() {
 		camera.up.set(0, 1, 0);
 		_euler.setFromQuaternion(camera.quaternion, 'YXZ');
@@ -180,7 +214,8 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 				const c = new OrbitControls(camera, domElement);
 				c.enableDamping = true;
 				c.target.copy(ORBIT_TARGET);
-				c.listenToKeyEvents(window); // arrow keys pan, Shift/Ctrl/⌘ + arrows rotate
+				// Keys: arrow keys pan, Shift/Ctrl/⌘ + arrows rotate, through
+				// onMappedKey (remappable) instead of c.listenToKeyEvents(window).
 				c.update();
 				return c;
 			}
@@ -189,16 +224,7 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 				c.enableDamping = true;
 				c.target.copy(ORBIT_TARGET);
 				c.maxPolarAngle = Math.PI / 2;
-				c.listenToKeyEvents(window);
-				c.update();
-				return c;
-			}
-			case 'trackball': {
-				const c = new TrackballControls(camera, domElement);
-				c.rotateSpeed = 1.0;
-				c.zoomSpeed = 1.2;
-				c.panSpeed = 0.8;
-				c.target.copy(ORBIT_TARGET);
+				// Keys through onMappedKey, like Orbit.
 				c.update();
 				return c;
 			}
@@ -211,6 +237,10 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 				// The view follows the drag (onFlyPointerMove) instead of the stock
 				// "distance from the canvas centre" turn rate; keys are stock.
 				domElement.removeEventListener('pointermove', c._onPointerMove);
+				// Keys through onMappedKey (remappable) instead of the stock
+				// window listeners; same handlers, translated codes.
+				window.removeEventListener('keydown', c._onKeyDown);
+				window.removeEventListener('keyup', c._onKeyUp);
 				return c;
 			}
 			case 'firstperson': {
@@ -244,6 +274,7 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 		mode = m;
 		if (TARGET_MODES.has(m)) aimAtTarget();
 		else levelCamera();
+		if (m === 'firstperson') camera.position.y = playerHeight; // walk at the player's eye height
 		controls = build(m);
 		if (controls) { controls.enabled = true; refreshEnabled(); }
 		onModeChange(m);
@@ -255,6 +286,7 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 	function reset() {
 		disposeControls();
 		camera.position.copy(DEFAULT_CAMERA_POSITION);
+		if (mode === 'firstperson') camera.position.y = playerHeight;
 		camera.quaternion.identity();
 		camera.up.set(0, 1, 0);
 		if (TARGET_MODES.has(mode)) camera.lookAt(ORBIT_TARGET);
@@ -264,7 +296,7 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 
 	function update(dt) {
 		if (!controls || !controls.enabled) return;
-		if (controls instanceof OrbitControls || controls instanceof TrackballControls) controls.update();
+		if (controls instanceof OrbitControls) controls.update();
 		else if (controls instanceof FlyControls) controls.update(dt);
 		else if (controls instanceof PointerLockControls && dt > 0) {
 			// misc_controls_pointerlock animate(), without the jump/gravity part
@@ -287,7 +319,7 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 	// Game controller / on-screen joysticks, already past the deadzone.
 	// lx/ly: left stick (y down = positive), rx/ry: right stick, vertical:
 	// up (+) / down (-), zoom: in (+) / out (-). Each value goes into the
-	// active control's own API; Trackball has none for this and ignores it.
+	// active control's own API.
 	function stick(dt, { lx = 0, ly = 0, rx = 0, ry = 0, vertical = 0, zoom = 0 } = {}) {
 		if (!controls || !controls.enabled || dt <= 0 || !GAMEPAD_MODES.has(mode)) return;
 		const any = lx || ly || rx || ry || vertical || zoom;
@@ -343,6 +375,17 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 		get controls() { return controls; },
 		get typing() { return typing; },
 		get locked() { return !!(controls && controls.isLocked); },
+		get playerHeight() { return playerHeight; },
+		/** First person eye height in metres (clamped); moves the camera now when in First person. */
+		setPlayerHeight(h) {
+			const v = clampPlayerHeight(h);
+			if (v === null) return playerHeight;
+			playerHeight = v;
+			if (mode === 'firstperson') camera.position.y = v;
+			return v;
+		},
+		/** Bindings changed: drop held keys so nothing keeps moving. */
+		releaseKeys() { clearHeldInput(); if (controls instanceof FlyControls) controls.movementSpeedMultiplier = 1; },
 		get target() { return controls && controls.target ? controls.target : null; },
 		setMode,
 		reset,
@@ -350,7 +393,7 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 		stick,
 		refreshEnabled,
 		unlock() { if (controls instanceof PointerLockControls && controls.isLocked) controls.unlock(); },
-		/** Put the Orbit / Map / Trackball target back on the scene origin. */
+		/** Put the Orbit / Map target back on the scene origin. */
 		recenter() {
 			if (!controls || !controls.target) return;
 			// Drop any damped pan / rotate still in flight so the target stays put.

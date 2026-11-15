@@ -1,0 +1,7 @@
+{
+  "name": "gs-controls-remap-tests",
+  "private": true,
+  "type": "module",
+  "description": "Controls tab: per-style key remapping and the Custom Controls sub-tab populated by a chat-defined scheme",
+  "scripts": { "test": "node test.mjs" }
+}

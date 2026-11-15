@@ -2,7 +2,7 @@
   "name": "gs-scenes-tab-tests",
   "private": true,
   "type": "module",
-  "description": "Scenes tab has only Import / Clear; Share & Export is its own tab (link, embed, 3D export)",
+  "description": "Scenes tab has only Import / Clear; Share & Export is its own tab (link, 3D export)",
   "scripts": {
     "test": "node test.mjs"
   }

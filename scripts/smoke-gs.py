@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Smoke-check a GS host (or several): version.js, /api/backends, and every
 static import from index.html and main.js (followed recursively for local
-modules). Optional --embed PATH checks that an embed URL returns 200.
+modules). Optional --scene ID checks that the scene's share page (/s/ID)
+and its API record load, and that the retired /embed/ID route redirects (302)
+to /s/ID (embedding was removed; old iframes/links fall back to the share page).
 """
 from __future__ import annotations
 
@@ -86,6 +88,23 @@ def fetch(url: str, timeout: float = 45.0) -> tuple[int, bytes, dict[str, str]]:
         raise RuntimeError(f"request failed: {e}") from e
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None
+
+
+def fetch_no_redirect(url: str, timeout: float = 45.0) -> tuple[int, dict[str, str]]:
+    opener = urllib.request.build_opener(_NoRedirect)
+    req = urllib.request.Request(url, headers={"User-Agent": "gs-smoke-check/1.0", "Cache-Control": "no-cache"})
+    try:
+        with opener.open(req, timeout=timeout) as res:
+            return res.status, {k.lower(): v for k, v in res.headers.items()}
+    except urllib.error.HTTPError as e:
+        return e.code, {k.lower(): v for k, v in (e.headers.items() if e.headers else [])}
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(f"request failed: {e}") from e
+
+
 def is_local_spec(spec: str) -> bool:
     if spec.startswith(("http://", "https://", "data:", "blob:", "javascript:")):
         return False
@@ -135,7 +154,7 @@ def looks_like_js(url: str, content_type: str) -> bool:
     return "javascript" in content_type or "ecmascript" in content_type
 
 
-def check_host(host: str, embed: str | None, expect_version: str | None) -> list[str]:
+def check_host(host: str, scene: str | None, expect_version: str | None) -> list[str]:
     errors: list[str] = []
     origin = host if host.startswith("http") else f"https://{host}"
     origin = origin.rstrip("/")
@@ -245,47 +264,82 @@ def check_host(host: str, embed: str | None, expect_version: str | None) -> list
                 if resolved:
                     queue.append(resolved)
 
-    if embed:
-        if not embed.startswith("/"):
-            embed = "/" + embed
-        embed_url = origin + embed
-        try:
-            status, body, _ = fetch(embed_url)
-        except RuntimeError as e:
-            fail(f"GET {embed} {e}")
-        else:
-            if status != 200:
-                fail(f"GET {embed} -> {status}")
-            elif len(body) < 200:
-                fail(f"GET {embed} -> 200 but tiny body ({len(body)} bytes)")
-            else:
-                print(f"  OK  {embed_url}  {len(body)} bytes")
+    if scene:
+        errors.extend(check_scene(origin, scene))
 
+    return errors
+
+
+def check_scene(origin: str, scene: str) -> list[str]:
+    """/s/ID serves the app, /api/community-scenes/ID returns the record, and
+    the retired /embed/ID answers 302 -> /s/ID."""
+    errors: list[str] = []
+    scene = scene.strip().strip("/")
+    if scene.startswith("embed/") or scene.startswith("s/"):
+        scene = scene.split("/", 1)[1]
+
+    def fail(msg: str) -> None:
+        errors.append(f"{origin}: {msg}")
+
+    share = f"{origin}/s/{scene}"
+    try:
+        status, body, _ = fetch(share)
+    except RuntimeError as e:
+        fail(f"GET /s/{scene} {e}")
+    else:
+        if status != 200:
+            fail(f"GET /s/{scene} -> {status}")
+        elif len(body) < 200:
+            fail(f"GET /s/{scene} -> 200 but tiny body ({len(body)} bytes)")
+        else:
+            print(f"  OK  {share}  {len(body)} bytes")
+
+    api = f"{origin}/api/community-scenes/{scene}"
+    try:
+        status, body, _ = fetch(api)
+    except RuntimeError as e:
+        fail(f"GET /api/community-scenes/{scene} {e}")
+    else:
+        try:
+            data = json.loads(body.decode("utf-8")) if status == 200 else None
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            data = None
+        if status != 200 or not isinstance(data, dict) or not data.get("codeBlocks"):
+            fail(f"GET /api/community-scenes/{scene} -> {status} (no scene record with codeBlocks)")
+        elif "embedUrl" in data:
+            fail(f"GET /api/community-scenes/{scene}: still returns embedUrl")
+        else:
+            print(f"  OK  {api}  {len(data.get('codeBlocks') or [])} code blocks")
+
+    embed = f"{origin}/embed/{scene}"
+    try:
+        status, headers = fetch_no_redirect(embed)
+    except RuntimeError as e:
+        fail(f"GET /embed/{scene} {e}")
+    else:
+        loc = headers.get("location", "")
+        if status != 302 or urlparse(urljoin(embed, loc)).path != f"/s/{scene}":
+            fail(f"GET /embed/{scene} -> {status} location={loc!r} (expected 302 -> /s/{scene})")
+        else:
+            print(f"  OK  {embed}  302 -> {loc}")
     return errors
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("hosts", nargs="+", help="Hostname or https URL")
-    ap.add_argument("--embed", action="append", default=[], help="Embed path to check (repeatable). Applied to every host.")
+    ap.add_argument("--scene", action="append", default=[], help="Community scene id to check (repeatable): /s/ID 200, API record 200, /embed/ID 302 -> /s/ID.")
     ap.add_argument("--expect-version", default=None, help="Require this GS_VERSION string")
     args = ap.parse_args(argv)
 
     all_errors: list[str] = []
     for host in args.hosts:
-        embeds = list(args.embed)
+        scenes = list(args.scene)
         print(f"== {host} ==")
-        # Allow host-specific embed via host|path ? Keep it simple: same embeds on all,
-        # callers pass the right hosts in separate invocations.
-        if len(embeds) == 1:
-            all_errors.extend(check_host(host, embeds[0], args.expect_version))
-        elif not embeds:
-            all_errors.extend(check_host(host, None, args.expect_version))
-        else:
-            # First pass checks imports; subsequent only the extra embeds would re-do work.
-            all_errors.extend(check_host(host, embeds[0], args.expect_version))
-            for extra in embeds[1:]:
-                all_errors.extend(check_host_embed_only(host, extra))
+        all_errors.extend(check_host(host, scenes[0] if scenes else None, args.expect_version))
+        origin = (host if host.startswith("http") else f"https://{host}").rstrip("/")
+        for extra in scenes[1:]:
+            all_errors.extend(check_scene(origin, extra))
 
     if all_errors:
         print("SMOKE FAILED:", file=sys.stderr)
@@ -294,27 +348,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print("SMOKE OK")
     return 0
-
-
-def check_host_embed_only(host: str, embed: str) -> list[str]:
-    errors: list[str] = []
-    origin = host if host.startswith("http") else f"https://{host}"
-    origin = origin.rstrip("/")
-    if not embed.startswith("/"):
-        embed = "/" + embed
-    url = origin + embed
-    try:
-        status, body, _ = fetch(url)
-    except RuntimeError as e:
-        errors.append(f"{origin}: GET {embed} {e}")
-        return errors
-    if status != 200:
-        errors.append(f"{origin}: GET {embed} -> {status}")
-    elif len(body) < 200:
-        errors.append(f"{origin}: GET {embed} -> 200 but tiny body ({len(body)} bytes)")
-    else:
-        print(f"  OK  {url}  {len(body)} bytes")
-    return errors
 
 
 if __name__ == "__main__":

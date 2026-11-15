@@ -86,14 +86,14 @@ if [[ "$SKIP_SMOKE" -eq 1 ]]; then
   exit 0
 fi
 
-echo "Smoke-checking Cloudflare production hosts + embed ${PROD_CF_EMBED}…"
+echo "Smoke-checking Cloudflare production hosts + scene ${PROD_CF_SCENE} (share page, API, /embed redirect)…"
 python3 "$SCRIPT_DIR/smoke-gs.py" \
   gsforanything.com www.gsforanything.com gs.krossruiz.workers.dev \
-  --embed "$PROD_CF_EMBED"
+  --scene "$PROD_CF_SCENE"
 
-echo "Smoke-checking Vercel backup + embed ${PROD_VERCEL_EMBED}…"
+echo "Smoke-checking Vercel backup + scene ${PROD_VERCEL_SCENE} (share page, API, /embed redirect)…"
 python3 "$SCRIPT_DIR/smoke-gs.py" \
   vrclaudeinterface.vercel.app \
-  --embed "$PROD_VERCEL_EMBED"
+  --scene "$PROD_VERCEL_SCENE"
 
 echo "Production deploy OK."

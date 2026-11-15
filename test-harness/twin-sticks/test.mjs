@@ -23,7 +23,8 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   if (touch) await p.setUserAgent('Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36');
   await p.evaluateOnNewDocument(IWER + '\n;window.__xrDevice = new IWER.XRDevice(IWER.metaQuest3); window.__xrDevice.installRuntime({ forceInstall: true });');
   await p.goto(BASE + '/', { waitUntil: 'networkidle2' });
-  await p.evaluate(() => { localStorage.removeItem('gs.twinSticks'); localStorage.removeItem('gs.cameraControlMode'); });
+  // Map is the default since 1.02; this suite checks Orbit's pivot, so pick Orbit explicitly (a saved choice is kept).
+  await p.evaluate(() => { localStorage.removeItem('gs.twinSticks'); localStorage.setItem('gs.cameraControlMode', 'orbit'); });
   await p.reload({ waitUntil: 'networkidle2' }); await sleep(3000);
   const cdp = await p.createCDPSession();
   const tab = async (t) => { await p.evaluate((t) => window.gsSelectTab(t), t); await sleep(250); };
