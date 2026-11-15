@@ -1,0 +1,8 @@
+{
+  "name": "gs-controller-remap-tests",
+  "private": true,
+  "type": "module",
+  "description": "Remapping game controller (mocked navigator.getGamepads) and VR controller (IWER) bindings: capture, picker, conflicts, resets, storage, runtime",
+  "scripts": { "test": "node test.mjs" },
+  "dependencies": { "iwer": "^2.7.0", "puppeteer-core": "^24.43.1" }
+}

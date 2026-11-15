@@ -325,6 +325,8 @@ function moreBlueThanRed(c) { return c.b > c.r + 25 && c.b > 40; }
     const btn = document.querySelector('#dchat-community-buttons [data-action="community:upload"], [data-action="community:upload"]');
     if (btn) btn.click();
   });
+  await p.waitForSelector('#gs-ctx-publish.visible', { timeout: 8000 });
+  await p.click('#gs-ctx-publish-btn');
   await p.waitForFunction(() => {
     const modal = document.getElementById('share-modal');
     const status = document.body.innerText || '';

@@ -133,6 +133,17 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 		win.markDirty = markDirty;
 		const EVENTS = ['scroll', 'input', 'change', 'focusin', 'focusout', 'load', 'error'];
 
+		// Swap the painted DOM (e.g. the in-app dialog window also hosts the
+		// Community publish card). Detach the old source if the window is up.
+		win.setSource = (el) => {
+			if (!el || el === source) return;
+			const was = mesh.visible;
+			if (was) win.setVisible(false);
+			source = el;
+			win.source = el;
+			if (was) win.setVisible(true);
+		};
+
 		win.setVisible = (on) => {
 			on = !!on;
 			source.classList.toggle(SOURCE_CLASS, on);

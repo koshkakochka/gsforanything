@@ -11,7 +11,9 @@
 //   - forwards game-controller and on-screen stick values to each control's
 //     own movement / rotation API (see stick()).
 // Modes: map (MapControls, default), orbit (OrbitControls), fly (FlyControls),
-// firstperson (PointerLockControls), off.
+// firstperson (PointerLockControls), off. Scene code can add its own modes
+// ("custom:<id>", customCameraModes.js): GS builds no stock control for them
+// and leaves the camera to the scene's hooks.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { MapControls } from 'three/examples/jsm/controls/MapControls.js';
@@ -25,6 +27,9 @@ export const CAMERA_MODE_LABELS = { orbit: 'Orbit', map: 'Map', fly: 'Fly', firs
 // Values saved by GS 0.976 and earlier (Orbit / Free-roam / Off), plus
 // Trackball which was later removed (falls back to the Map default).
 const LEGACY_MODES = { free: 'firstperson', 'free-roam': 'firstperson', trackball: 'map' };
+// Prefix of the camera modes scene code registers (customCameraModes.js).
+export const CUSTOM_CAMERA_MODE_PREFIX = 'custom:';
+export function isCustomCameraMode(m) { return typeof m === 'string' && m.startsWith(CUSTOM_CAMERA_MODE_PREFIX) && m.length > CUSTOM_CAMERA_MODE_PREFIX.length; }
 export function normalizeCameraMode(saved) {
 	if (CAMERA_MODES.includes(saved)) return saved;
 	return LEGACY_MODES[saved] || DEFAULT_CAMERA_MODE;
@@ -75,7 +80,9 @@ export function isTextEntry(el) {
 	return false;
 }
 
-export function createCameraControls({ camera, domElement, isSuspended = () => false, onModeChange = () => {}, onLockChange = () => {} }) {
+// isExternalMode(m): true for a registered custom mode ("custom:<id>"); those
+// get no stock control and the camera is left exactly where it is.
+export function createCameraControls({ camera, domElement, isSuspended = () => false, onModeChange = () => {}, onLockChange = () => {}, isExternalMode = () => false }) {
 	let mode = 'off';
 	let controls = null;
 	let typing = isTextEntry(document.activeElement);
@@ -269,9 +276,11 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 	}
 
 	function setMode(m) {
-		m = normalizeCameraMode(m);
+		const external = isCustomCameraMode(m) && isExternalMode(m);
+		if (!external) m = normalizeCameraMode(m);
 		disposeControls();
 		mode = m;
+		if (external) { onModeChange(m); return m; }
 		if (TARGET_MODES.has(m)) aimAtTarget();
 		else levelCamera();
 		if (m === 'firstperson') camera.position.y = playerHeight; // walk at the player's eye height
@@ -320,9 +329,13 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 	// lx/ly: left stick (y down = positive), rx/ry: right stick, vertical:
 	// up (+) / down (-), zoom: in (+) / out (-). Each value goes into the
 	// active control's own API.
-	function stick(dt, { lx = 0, ly = 0, rx = 0, ry = 0, vertical = 0, zoom = 0 } = {}) {
+	// dpadX / dpadY: d-pad (-1, 0, 1; up = -1): Orbit / Map pan like the pan
+	// keys, Fly rolls (←/→). slow: Fly's Slow (left stick press). See
+	// inputBindings.js CONTROLLER_STYLES for the whole (remappable) table.
+	let padSlow = false;
+	function stick(dt, { lx = 0, ly = 0, rx = 0, ry = 0, vertical = 0, zoom = 0, dpadX = 0, dpadY = 0, slow = false } = {}) {
 		if (!controls || !controls.enabled || dt <= 0 || !GAMEPAD_MODES.has(mode)) return;
-		const any = lx || ly || rx || ry || vertical || zoom;
+		const any = lx || ly || rx || ry || vertical || zoom || dpadX || dpadY;
 		if (controls instanceof OrbitControls) { // Orbit and Map (MapControls extends OrbitControls)
 			if (!any) return;
 			const h = domElement.clientHeight || window.innerHeight;
@@ -337,6 +350,8 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 				if (ly) { const s = Math.pow(1 / STICK_ZOOM_SPEED, Math.abs(ly) * dt * 2); if (ly < 0) controls._dollyIn(s); else controls._dollyOut(s); }
 			}
 			if (zoom) { const s = Math.pow(1 / STICK_ZOOM_SPEED, Math.abs(zoom) * dt * 2); if (zoom > 0) controls._dollyIn(s); else controls._dollyOut(s); }
+			// D-pad = the pan keys (Pan up / down / left / right), held to repeat.
+			if (dpadX || dpadY) controls._pan(-dpadX * h * 0.5 * dt, -dpadY * h * 0.5 * dt);
 			return;
 		}
 		if (controls instanceof PointerLockControls) {
@@ -354,8 +369,10 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 			return;
 		}
 		if (controls instanceof FlyControls) {
+			if (slow !== padSlow) { padSlow = slow; controls.movementSpeedMultiplier = slow ? 0.1 : 1; } // stock Shift value
 			if (!any && !stickActive) return;
 			const s = controls._moveState;
+			s.rollLeft = dpadX < 0 ? 1 : 0; s.rollRight = dpadX > 0 ? 1 : 0;
 			s.right = Math.max(0, lx); s.left = Math.max(0, -lx);
 			s.back = Math.max(0, ly); s.forward = Math.max(0, -ly);
 			s.up = Math.max(0, vertical); s.down = Math.max(0, -vertical);

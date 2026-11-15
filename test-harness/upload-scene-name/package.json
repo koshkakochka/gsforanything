@@ -1,0 +1,9 @@
+{
+  "name": "gs-upload-scene-name-test",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "api": "node api.mjs",
+    "test": "node test.mjs"
+  }
+}
