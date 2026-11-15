@@ -36,3 +36,10 @@ Checks:
   build. A failed load shows the error and Try again.
 - Phone: size + support warning, 44 px buttons. VR (IWER Quest 3): the Model
   menu and panel are painted in the menu window; nothing downloads.
+
+`dev-verify.mjs` checks a deployed host with no stubs: the three options and
+their sizes, nothing fetched from WebLLM on page load or on selection, the
+confirmation. `REAL_LOAD=1` then really downloads and loads the 1.5B model
+with the browser's WebGPU (`REAL_CHAT=1` also sends one message).
+
+    BASE=https://dev.gsforanything.com SHOT_DIR=/workspace/gs-webllm-shots node dev-verify.mjs
