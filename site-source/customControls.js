@@ -23,7 +23,12 @@
 // `gamepad: 'A' | 'LS-Up' | 'RT' | 'DLeft' | …` and `xr: 'R-Trigger' |
 // 'L-Stick-Up' | 'A' | …` (inputBindings.js); omitted ones are generated from
 // the key (W/A/S/D → left stick, Space → A / right trigger, …), '' means none.
-// isDown() and onPress() answer for all three. Pad and headset input is
+// isDown() and onPress() answer for all three. The user can remap the gamepad
+// / VR bindings in the panel (click a Gamepad / VR field, then press, or pick
+// from the list; controllerBindings.js), stored per scheme id and param in
+// localStorage `gs.controllerBindings.v1` and in the scene file
+// (`customControllerBindings`); bindings(name) returns the live ones.
+// Pad and headset input is
 // ignored while typing in a text field and, in VR, for a hand whose ray is on
 // a menu window. A scheme that binds a headset thumbstick (or A/B/X/Y) takes it
 // over from locomotion (or push-to-talk / pointer rays) while it exists.
@@ -35,7 +40,8 @@
 // (localStorage `gs.customControls.v1`, per scheme id) > the declared default.
 
 import { normalizeCode, parseKeyName, keyLabel, codeMatches, createKeyInput, findDuplicates, describeDuplicates } from './controlBindings.js';
-import { normalizePadBinding, normalizeXrBinding, autoBindings, padValue, xrValue, padLabel, xrLabel, padShort, xrShort, xrStickOf, xrButtonOf } from './inputBindings.js';
+import { normalizePadBinding, normalizeXrBinding, autoBindings, padValue, xrValue, xrStickOf, xrButtonOf } from './inputBindings.js';
+import { createBindField, schemeOverrides, saveSchemeOverrides, normalizeBinding, bindShort, DEVICE_NAME, capture } from './controllerBindings.js';
 
 export const CUSTOM_CONTROLS_STORAGE_KEY = 'gs.customControls.v1';
 export const PARAM_TYPES = ['key', 'number', 'boolean', 'select'];
@@ -126,6 +132,7 @@ export function createCustomControls(opts = {}) {
 	const schemes = new Map(); // id -> scheme record
 	const pressed = new Set();  // KeyboardEvent.code values held now
 	let pendingSceneValues = null; // values from a loading scene file
+	let pendingSceneBindings = null; // controller overrides from a loading scene file
 	let mount = opts.mount || null;
 	const isTyping = opts.isTyping || (() => false);
 
@@ -146,8 +153,14 @@ export function createCustomControls(opts = {}) {
 	window.addEventListener('blur', () => pressed.clear());
 	document.addEventListener('focusin', () => { if (isTyping()) pressed.clear(); });
 
-	function inputValue(p) {
-		return Math.max(padValue(p.gamepad, opts.getPad?.()), xrValue(p.xr, opts.getXr?.()));
+	// Live gamepad / VR binding of a key param: the user's override, else the
+	// scene's (or generated) default.
+	function bound(s, p, device) {
+		const o = s.over[device];
+		return p.name in o ? o[p.name] : (p[device] || '');
+	}
+	function inputValue(s, p) {
+		return Math.max(padValue(bound(s, p, 'gamepad'), opts.getPad?.()), xrValue(bound(s, p, 'xr'), opts.getXr?.()));
 	}
 	// Per frame (main.js, after the pads are polled): onPress for gamepad / VR
 	// presses (rising edge past half travel).
@@ -155,8 +168,8 @@ export function createCustomControls(opts = {}) {
 		const typing = isTyping();
 		for (const s of schemes.values()) {
 			for (const p of s.params) {
-				if (p.type !== 'key' || (!p.gamepad && !p.xr)) continue;
-				const down = !typing && inputValue(p) > 0.5;
+				if (p.type !== 'key') continue;
+				const down = !typing && inputValue(s, p) > 0.5;
 				const was = s.inputDown.has(p.name);
 				if (down && !was) {
 					s.inputDown.add(p.name);
@@ -171,14 +184,15 @@ export function createCustomControls(opts = {}) {
 		for (const s of schemes.values()) {
 			for (const p of s.params) {
 				if (p.type !== 'key') continue;
-				if (p.gamepad) {
-					const m = p.gamepad.match(/^(LS|RS)-(Up|Down|Left|Right)$/);
-					pad.add(m ? m[1] : /^D(Up|Down|Left|Right)$/.test(p.gamepad) ? 'DPad' : p.gamepad);
+				const g = bound(s, p, 'gamepad'), x = bound(s, p, 'xr');
+				if (g) {
+					const m = g.match(/^(LS|RS)-(Up|Down|Left|Right)$/);
+					pad.add(m ? m[1] : /^D(Up|Down|Left|Right)$/.test(g) ? 'DPad' : g);
 				}
-				if (p.xr) {
-					const st = xrStickOf(p.xr);
+				if (x) {
+					const st = xrStickOf(x);
 					if (st) xrSticks.add(st.hand);
-					const b = xrButtonOf(p.xr);
+					const b = xrButtonOf(x);
 					if (b) xrButtons.add(`${b.hand}:${b.index}`);
 				}
 			}
@@ -209,11 +223,11 @@ export function createCustomControls(opts = {}) {
 			get(name) { return s.values[name]; },
 			set(name, value) { return setValue(s.id, name, value); },
 			/** True while the key bound to a `key` param is held (false while typing in a text field). */
-			isDown(name) { const p = s.byName.get(name); return !!p && p.type === 'key' && !isTyping() && (isCodeDown(s.values[name]) || inputValue(p) > 0.5); },
+			isDown(name) { const p = s.byName.get(name); return !!p && p.type === 'key' && !isTyping() && (isCodeDown(s.values[name]) || inputValue(s, p) > 0.5); },
 			/** 0..1: the key (1), or how far the bound stick / trigger is pushed (gamepad or VR). */
-			value(name) { const p = s.byName.get(name); if (!p || p.type !== 'key' || isTyping()) return 0; return isCodeDown(s.values[name]) ? 1 : inputValue(p); },
-			/** { gamepad, xr } bindings of a key param ('' = none). */
-			bindings(name) { const p = s.byName.get(name); return p && p.type === 'key' ? { gamepad: p.gamepad || '', xr: p.xr || '' } : null; },
+			value(name) { const p = s.byName.get(name); if (!p || p.type !== 'key' || isTyping()) return 0; return isCodeDown(s.values[name]) ? 1 : inputValue(s, p); },
+			/** { gamepad, xr } bindings of a key param as they are now (the user may have remapped them; '' = none). */
+			bindings(name) { const p = s.byName.get(name); return p && p.type === 'key' ? { gamepad: bound(s, p, 'gamepad'), xr: bound(s, p, 'xr') } : null; },
 			/** The bound key's short name ('W', 'ArrowUp', 'Space'). */
 			keyName(name) { return keyLabel(s.values[name]); },
 			onChange(fn) { if (typeof fn === 'function') s.changeListeners.add(fn); return () => s.changeListeners.delete(fn); },
@@ -257,6 +271,18 @@ export function createCustomControls(opts = {}) {
 			values[p.name] = v;
 		}
 		if (fromScene) delete pendingSceneValues[id];
+		// Controller overrides: kept on redefine, else scene file, else this browser.
+		const keyNames = new Set(params.filter((p) => p.type === 'key').map((p) => p.name));
+		const overSrc = old ? old.over : (pendingSceneBindings?.[id] || schemeOverrides(id));
+		if (!old && pendingSceneBindings?.[id]) delete pendingSceneBindings[id];
+		const over = { gamepad: {}, xr: {} };
+		for (const d of ['gamepad', 'xr']) {
+			for (const [n, b] of Object.entries(overSrc?.[d] || {})) {
+				if (!keyNames.has(n)) continue;
+				const nb = normalizeBinding(d, b);
+				if (nb !== null && nb !== (params.find((p) => p.name === n)[d] || '')) over[d][n] = nb;
+			}
+		}
 		const s = {
 			id,
 			name: clip(def.name || id, 80),
@@ -266,6 +292,7 @@ export function createCustomControls(opts = {}) {
 			params,
 			byName: new Map(params.map((p) => [p.name, p])),
 			values,
+			over,
 			changeListeners: new Set(),
 			pressListeners: new Map(),
 			inputDown: new Set(),
@@ -296,6 +323,36 @@ export function createCustomControls(opts = {}) {
 		syncField(s, p);
 		refreshWarnings(s);
 		return true;
+	}
+
+	/** Remap a key param's gamepad / VR input ('' = none). Refused (returns the
+	 *  other param's label) when another key param of the scheme uses it. */
+	function setBinding(id, name, device, b) {
+		const s = schemes.get(id);
+		const p = s?.byName.get(name);
+		if (!p || p.type !== 'key' || !(device === 'gamepad' || device === 'xr')) return { ok: false, error: 'unknown param' };
+		const n = normalizeBinding(device, b);
+		if (n === null) return { ok: false, error: `not a ${DEVICE_NAME[device]} input` };
+		if (n) {
+			const other = s.params.find((q) => q !== p && q.type === 'key' && bound(s, q, device) === n);
+			if (other) return { ok: false, owner: other.label, error: `${DEVICE_NAME[device]} ${bindShort(device, n)} is already ${other.label}` };
+		}
+		if (n === (p[device] || '')) delete s.over[device][name]; else s.over[device][name] = n;
+		saveSchemeOverrides(s.id, s.over);
+		s.inputDown.delete(name);
+		s.notice = '';
+		syncBindings(s);
+		refreshWarnings(s);
+		return { ok: true };
+	}
+	function resetBindings(id, device) {
+		const s = schemes.get(id);
+		if (!s) return;
+		s.over[device] = {};
+		saveSchemeOverrides(s.id, s.over);
+		s.notice = '';
+		syncBindings(s);
+		refreshWarnings(s);
 	}
 
 	function resetScheme(id) {
@@ -336,20 +393,35 @@ export function createCustomControls(opts = {}) {
 			for (const p of s.params) if (s.values[p.name] !== p.default) diff[p.name] = s.values[p.name];
 			if (Object.keys(diff).length) out[s.id] = diff;
 		}
-		return Object.keys(out).length ? { customControls: out } : {};
+		const bindings = {};
+		for (const s of schemes.values()) {
+			const o = {};
+			for (const d of ['gamepad', 'xr']) if (Object.keys(s.over[d]).length) o[d] = { ...s.over[d] };
+			if (Object.keys(o).length) bindings[s.id] = o;
+		}
+		return {
+			...(Object.keys(out).length ? { customControls: out } : {}),
+			...(Object.keys(bindings).length ? { customControllerBindings: bindings } : {})
+		};
 	}
 	function setPendingSceneValues(data) {
 		const cc = data && data.customControls;
 		pendingSceneValues = cc && typeof cc === 'object' && !Array.isArray(cc) ? JSON.parse(JSON.stringify(cc)) : null;
+		const cb = data && data.customControllerBindings;
+		pendingSceneBindings = cb && typeof cb === 'object' && !Array.isArray(cb) ? JSON.parse(JSON.stringify(cb)) : null;
 	}
 
 	// ---- UI ----
 	const fieldSync = new Map(); // `${id}:${name}` -> fn(value)
+	const bindFields = new Map(); // `${id}:${name}:${device}` -> bind field
 	const warnEls = new Map();   // id -> element
 
 	function render() {
 		if (!mount) return;
+		// A field listening for a controller input is about to be replaced.
+		if (capture.listening && mount.querySelector('.gs-bind-field.listening')) capture.cancel();
 		fieldSync.clear();
+		bindFields.clear();
 		warnEls.clear();
 		mount.textContent = '';
 		if (!schemes.size) {
@@ -374,7 +446,7 @@ export function createCustomControls(opts = {}) {
 			mount.appendChild(empty);
 			return;
 		}
-		for (const s of schemes.values()) { mount.appendChild(renderScheme(s)); refreshWarnings(s); }
+		for (const s of schemes.values()) { mount.appendChild(renderScheme(s)); syncBindings(s); refreshWarnings(s); }
 	}
 
 	function renderScheme(s) {
@@ -391,7 +463,23 @@ export function createCustomControls(opts = {}) {
 		reset.className = 'dchat-btn secondary gs-cc-reset';
 		reset.textContent = 'Reset to defaults';
 		reset.addEventListener('click', () => resetScheme(s.id));
-		head.append(title, reset);
+		reset.title = 'Keys and settings back to their defaults';
+		const resets = document.createElement('div');
+		resets.className = 'gs-cc-resets';
+		resets.appendChild(reset);
+		if (s.params.some((p) => p.type === 'key')) {
+			for (const d of ['gamepad', 'xr']) {
+				const r = document.createElement('button');
+				r.type = 'button';
+				r.className = 'dchat-btn secondary gs-cc-reset gs-cc-reset-bind';
+				r.dataset.kind = d;
+				r.textContent = `Reset ${d === 'xr' ? 'VR' : 'gamepad'}`;
+				r.title = `${d === 'xr' ? 'VR controller' : 'Game controller'} bindings back to their defaults`;
+				r.addEventListener('click', () => resetBindings(s.id, d));
+				resets.appendChild(r);
+			}
+		}
+		head.append(title, resets);
 		card.appendChild(head);
 		if (s.description) {
 			const d = document.createElement('div');
@@ -471,28 +559,25 @@ export function createCustomControls(opts = {}) {
 		label.htmlFor = fid;
 		row.append(label, ctl);
 		if (p.type === 'key') {
-			// Gamepad and VR controller columns next to the key (read-only):
-			// explicit `gamepad` / `xr` from the scene's code, else generated
-			// from the key ("auto").
+			// Gamepad and VR controller columns next to the key: the scene's
+			// own `gamepad` / `xr`, else generated from the key ("auto"); click
+			// one to remap it (controllerBindings.js).
 			row.classList.add('gs-cc-keyrow');
 			const cols = document.createElement('div');
 			cols.className = 'gs-bind-cols';
-			for (const [kind, b, auto, short, long] of [['gamepad', p.gamepad, p.gamepadAuto, padShort, padLabel], ['xr', p.xr, p.xrAuto, xrShort, xrLabel]]) {
-				const chip = document.createElement('span');
-				chip.className = 'gs-bind-chip';
-				chip.dataset.kind = kind;
-				chip.dataset.binding = b || '';
-				chip.dataset.auto = auto ? '1' : '0';
-				chip.classList.toggle('none', !b);
-				const what = kind === 'gamepad' ? 'Gamepad' : 'VR';
-				const cap = document.createElement('small');
-				cap.textContent = `${what} `; // textContent reads "Gamepad A"
-				const val = document.createElement('b');
-				val.textContent = short(b);
-				chip.append(cap, val);
-				chip.title = `${what === 'VR' ? 'VR controller' : 'Game controller'}: ${long(b)}${b ? (auto ? ' (generated from the key)' : ' (set by the scene)') : ''}`;
-				chip.setAttribute('aria-label', chip.title);
-				cols.appendChild(chip);
+			for (const d of ['gamepad', 'xr']) {
+				const f = createBindField({
+					device: d, value: bound(s, p, d), auto: !!p[d + 'Auto'], remapped: p.name in s.over[d],
+					ariaLabel: `${s.name}: ${p.label}`, host: row,
+					onCommit: (b) => {
+						const r = setBinding(s.id, p.name, d, b);
+						if (!r.ok) { s.notice = `${r.error}. Give ${r.owner || 'it'} another input first.`; refreshWarnings(s); return false; }
+						return true;
+					}
+				});
+				f.el.id = `${fid}-${d}`;
+				bindFields.set(`${s.id}:${p.name}:${d}`, f);
+				cols.appendChild(f.el);
 			}
 			row.appendChild(cols);
 		}
@@ -501,6 +586,14 @@ export function createCustomControls(opts = {}) {
 	}
 
 	function syncField(s, p) { fieldSync.get(`${s.id}:${p.name}`)?.(s.values[p.name]); }
+	function syncBindings(s) {
+		for (const p of s.params) {
+			if (p.type !== 'key') continue;
+			for (const d of ['gamepad', 'xr']) bindFields.get(`${s.id}:${p.name}:${d}`)?.set(bound(s, p, d), { remapped: p.name in s.over[d] });
+		}
+		const card = mount?.querySelector(`[data-scheme-id="${CSS.escape(s.id)}"]`);
+		card?.querySelectorAll('.gs-cc-reset-bind').forEach((b) => { b.disabled = !Object.keys(s.over[b.dataset.kind]).length; });
+	}
 
 	function refreshWarnings(s) {
 		const el = warnEls.get(s.id);
@@ -516,6 +609,12 @@ export function createCustomControls(opts = {}) {
 			}
 		}
 		el.textContent = '';
+		if (s.notice) {
+			const w = document.createElement('div');
+			w.className = 'gs-remap-dup gs-cc-bind-notice';
+			w.textContent = '⚠ ' + s.notice;
+			el.appendChild(w);
+		}
 		if (lines.length) {
 			const w = document.createElement('div');
 			w.className = 'gs-remap-dup';
@@ -548,10 +647,14 @@ export function createCustomControls(opts = {}) {
 			return [...schemes.values()].map((s) => ({
 				id: s.id, name: s.name, description: s.description, cameraMode: s.cameraMode,
 				params: s.params.map((p) => ({ ...p, options: p.options ? p.options.map((o) => ({ ...o })) : undefined })),
-				values: { ...s.values }
+				values: { ...s.values },
+				bindings: Object.fromEntries(s.params.filter((p) => p.type === 'key').map((p) => [p.name, { gamepad: bound(s, p, 'gamepad'), xr: bound(s, p, 'xr') }])),
+				remapped: { gamepad: { ...s.over.gamepad }, xr: { ...s.over.xr } }
 			}));
 		},
 		remove: removeScheme,
+		setBinding,
+		resetBindings,
 		reset,
 		poll,
 		claims,

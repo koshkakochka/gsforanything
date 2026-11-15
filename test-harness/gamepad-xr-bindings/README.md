@@ -11,7 +11,7 @@ horn). Writes the built-in table to `$SHOT_DIR/builtin-bindings.json`.
 
 - Every built-in action has a pad binding; XR equivalents for all but Fly
   look / roll / slow (head-driven); drag / wheel gestures have pad + VR rows.
-- UI rows show 🎮 / VR lines; Map pad list.
+- UI rows show Gamepad / VR fields (remappable: see controller-remap); Map controller rows.
 - Map: d-pad pans, left stick pans, right stick rotates, RT zooms; deadzone;
   typing blocks the pad. Orbit d-pad pans. Fly: left stick forward, d-pad
   roll, left stick press Slow, RB up. First person: left stick walks.

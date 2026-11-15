@@ -29,6 +29,7 @@
           "site-source/customControls.js",
           "site-source/customCameraModes.js",
           "site-source/inputBindings.js",
+          "site-source/controllerBindings.js",
           "site-source/chatPrompt.js",
           "site-source/originGizmo.js",
           "site-source/sceneFit.js",

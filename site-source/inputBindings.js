@@ -12,7 +12,7 @@
 //            'L-StickPress' 'R-StickPress'.
 // '' means no binding. Stick directions read 0..1 past the deadzone.
 //
-// Built-in camera styles: BUILTIN_PAD / BUILTIN_XR give every remappable
+// Built-in camera styles: CONTROLLER_STYLES gives every remappable
 // action (controlBindings.js) and the mouse / wheel gestures their pad and
 // headset equivalents. The pad drives the stock control (cameraControls.stick);
 // in a headset the camera follows your head and the thumbsticks move you
@@ -200,34 +200,119 @@ export function xrValue(b, xr) {
 }
 
 // ---- built-in camera styles ----
-// [action id → binding]. Orbit / Map pan keys: d-pad. Fly / First person:
-// movement on the left stick, look on the right stick.
-export const BUILTIN_PAD = {
-	orbit: { panUp: 'DUp', panDown: 'DDown', panLeft: 'DLeft', panRight: 'DRight' },
-	map: { panUp: 'DUp', panDown: 'DDown', panLeft: 'DLeft', panRight: 'DRight' },
-	fly: {
-		forward: 'LS-Up', back: 'LS-Down', left: 'LS-Left', right: 'LS-Right', up: 'RB', down: 'LB',
-		pitchUp: 'RS-Up', pitchDown: 'RS-Down', yawLeft: 'RS-Left', yawRight: 'RS-Right',
-		rollLeft: 'DLeft', rollRight: 'DRight', slow: 'LS-Press'
-	},
-	firstperson: { forward: 'LS-Up', backward: 'LS-Down', left: 'LS-Left', right: 'LS-Right' }
+// Every row a style has on a game controller / in a headset, with its default.
+// key: true rows are the remappable key actions (controlBindings.js, label
+// from there); the others stand for a mouse / wheel gesture. pad / xr: the
+// default binding; null = that device has no such control (xr null + head:
+// your head does it in a headset). loco: what an xr row does to locomotion in a headset (the camera
+// follows your head there; the thumbsticks move you). All of them can be
+// remapped (controllerBindings.js); main.js reads the current bindings every
+// frame (updateGamepadCamera, updateLocomotion).
+const ROT = (g) => [
+	{ id: 'rotateLeft', label: `Rotate left (${g})`, pad: 'RS-Left', xr: 'R-Stick-Left', loco: 'turnLeft' },
+	{ id: 'rotateRight', label: `Rotate right (${g})`, pad: 'RS-Right', xr: 'R-Stick-Right', loco: 'turnRight' },
+	{ id: 'rotateUp', label: `Rotate up (${g})`, pad: 'RS-Up', xr: null, head: true },
+	{ id: 'rotateDown', label: `Rotate down (${g})`, pad: 'RS-Down', xr: null, head: true }
+];
+const PAN_KEYS = [
+	{ id: 'panUp', key: true, pad: 'DUp', xr: 'L-Stick-Up', loco: 'forward' },
+	{ id: 'panDown', key: true, pad: 'DDown', xr: 'L-Stick-Down', loco: 'back' },
+	{ id: 'panLeft', key: true, pad: 'DLeft', xr: 'L-Stick-Left', loco: 'left' },
+	{ id: 'panRight', key: true, pad: 'DRight', xr: 'L-Stick-Right', loco: 'right' }
+];
+const RISE = [
+	{ id: 'rise', label: 'Move up (VR)', pad: null, xr: 'R-Stick-Up', loco: 'up' },
+	{ id: 'sink', label: 'Move down (VR)', pad: null, xr: 'R-Stick-Down', loco: 'down' }
+];
+export const CONTROLLER_STYLES = {
+	orbit: [
+		...PAN_KEYS,
+		...ROT('left-drag'),
+		{ id: 'dragPanLeft', label: 'Pan left (right-drag)', pad: 'LS-Left', xr: null },
+		{ id: 'dragPanRight', label: 'Pan right (right-drag)', pad: 'LS-Right', xr: null },
+		{ id: 'zoomInStick', label: 'Zoom in (wheel, stick)', pad: 'LS-Up', xr: null },
+		{ id: 'zoomOutStick', label: 'Zoom out (wheel, stick)', pad: 'LS-Down', xr: null },
+		{ id: 'zoomIn', label: 'Zoom in (wheel, trigger)', pad: 'RT', xr: null },
+		{ id: 'zoomOut', label: 'Zoom out (wheel, trigger)', pad: 'LT', xr: null },
+		...RISE
+	],
+	map: [
+		...PAN_KEYS,
+		{ id: 'dragPanForward', label: 'Pan forward (left-drag)', pad: 'LS-Up', xr: null },
+		{ id: 'dragPanBack', label: 'Pan back (left-drag)', pad: 'LS-Down', xr: null },
+		{ id: 'dragPanLeft', label: 'Pan left (left-drag)', pad: 'LS-Left', xr: null },
+		{ id: 'dragPanRight', label: 'Pan right (left-drag)', pad: 'LS-Right', xr: null },
+		...ROT('right-drag'),
+		{ id: 'zoomIn', label: 'Zoom in (wheel)', pad: 'RT', xr: null },
+		{ id: 'zoomOut', label: 'Zoom out (wheel)', pad: 'LT', xr: null },
+		...RISE
+	],
+	fly: [
+		{ id: 'forward', key: true, pad: 'LS-Up', xr: 'L-Stick-Up', loco: 'forward' },
+		{ id: 'back', key: true, pad: 'LS-Down', xr: 'L-Stick-Down', loco: 'back' },
+		{ id: 'left', key: true, pad: 'LS-Left', xr: 'L-Stick-Left', loco: 'left' },
+		{ id: 'right', key: true, pad: 'LS-Right', xr: 'L-Stick-Right', loco: 'right' },
+		{ id: 'up', key: true, pad: 'RB', xr: 'R-Stick-Up', loco: 'up' },
+		{ id: 'down', key: true, pad: 'LB', xr: 'R-Stick-Down', loco: 'down' },
+		{ id: 'pitchUp', key: true, pad: 'RS-Up', xr: null, head: true },
+		{ id: 'pitchDown', key: true, pad: 'RS-Down', xr: null, head: true },
+		{ id: 'yawLeft', key: true, pad: 'RS-Left', xr: 'R-Stick-Left', loco: 'turnLeft' },
+		{ id: 'yawRight', key: true, pad: 'RS-Right', xr: 'R-Stick-Right', loco: 'turnRight' },
+		{ id: 'rollLeft', key: true, pad: 'DLeft', xr: null, head: true },
+		{ id: 'rollRight', key: true, pad: 'DRight', xr: null, head: true },
+		{ id: 'slow', key: true, pad: 'LS-Press', xr: null }
+	],
+	firstperson: [
+		{ id: 'forward', key: true, pad: 'LS-Up', xr: 'L-Stick-Up', loco: 'forward' },
+		{ id: 'backward', key: true, pad: 'LS-Down', xr: 'L-Stick-Down', loco: 'back' },
+		{ id: 'left', key: true, pad: 'LS-Left', xr: 'L-Stick-Left', loco: 'left' },
+		{ id: 'right', key: true, pad: 'LS-Right', xr: 'L-Stick-Right', loco: 'right' },
+		{ id: 'lookLeft', label: 'Look left (mouse look)', pad: 'RS-Left', xr: 'R-Stick-Left', loco: 'turnLeft' },
+		{ id: 'lookRight', label: 'Look right (mouse look)', pad: 'RS-Right', xr: 'R-Stick-Right', loco: 'turnRight' },
+		{ id: 'lookUp', label: 'Look up (mouse look)', pad: 'RS-Up', xr: null, head: true },
+		{ id: 'lookDown', label: 'Look down (mouse look)', pad: 'RS-Down', xr: null, head: true },
+		...RISE
+	]
 };
-// In a headset: locomotion (Environment → Navigation; left stick moves,
-// right stick turns / changes height) and your head.
-export const BUILTIN_XR = {
-	orbit: { panUp: 'L-Stick-Up', panDown: 'L-Stick-Down', panLeft: 'L-Stick-Left', panRight: 'L-Stick-Right' },
-	map: { panUp: 'L-Stick-Up', panDown: 'L-Stick-Down', panLeft: 'L-Stick-Left', panRight: 'L-Stick-Right' },
-	fly: {
-		forward: 'L-Stick-Up', back: 'L-Stick-Down', left: 'L-Stick-Left', right: 'L-Stick-Right', up: 'R-Stick-Up', down: 'R-Stick-Down',
-		pitchUp: '', pitchDown: '', yawLeft: 'R-Stick-Left', yawRight: 'R-Stick-Right', rollLeft: '', rollRight: '', slow: ''
-	},
-	firstperson: { forward: 'L-Stick-Up', backward: 'L-Stick-Down', left: 'L-Stick-Left', right: 'L-Stick-Right' }
-};
-// Mouse / wheel / touch gestures and their pad / headset equivalents.
-export const BUILTIN_GESTURES = {
-	orbit: [['Rotate (left-drag)', 'Right stick', 'Right thumbstick ←/→ turns you'], ['Pan (right-drag)', 'Left stick ←/→', 'Left thumbstick'], ['Zoom (wheel)', 'Left stick ↑/↓, LT / RT', 'Left thumbstick ↑/↓']],
-	map: [['Pan (left-drag)', 'Left stick', 'Left thumbstick'], ['Rotate (right-drag)', 'Right stick', 'Right thumbstick ←/→ turns you'], ['Zoom (wheel)', 'LT / RT', 'Left thumbstick ↑/↓']],
-	fly: [['Look (drag)', 'Right stick', 'Your head'], ['Up / down', 'RB / LB', 'Right thumbstick ↑/↓']],
-	firstperson: [['Mouse look', 'Right stick', 'Your head; right thumbstick ←/→ turns']]
-};
-export const BUILTIN_GLOBAL_PAD = [['Y', 'Switch Orbit / First person'], ['View', 'Reset Camera View']];
+// Game controller buttons that work in every style (gamepad only).
+export const GLOBAL_PAD_ROWS = [
+	{ id: 'switchMode', label: 'Switch Orbit / First person', pad: 'Y' },
+	{ id: 'resetView', label: 'Reset camera view', pad: 'View' }
+];
+/** Locomotion in a headset when no built-in style is active (Off / a scene's mode). */
+export const DEFAULT_LOCOMOTION = { forward: 'L-Stick-Up', back: 'L-Stick-Down', left: 'L-Stick-Left', right: 'L-Stick-Right', turnLeft: 'R-Stick-Left', turnRight: 'R-Stick-Right', up: 'R-Stick-Up', down: 'R-Stick-Down' };
+
+// ---- raw readings for capture (controllerBindings.js) ----
+const PAD_INDEX_NAMES = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'LS-Press', 'RS-Press', 'DUp', 'DDown', 'DLeft', 'DRight'];
+const btnVal = (b) => (!b ? 0 : typeof b === 'number' ? b : (b.pressed && !b.value ? 1 : b.value || 0));
+function stickDirs(prefix, x, y, out, sep = '-') {
+	out[`${prefix}${sep}Up`] = Math.max(0, -y); out[`${prefix}${sep}Down`] = Math.max(0, y);
+	out[`${prefix}${sep}Left`] = Math.max(0, -x); out[`${prefix}${sep}Right`] = Math.max(0, x);
+}
+/** Every gamepad input of a raw Gamepad → { name: 0..1 } (no deadzone). */
+export function padInputsRaw(gp) {
+	const out = {};
+	if (!gp) return out;
+	PAD_INDEX_NAMES.forEach((n, i) => { out[n] = btnVal(gp.buttons?.[i]); });
+	const a = gp.axes || [];
+	stickDirs('LS', a[0] || 0, a[1] || 0, out);
+	stickDirs('RS', a[2] || 0, a[3] || 0, out);
+	return out;
+}
+/** Every input of one headset controller (xr-standard gamepad) → { name: 0..1 }. */
+export function xrInputsRaw(hand, gp) {
+	const out = {};
+	if (!gp || (hand !== 'left' && hand !== 'right')) return out;
+	const H = hand === 'left' ? 'L' : 'R';
+	const b = gp.buttons || [];
+	out[`${H}-Trigger`] = btnVal(b[0]);
+	out[`${H}-Squeeze`] = btnVal(b[1]);
+	out[`${H}-StickPress`] = btnVal(b[3]);
+	out[hand === 'left' ? 'X' : 'A'] = btnVal(b[4]);
+	out[hand === 'left' ? 'Y' : 'B'] = btnVal(b[5]);
+	const a = gp.axes || [];
+	const x = a.length >= 4 ? a[2] : (a[0] || 0), y = a.length >= 4 ? a[3] : (a[1] || 0);
+	stickDirs(`${H}-Stick`, x || 0, y || 0, out);
+	return out;
+}
+export const isStickBinding = (b) => /-(Up|Down|Left|Right)$/.test(b || '') && !/^D/.test(b || '');

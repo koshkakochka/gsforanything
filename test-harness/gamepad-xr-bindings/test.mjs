@@ -133,18 +133,21 @@ async function sendChat(p) {
 	for (const [s, t] of Object.entries(tables)) for (const a of t.actions) { if (!a.gamepad) missingPad.push(`${s}.${a.id}`); if (!a.xr) missingXr.push(`${s}.${a.id}`); }
 	check('every built-in action (Orbit 4, Map 4, Fly 13, First person 4) has a default gamepad binding', missingPad.length === 0 && tables.fly.actions.length === 13, missingPad);
 	check('XR equivalents for every action except Fly look / roll / slow (head-driven in VR)', missingXr.join() === 'fly.pitchUp,fly.pitchDown,fly.rollLeft,fly.rollRight,fly.slow', missingXr);
-	check('mouse gestures (drag / wheel) have pad + VR equivalents in every style', Object.values(tables).every((t) => t.gestures.length >= 1 && t.gestures.every((g) => g.gamepad && g.xr)), Object.fromEntries(Object.entries(tables).map(([k, t]) => [k, t.gestures])));
+	check('mouse gestures (drag / wheel / mouse look) have controller rows in Orbit, Map and First person (Fly: all on keys); Y / View for every style',
+		['orbit', 'map', 'firstperson'].every((s) => tables[s].gestures.length >= 6 && tables[s].gestures.every((g) => g.gamepad || g.xr)) && tables.fly.gestures.length === 0
+		&& tables.map.gestures.find((g) => g.id === 'zoomIn').gamepad === 'RT' && tables.orbit.gestures.find((g) => g.id === 'rotateLeft').xr === 'R-Stick-Left'
+		&& tables.map.global.map((g) => g.gamepad).join() === 'Y,View', Object.fromEntries(Object.entries(tables).map(([k, t]) => [k, t.gestures])));
 	fs.writeFileSync(`${SHOT_DIR}/builtin-bindings.json`, JSON.stringify(tables, null, 2));
 
 	// UI
 	await setMode(p, 'map');
 	await openControls(p, 'camera');
 	const ui = await p.evaluate(() => ({
-		rows: [...document.querySelectorAll('#dchat-key-remap .gs-remap-row')].map((r) => r.querySelector('.gs-bind-alt')?.textContent || ''),
+		rows: [...document.querySelectorAll('#dchat-key-remap .gs-remap-row:not(.gs-remap-ctl-row)')].map((r) => r.querySelector('.gs-bind-alt')?.textContent || ''),
 		pad: document.getElementById('dchat-key-remap-pad')?.textContent || ''
 	}));
-	check('Map rows show 🎮 D-pad and VR left thumbstick under the key fields', ui.rows.length === 4 && ui.rows.every((t) => /🎮 D-pad/.test(t) && /VR Left thumbstick/.test(t)), ui.rows);
-	check('Map lists drag / wheel → stick / trigger equivalents and Y / View', /Pan \(left-drag\).*Left stick/.test(ui.pad) && /Zoom \(wheel\).*LT \/ RT/.test(ui.pad) && /🎮 Y/.test(ui.pad) && /In a headset/.test(ui.pad), ui.pad);
+	check('Map key rows show Gamepad D-pad and VR L stick under the key fields', ui.rows.length === 4 && ui.rows.every((t) => /Gamepad D-pad/.test(t) && /VR L stick/.test(t)), ui.rows);
+	check('Map lists drag / wheel → stick / trigger rows and Y / View', /Pan forward \(left-drag\)Gamepad LS ↑/.test(ui.pad) && /Zoom in \(wheel\)Gamepad RT/.test(ui.pad) && /Gamepad Y/.test(ui.pad) && /Gamepad View/.test(ui.pad) && /In a headset/.test(ui.pad), ui.pad);
 	await p.evaluate(() => document.getElementById('dchat-key-remap')?.scrollIntoView({ block: 'start' }));
 	await sleep(200);
 	await p.screenshot({ path: `${SHOT_DIR}/desktop-map-bindings.png` });
@@ -337,10 +340,10 @@ for (const [vp, opt, name] of [[{ width: 1280, height: 800 }, {}, 'desktop'], [{
 	await sleep(250);
 	const ph = await p.evaluate(() => ({
 		overflow: document.documentElement.scrollWidth > innerWidth,
-		rowOverflow: [...document.querySelectorAll('#dchat-key-remap .gs-remap-row')].some((r) => r.scrollWidth > r.clientWidth + 1),
+		rowOverflow: [...document.querySelectorAll('#dchat-key-remap .gs-remap-row, #dchat-key-remap .gs-ctl-row')].some((r) => r.scrollWidth > r.clientWidth + 1),
 		chips: document.querySelectorAll('#dchat-key-remap .gs-bind-alt').length
 	}));
-	check('phone: Fly rows with pad / VR lines fit (no horizontal overflow)', !ph.overflow && !ph.rowOverflow && ph.chips === 13, ph);
+	check('phone: Fly rows with pad / VR lines fit (no horizontal overflow)', !ph.overflow && !ph.rowOverflow && ph.chips === 15, ph);
 	await p.screenshot({ path: `${SHOT_DIR}/phone-fly-bindings.png` });
 	await openControls(p, 'custom');
 	await sleep(200);

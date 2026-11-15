@@ -331,7 +331,7 @@ export function createCameraControls({ camera, domElement, isSuspended = () => f
 	// active control's own API.
 	// dpadX / dpadY: d-pad (-1, 0, 1; up = -1): Orbit / Map pan like the pan
 	// keys, Fly rolls (←/→). slow: Fly's Slow (left stick press). See
-	// inputBindings.js BUILTIN_PAD for the whole table.
+	// inputBindings.js CONTROLLER_STYLES for the whole (remappable) table.
 	let padSlow = false;
 	function stick(dt, { lx = 0, ly = 0, rx = 0, ry = 0, vertical = 0, zoom = 0, dpadX = 0, dpadY = 0, slow = false } = {}) {
 		if (!controls || !controls.enabled || dt <= 0 || !GAMEPAD_MODES.has(mode)) return;
