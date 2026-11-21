@@ -18,10 +18,11 @@ Fetch domain, so nothing reaches a live model or production KV.
 - Phone (390x844 touch): 📷 behind More (+), back camera, layout.
 - AR / VR toggle with a mocked `navigator.xr` (both / VR only / AR only /
   none): disabled option, ENTER AR / ENTER VR, `requestSession` mode,
-  `gs.xrMode` persistence, the Env tab's AR / VR buttons.
+  `gs.xrMode` persistence, and that the Environment tab no longer has AR / VR
+  / Exit VR buttons (the dock `#gs-xr-mode` toggle is the control).
 - IWER Meta Quest 3: ray-click 📷 in the VR menu, the live preview quad on the
   menu window, ray-click Take photo / ✕; an `immersive-ar` session is
-  transparent with no sky and the Env tab switches VR colour / AR live; Enter
+  transparent with no sky and the dock toggle switches VR colour / AR live; Enter
   VR asks for the camera first only for people who used it before.
 
 ```bash

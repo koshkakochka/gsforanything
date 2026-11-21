@@ -40,7 +40,8 @@ Three moving parts:
 | `site-source/main.js` | The whole client app: scene setup, panels, input, speech, locomotion, and the vr-exec execution engine. |
 | `site-source/chatPrompt.js` | Chat → Prompt: the editable Scene chat prompt. Loads the default from `/api/prompts`, keeps a saved edit in `localStorage` (`gs.customChatPrompt.v1`) and adds it to `/api/chat` requests as `systemPrompt` (Scene chat and community merges; Ollama gets it directly). Shows the required technical section and the read-only fix-code / theme prompts. |
 | `site-source/vrWindows.js` | The one VR window path: DOM element → `htmlInCanvas.js` paint → textured plane, plus ray hover/click/drag/scroll and text-field focus for the menu, keyboard and HUD windows. |
-| `site-source/htmlInCanvas.js` | Paints a DOM subtree (boxes, gradients, borders, outlines, text, SVG) into a 2D canvas for the VR windows. |
+| `site-source/htmlInCanvas.js` | Paints a live DOM subtree into a 2D canvas for the VR windows. Prefers the WICG HTML-in-Canvas API (`drawElementImage`) when the browser has it, and falls back to a DOM walker that samples the same node. |
+| `site-source/sceneGenre.js` | Community genre + sub-genre list, sanitizer, and the shared picker used by the Publish modal and every Community tile. The Genres tab filters the grid with All / Uncategorized / genre / sub-genre. Stored on scene metadata (Worker KV and Vercel); older scenes are uncategorized. |
 | `site-source/exporter.js` | Share tab + 3D export: collects user content (plus the scene code's directional/point/spot lights; not GS's default rig, ambient or hemisphere), GLB and self-contained .gltf (GLTFExporter, KHR_lights_punctual), binary FBX 7.4 writer, OBJ+MTL+textures .zip, Blender .zip (.glb + `open_in_blender.py`), the export dialog and the Share tab content. Share link reuses main.js `shareCurrentScene()` → the Community share modal / upload flow. In VR the Share tab is used as-is inside the menu window. |
 | `site-source/webglGuard.js` | Creates the one WebGLRenderer: if the browser refuses WebGL it shows a "3D graphics are unavailable" page; on context loss it waits for one restore, then stops with a Reload button instead of looping. |
 | `site-source/threejsAddons/ARButton.js` | Enter-session button; requests the immersive WebXR session with `local-floor` + `dom-overlay`. |
@@ -256,8 +257,13 @@ scene
 Every VR window is an **html-in-canvas window** (`vrWindows.js` +
 `htmlInCanvas.js`): a real DOM element is painted into a 2D `<canvas>`
 (`paintElementToCanvas`, opaque) and shown on a plane with a `CanvasTexture`.
-There is no second, hand-drawn canvas UI any more, so VR shows exactly the
-desktop menu, with the same styles. All windows share one CSS-px→metre scale
+`paintElementToCanvas` uses the WICG HTML-in-Canvas API (`drawElementImage`)
+when the browser exposes it and has a paint snapshot of that same node;
+otherwise it uses a DOM walker. The walker paints siblings in CSS stacking
+order (not DOM order), so overlays such as the hamburger section list
+(`#desktop-chat-tabs`, z-index 40) stay on top of tab panels in the texture;
+ray hits use the same stacking. There is no second, hand-drawn canvas UI,
+so VR shows exactly the desktop menu, with the same styles. All windows share one CSS-px→metre scale
 (head-locked ones scaled by distance), the same frame, and the same ray
 behaviour: hover (amber `.gs-ray-hover` ring + amber reticle), trigger click,
 trigger-drag scroll, thumbstick scroll (locomotion off), and text fields that

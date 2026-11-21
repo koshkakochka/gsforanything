@@ -16,8 +16,9 @@ suite used to be `embed-export`.)
 - `test.mjs` (puppeteer-core + Chrome): the Share & Export tab has the link,
   "Allow others to export" and 3D formats but no Embed section (desktop and
   390x844 phone), Community rows have no Embed button; creator uploads one
-  scene with exports on and one with exports off (Community checkbox mirrored
-  in the Share tab), owner rows get an Allow/Block exports toggle; another
+  scene with exports on and one with exports off (the "Allow others to export
+  uploads" checkbox in the Publish to Community modal, mirrored in the Share
+  tab), owner rows get an Allow/Block exports toggle; another
   browser opening the no-export scene gets disabled model exports, blocked
   `.vrscene` export / Save to Device / re-upload (also after edits), no Merge;
   an old `/embed/:id` link lands on the view-only `/s/:id` page; an old

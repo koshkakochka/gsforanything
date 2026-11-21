@@ -3,6 +3,7 @@ import { allowExportFromBody, exportAllowed, isSceneOwner, legacyEmbedRedirectPa
 import { listThumbFields, parseThumbnailPayload, publicThumbnailField, thumbKey, thumbStub } from "../site-source/sceneThumbnail.js";
 import { descriptionForList, sanitizeDescription, descriptionPayloadTooLarge, createRateLimiter, clientIpFromHeaders } from "../site-source/sceneDescription.js";
 import { sanitizeSceneName } from "../site-source/sceneName.js";
+import { sanitizeGenre, genreListFields, applyGenreToRecord } from "../site-source/sceneGenre.js";
 import { CHAT_PROMPT_REQUIRED, FIX_CODE_PROMPT, MAX_CUSTOM_PROMPT_CHARS, SYSTEM_PROMPT, THEME_SYSTEM_PROMPT } from "./prompts.js";
 
 const descriptionPatchLimit = createRateLimiter();
@@ -483,7 +484,7 @@ async function handleApi(request, env) {
     const name = sanitizeSceneName(sceneData.name);
     const now = new Date().toISOString();
     const { creationContext, ...sceneFields } = sceneData;
-    const { allowExport: allowExportRaw, ownerKey: _ignoredOwnerKey, ownerKeyHash: _ignoredHash, isOwner: _ignoredIsOwner, thumbnail: thumbRaw, description: descRaw, ...cleanFields } = sceneFields;
+    const { allowExport: allowExportRaw, ownerKey: _ignoredOwnerKey, ownerKeyHash: _ignoredHash, isOwner: _ignoredIsOwner, thumbnail: thumbRaw, description: descRaw, genre: genreRaw, subGenre: subGenreRaw, ...cleanFields } = sceneFields;
     const allowExport = allowExportFromBody(allowExportRaw);
     const ownerKey = newOwnerKey();
     const record = { ...cleanFields, id, name, createdAt: sceneData.createdAt || now, updatedAt: now, allowExport, ownerKeyHash: await ownerKeyHash(ownerKey) };
@@ -495,6 +496,9 @@ async function handleApi(request, env) {
     const description = sanitizeDescription(descRaw);
     if (description) record.description = description;
     else delete record.description;
+    const tagged = sanitizeGenre({ genre: genreRaw, subGenre: subGenreRaw });
+    if (tagged.error) return json({ error: tagged.error }, 400);
+    applyGenreToRecord(record, tagged);
     const parsedThumb = parseThumbnailPayload(thumbRaw);
     let hasThumbnail = false;
     if (parsedThumb && parsedThumb.bytes) {
@@ -511,7 +515,7 @@ async function handleApi(request, env) {
     }
     const encoded = JSON.stringify(record);
     await env.SCENES.put(`cs:${id}`, encoded);
-    const meta = { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: now, size: new TextEncoder().encode(encoded).length, pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json`, allowExport, hasThumbnail, description: description || "" };
+    const meta = { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: now, size: new TextEncoder().encode(encoded).length, pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json`, allowExport, hasThumbnail, description: description || "", ...genreListFields(record) };
     const index = await readIndex(env, "cs-index");
     index.unshift(meta);
     await env.SCENES.put("cs-index", JSON.stringify(index));
@@ -540,6 +544,7 @@ async function handleApi(request, env) {
       size: s.size,
       allowExport: exportAllowed(s),
       description: descriptionForList(s.description),
+      ...genreListFields(s),
       ...listThumbFields(s.id, s.hasThumbnail),
       ...listItemTimestamps(s),
       ...sceneUrls(request, s.id),
@@ -560,6 +565,7 @@ async function handleApi(request, env) {
     if (thumb) pub.thumbnail = thumb;
     else delete pub.thumbnail;
     if (pub.description == null) pub.description = descriptionForList(record.description);
+    Object.assign(pub, genreListFields(record));
     return json({ ...pub, ...listThumbFields(id, !!(record.thumbnail && record.thumbnail.stored === "separate") || !!thumb), ...sceneUrls(request, id) });
   }
 
@@ -571,7 +577,7 @@ async function handleApi(request, env) {
     if (!SCENE_ID_RE.test(id)) return json({ error: "Scene not found" }, 404);
     const record = await kvGetJson(env, `cs:${id}`);
     if (!record) return json({ error: "Scene not found" }, 404);
-    if (body == null || (body.name == null && body.allowExport == null && body.description == null)) return json({ error: "Missing name" }, 400);
+    if (body == null || (body.name == null && body.allowExport == null && body.description == null && body.genre == null && body.subGenre == null)) return json({ error: "Missing name" }, 400);
     const isOwner = await isSceneOwner(record, request.headers.get(OWNER_KEY_HEADER));
     // Only the uploader (owner key) can change the export setting.
     // Descriptions are editable by anyone, same as rename; sanitize + rate/size-guard them.
@@ -595,21 +601,33 @@ async function handleApi(request, env) {
       if (description) record.description = description;
       else delete record.description;
     }
+    if (body.genre != null || body.subGenre != null) {
+      const genreIn = body.genre != null ? body.genre : record.genre;
+      const subIn = body.subGenre != null ? body.subGenre : record.subGenre;
+      if (!String(genreIn || "").trim()) {
+        applyGenreToRecord(record, { genre: "", subGenre: "" });
+      } else {
+        const tagged = sanitizeGenre({ genre: genreIn, subGenre: subIn });
+        if (tagged.error) return json({ error: tagged.error }, 400);
+        applyGenreToRecord(record, tagged);
+      }
+    }
     record.updatedAt = new Date().toISOString();
     const encoded = JSON.stringify(record);
     await env.SCENES.put(`cs:${id}`, encoded);
     const allowExport = exportAllowed(record);
     const index = await readIndex(env, "cs-index");
-    const next = index.map((s) => s.id === id ? { ...s, name, allowExport, updatedAt: record.updatedAt, uploadedAt: record.updatedAt, size: new TextEncoder().encode(encoded).length, pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json`, description: descriptionForList(record.description), hasThumbnail: !!(s.hasThumbnail || (record.thumbnail && record.thumbnail.stored === "separate")) } : s);
+    const next = index.map((s) => s.id === id ? { ...s, name, allowExport, updatedAt: record.updatedAt, uploadedAt: record.updatedAt, size: new TextEncoder().encode(encoded).length, pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json`, description: descriptionForList(record.description), ...genreListFields(record), hasThumbnail: !!(s.hasThumbnail || (record.thumbnail && record.thumbnail.stored === "separate")) } : s);
     await env.SCENES.put("cs-index", JSON.stringify(next));
     const meta = next.find((s) => s.id === id) || { pathname: `community-scenes/${id}--${encodeURIComponent(name)}.json`, size: encoded.length };
     return json({
       ok: true,
       url: `${requestOrigin(request)}/api/community-scenes/${id}`,
       pathname: meta.pathname,
-      scene: { id, name, uploadedAt: record.updatedAt, createdAt: record.createdAt || null, updatedAt: record.updatedAt, size: meta.size, allowExport, description: descriptionForList(record.description), ...listThumbFields(id, !!(record.thumbnail && record.thumbnail.stored === "separate")) },
+      scene: { id, name, uploadedAt: record.updatedAt, createdAt: record.createdAt || null, updatedAt: record.updatedAt, size: meta.size, allowExport, description: descriptionForList(record.description), ...genreListFields(record), ...listThumbFields(id, !!(record.thumbnail && record.thumbnail.stored === "separate")) },
       allowExport,
       description: descriptionForList(record.description),
+      ...genreListFields(record),
       ...sceneUrls(request, id),
     });
   }

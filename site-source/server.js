@@ -13,6 +13,7 @@ import { allowExportFromBody, exportAllowed, isSceneOwner, legacyEmbedRedirectPa
 import { listThumbFields, parseThumbnailPayload, publicThumbnailField, THUMB_PREFIX, thumbPathname, thumbStub } from './sceneThumbnail.js';
 import { descriptionForList, sanitizeDescription, descriptionPayloadTooLarge, createRateLimiter, clientIpFromHeaders } from './sceneDescription.js';
 import { sanitizeSceneName } from './sceneName.js';
+import { sanitizeGenre, genreListFields, applyGenreToRecord } from './sceneGenre.js';
 
 const descriptionPatchLimit = createRateLimiter();
 function requestClientIp(req) {
@@ -949,7 +950,7 @@ async function updateSceneMeta(id, patch) {
 	const index = await readSceneMetaIndex();
 	const prev = index[id] && typeof index[id] === 'object' ? index[id] : {};
 	const next = { ...prev, ...patch };
-	if (!next.description && !next.hasThumbnail) delete index[id];
+	if (!next.description && !next.hasThumbnail && !next.genre) delete index[id];
 	else index[id] = next;
 	await blobPut(SCENE_META_PATH, JSON.stringify(index), 'application/json');
 	return index;
@@ -988,7 +989,7 @@ app.post('/api/community-scenes', async (req, res) => {
 		const id = newSceneId();
 		const name = sanitizeSceneName(sceneData.name);
 		const now = new Date().toISOString();
-		const { creationContext, allowExport: allowExportRaw, ownerKey: _k, ownerKeyHash: _h, isOwner: _o, thumbnail: thumbRaw, description: descRaw, ...sceneFields } = sceneData;
+		const { creationContext, allowExport: allowExportRaw, ownerKey: _k, ownerKeyHash: _h, isOwner: _o, thumbnail: thumbRaw, description: descRaw, genre: genreRaw, subGenre: subGenreRaw, ...sceneFields } = sceneData;
 		const allowExport = allowExportFromBody(allowExportRaw);
 		const ownerKey = newOwnerKey();
 		const record = {
@@ -1008,6 +1009,9 @@ app.post('/api/community-scenes', async (req, res) => {
 		const description = sanitizeDescription(descRaw);
 		if (description) record.description = description;
 		else delete record.description;
+		const tagged = sanitizeGenre({ genre: genreRaw, subGenre: subGenreRaw });
+		if (tagged.error) return res.status(400).json({ error: tagged.error });
+		applyGenreToRecord(record, tagged);
 		const parsedThumb = parseThumbnailPayload(thumbRaw);
 		let hasThumbnail = false;
 		if (parsedThumb && parsedThumb.bytes) {
@@ -1015,7 +1019,7 @@ app.post('/api/community-scenes', async (req, res) => {
 			record.thumbnail = thumbStub(id, { contentType: parsedThumb.contentType, size: parsedThumb.bytes.byteLength });
 			hasThumbnail = true;
 		}
-		await updateSceneMeta(id, { description: description || '', hasThumbnail });
+		await updateSceneMeta(id, { description: description || '', hasThumbnail, ...genreListFields(record) });
 		if (creationContext != null) {
 			if (!validCreationContext(creationContext)) {
 				return res.status(400).json({ error: 'Invalid creationContext' });
@@ -1033,7 +1037,7 @@ app.post('/api/community-scenes', async (req, res) => {
 			ok: true,
 			url: blob.url,
 			pathname: blob.pathname || pathname,
-			scene: { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: record.updatedAt, size: blob.size, allowExport, description: description || '', ...listThumbFields(id, hasThumbnail) },
+			scene: { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: record.updatedAt, size: blob.size, allowExport, description: description || '', ...genreListFields(record), ...listThumbFields(id, hasThumbnail) },
 			allowExport,
 			// Returned once; the uploader's browser keeps it to prove ownership.
 			ownerKey,
@@ -1068,6 +1072,7 @@ app.get('/api/community-scenes', async (req, res) => {
 				size: s.size,
 				allowExport: s.allowExport !== false,
 				description: descriptionForList(meta.description),
+				...genreListFields(meta),
 				...listThumbFields(s.id, hasThumb),
 				...listItemTimestamps(s),
 				...urls(s.id)
@@ -1093,6 +1098,7 @@ app.get('/api/community-scenes/:id', async (req, res) => {
 		if (thumb) pub.thumbnail = thumb;
 		else delete pub.thumbnail;
 		if (pub.description == null) pub.description = descriptionForList(record.description);
+		Object.assign(pub, genreListFields(record));
 		const hasThumb = !!(record.thumbnail && record.thumbnail.stored === 'separate') || !!thumb;
 		res.json({ ...pub, ...listThumbFields(meta.id, hasThumb), ...sceneUrls(req, meta.id) });
 	} catch (error) {
@@ -1230,7 +1236,7 @@ app.patch('/api/community-scenes/:id', async (req, res) => {
 		const id = req.params.id;
 		const meta = await findCommunityBlob(id);
 		if (!meta) return res.status(404).json({ error: 'Scene not found' });
-		if (req.body == null || (req.body.name == null && req.body.allowExport == null && req.body.description == null)) {
+		if (req.body == null || (req.body.name == null && req.body.allowExport == null && req.body.description == null && req.body.genre == null && req.body.subGenre == null)) {
 			return res.status(400).json({ error: 'Missing name' });
 		}
 		const record = await readCommunitySceneRecord(meta);
@@ -1258,6 +1264,17 @@ app.patch('/api/community-scenes/:id', async (req, res) => {
 			if (description) record.description = description;
 			else delete record.description;
 		}
+		if (req.body.genre != null || req.body.subGenre != null) {
+			const genreIn = req.body.genre != null ? req.body.genre : record.genre;
+			const subIn = req.body.subGenre != null ? req.body.subGenre : record.subGenre;
+			if (!String(genreIn || '').trim()) {
+				applyGenreToRecord(record, { genre: '', subGenre: '' });
+			} else {
+				const tagged = sanitizeGenre({ genre: genreIn, subGenre: subIn });
+				if (tagged.error) return res.status(400).json({ error: tagged.error });
+				applyGenreToRecord(record, tagged);
+			}
+		}
 		record.updatedAt = new Date().toISOString();
 		const allowExport = exportAllowed(record);
 		const newPathname = communityPathname(id, name, allowExport);
@@ -1266,14 +1283,15 @@ app.patch('/api/community-scenes/:id', async (req, res) => {
 			await blobDelete(meta.url);
 		}
 		const hasThumb = !!(record.thumbnail && record.thumbnail.stored === 'separate');
-		await updateSceneMeta(id, { description: descriptionForList(record.description), hasThumbnail: hasThumb });
+		await updateSceneMeta(id, { description: descriptionForList(record.description), hasThumbnail: hasThumb, ...genreListFields(record) });
 		res.json({
 			ok: true,
 			url: blob.url,
 			pathname: blob.pathname || newPathname,
-			scene: { id, name, uploadedAt: record.updatedAt, createdAt: record.createdAt || null, updatedAt: record.updatedAt, size: blob.size, allowExport, description: descriptionForList(record.description), ...listThumbFields(id, hasThumb) },
+			scene: { id, name, uploadedAt: record.updatedAt, createdAt: record.createdAt || null, updatedAt: record.updatedAt, size: blob.size, allowExport, description: descriptionForList(record.description), ...genreListFields(record), ...listThumbFields(id, hasThumb) },
 			allowExport,
 			description: descriptionForList(record.description),
+			...genreListFields(record),
 			...sceneUrls(req, id)
 		});
 	} catch (error) {

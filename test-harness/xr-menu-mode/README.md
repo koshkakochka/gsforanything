@@ -16,8 +16,9 @@ with the CDP Fetch domain (no live AI, no KV).
   an in-app dialog ("needs one more tap", Enter AR) shows on the page and
   its button starts AR. No native dialogs.
 - Headset without `immersive-ar`: AR disabled in the headset menu; choosing it
-  through the API / Env tab shows an in-app message and stays in VR.
-- The Env tab's AR / VR buttons in a session behave the same.
+  through the API shows an in-app message and stays in VR.
+- The Environment tab has no AR / VR / Exit VR buttons; entry, mode, and exit
+  stay in the dock (`#XRButton`, `#gs-xr-mode`, `#gs-exit-vr-btn`).
 
 ```bash
 cd site-source && CLAUDE_API_KEY=fake OPENAI_API_KEY=fake PORT=3531 node server.js &

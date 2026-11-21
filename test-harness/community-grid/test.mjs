@@ -509,8 +509,98 @@ function moreBlueThanRed(c) { return c.b > c.r + 25 && c.b > 40; }
       ok('[guest] can edit and persist a description', guestSaved.ok && guestSaved.value === GUEST_DESC, JSON.stringify(guestSaved));
       const recGuest = await fetch(`${BASE}/api/community-scenes/${uploadedId}`).then((r) => r.json());
       ok('[guest] description persisted on the server', recGuest.description === GUEST_DESC, JSON.stringify(recGuest.description ?? recGuest));
+
+      // Guest can also tag/retag genre on the tile (same permission as descriptions).
+      const guestGenre = await q.evaluate(async (id) => {
+        const tile = document.querySelector(`.dchat-community-scene[data-scene-id="${id}"]`);
+        const genreSel = tile?.querySelector('.gs-genre-select[aria-label="Genre"]');
+        const subSel = tile?.querySelector('.gs-genre-select[aria-label="Sub-genre"]');
+        if (!genreSel || !subSel) return { ok: false, reason: 'missing picker' };
+        genreSel.value = 'games';
+        genreSel.dispatchEvent(new Event('change', { bubbles: true }));
+        subSel.value = 'puzzle';
+        subSel.dispatchEvent(new Event('change', { bubbles: true }));
+        const start = Date.now();
+        while (Date.now() - start < 8000) {
+          if (subSel.value === 'puzzle') return { ok: true, genre: genreSel.value, sub: subSel.value };
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        return { ok: false, genre: genreSel.value, sub: subSel.value };
+      }, uploadedId);
+      ok('[guest] tile has a genre picker and can tag Games / Puzzle', guestGenre.ok && guestGenre.genre === 'games' && guestGenre.sub === 'puzzle', JSON.stringify(guestGenre));
+      let recGenre = {};
+      for (let i = 0; i < 40; i++) {
+        recGenre = await fetch(`${BASE}/api/community-scenes/${uploadedId}`).then((r) => r.json());
+        if (recGenre.genre === 'games' && recGenre.subGenre === 'puzzle') break;
+        await sleep(50);
+      }
+      ok('[guest] genre persisted on the server', recGenre.genre === 'games' && recGenre.subGenre === 'puzzle', JSON.stringify({ genre: recGenre.genre, subGenre: recGenre.subGenre }));
     }
     await q.browserContext().close();
+  }
+
+  // Genres tab: filter the community grid; tile retag updates the filter immediately.
+  if (uploadedId) {
+    // Reload the list so tags saved by the guest context are visible here.
+    await p.evaluate(() => document.querySelector('#dchat-community-subtabs [data-community-section="scenes"]')?.click());
+    await p.waitForFunction((id) => {
+      const tile = document.querySelector(`#dchat-community-list .dchat-community-scene[data-scene-id="${id}"]`);
+      const g = tile?.querySelector('.gs-genre-select[aria-label="Genre"]');
+      return g && g.value === 'games';
+    }, { timeout: 10000 }, uploadedId).catch(() => {});
+    const filt = await p.evaluate(async (id) => {
+      const tab = document.querySelector('#dchat-community-subtabs [data-community-section="genres"]');
+      if (!tab) return { ok: false, reason: 'no genres tab' };
+      tab.click();
+      await new Promise((r) => setTimeout(r, 400));
+      const section = document.getElementById('dchat-community-section-genres');
+      const filters = document.getElementById('dchat-community-genres-filters');
+      const list = document.getElementById('dchat-community-genres-list');
+      const topLabels = [...(filters?.querySelectorAll('.gs-genre-filter-row:first-child .gs-genre-filter-btn') || [])].map((b) => b.textContent);
+      const uncat = [...(filters?.querySelectorAll('.gs-genre-filter-btn') || [])].find((b) => b.textContent === 'Uncategorized');
+      uncat?.click();
+      await new Promise((r) => setTimeout(r, 300));
+      const uncatHas = !!list?.querySelector(`.dchat-community-scene[data-scene-id="${id}"]`);
+      const games = [...(filters?.querySelectorAll('.gs-genre-filter-btn') || [])].find((b) => b.textContent === 'Games');
+      games?.click();
+      await new Promise((r) => setTimeout(r, 200));
+      const puzzle = [...(filters?.querySelectorAll('.gs-genre-filter-btn') || [])].find((b) => b.textContent === 'Puzzle');
+      puzzle?.click();
+      await new Promise((r) => setTimeout(r, 400));
+      const puzzleHas = !!list?.querySelector(`.dchat-community-scene[data-scene-id="${id}"]`);
+      const mergeBtn = list?.querySelector(`.dchat-community-scene[data-scene-id="${id}"] .gs-merge-row-btn, .dchat-community-scene[data-scene-id="${id}"] [data-action*="merge"], .dchat-community-scene[data-scene-id="${id}"] button`);
+      const tileBtns = [...(list?.querySelector(`.dchat-community-scene[data-scene-id="${id}"]`)?.querySelectorAll('button') || [])].map((b) => b.textContent.trim());
+      return {
+        ok: true,
+        sectionOn: section?.classList.contains('active'),
+        topLabels,
+        uncatHas,
+        puzzleHas,
+        tileBtns
+      };
+    }, uploadedId);
+    ok('Genres tab is available with All / Games / Uncategorized', filt.ok && filt.sectionOn && filt.topLabels.includes('All') && filt.topLabels.includes('Games') && filt.topLabels.includes('Uncategorized'), JSON.stringify(filt));
+    ok('Genres tab: Uncategorized hides a tagged scene; Games / Puzzle shows it', filt.uncatHas === false && filt.puzzleHas === true, JSON.stringify(filt));
+    ok('Genres tab tiles still have Merge (and other) actions', Array.isArray(filt.tileBtns) && filt.tileBtns.some((b) => /merge/i.test(b)), JSON.stringify(filt.tileBtns));
+
+    // Retag the tile in the Genres list to Horror; Puzzle filter should drop it immediately.
+    const retag = await p.evaluate(async (id) => {
+      const list = document.getElementById('dchat-community-genres-list');
+      const tile = list?.querySelector(`.dchat-community-scene[data-scene-id="${id}"]`);
+      const genreSel = tile?.querySelector('.gs-genre-select[aria-label="Genre"]');
+      const subSel = tile?.querySelector('.gs-genre-select[aria-label="Sub-genre"]');
+      if (!subSel) return { ok: false };
+      subSel.value = 'horror';
+      subSel.dispatchEvent(new Event('change', { bubbles: true }));
+      const start = Date.now();
+      while (Date.now() - start < 8000) {
+        const still = document.querySelector(`#dchat-community-genres-list .dchat-community-scene[data-scene-id="${id}"]`);
+        if (!still) return { ok: true, gone: true };
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return { ok: false, gone: !!document.querySelector(`#dchat-community-genres-list .dchat-community-scene[data-scene-id="${id}"]`) };
+    }, uploadedId);
+    ok('retagging a tile updates the Genres filter immediately', retag.ok && retag.gone, JSON.stringify(retag));
   }
 
   ok('[upload page] no unexpected console errors', p._errs.length === 0, p._errs.slice(0, 5).join(' | '));

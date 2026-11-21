@@ -1,9 +1,10 @@
 /**
  * VR windows: the one way GS shows UI inside an immersive session.
  *
- * Each window is a live DOM element (laid out off-screen by the browser,
- * styled by the same CSS as the desktop menu) painted into a canvas texture
- * by htmlInCanvas.js and shown on a flat mesh. The controller ray is mapped
+ * Each window is a live DOM element (the same node the desktop UI uses,
+ * styled by the same CSS) painted into a canvas texture by htmlInCanvas.js
+ * and shown on a flat mesh. htmlInCanvas prefers the WICG HTML-in-Canvas
+ * API (drawElementImage) and falls back to its DOM walker. The controller ray is mapped
  * back onto that element, so point, hover, click, drag-scroll, thumbstick
  * scroll and text-field targeting behave the same on every window. Text
  * fields are never DOM-focused in XR (that summons the Quest system keyboard,
@@ -20,6 +21,8 @@
  *  - Repaints are dirty-driven (MutationObserver + scroll/input/focus), capped
  *    at ~15/s, with a slow idle refresh. Nothing repaints every frame.
  */
+
+import { supportsNativeHtmlInCanvas, enableNativeHtmlInCanvasHost } from './htmlInCanvas.js';
 
 export const VR_WINDOW_DISTANCE = 1.5;           // metres, world windows
 export const VR_PX_TO_M = 1.12 / 640;            // 640 CSS px wide -> 1.12 m at 1.5 m
@@ -144,8 +147,49 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			if (was) win.setVisible(true);
 		};
 
+		// When the WICG HTML-in-Canvas API is present, wrap the source in the
+		// paint canvas so drawElementImage can snapshot the same node. The
+		// canvas stays in the viewport (behind the WebGL view) so the browser
+		// can record a paint; the walker still works if there is no snapshot
+		// (typical while an immersive session is presenting). Desktop layout
+		// is restored on hide, so the on-page modal is unchanged.
+		const wrapNative = (el) => {
+			if (!supportsNativeHtmlInCanvas() || !el) return;
+			if (el.parentElement === canvas) return;
+			enableNativeHtmlInCanvasHost(canvas);
+			win._homeParent = el.parentNode;
+			win._homeNext = el.nextSibling;
+			if (win._homeParent) win._homeParent.insertBefore(canvas, el);
+			else document.body.appendChild(canvas);
+			el.setAttribute('drawable', '');
+			canvas.appendChild(el);
+			if (!win._onNativePaint) {
+				win._onNativePaint = () => markDirty();
+				canvas.addEventListener('paint', win._onNativePaint);
+			}
+		};
+		const unwrapNative = (el) => {
+			if (!el) return;
+			el.removeAttribute('drawable');
+			if (win._homeParent) {
+				if (canvas.parentNode === win._homeParent) {
+					win._homeParent.insertBefore(el, canvas);
+					canvas.remove();
+				} else {
+					win._homeParent.insertBefore(el, win._homeNext);
+					if (canvas.parentNode) canvas.remove();
+				}
+			} else if (el.parentElement === canvas) {
+				document.body.appendChild(el);
+				if (canvas.parentNode) canvas.remove();
+			}
+			win._homeParent = win._homeNext = null;
+		};
+
 		win.setVisible = (on) => {
 			on = !!on;
+			if (on) wrapNative(source);
+			else unwrapNative(source);
 			source.classList.toggle(SOURCE_CLASS, on);
 			if (on && !win._observer) {
 				win._observer = new MutationObserver(markDirty);

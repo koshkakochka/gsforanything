@@ -10,6 +10,10 @@ import {
   DESCRIPTION_PLACEHOLDER, descriptionPayloadTooLarge, createRateLimiter,
   clientIpFromHeaders
 } from '../../site-source/sceneDescription.js';
+import {
+  sanitizeGenre, genreForList, sceneMatchesGenreFilter, COMMUNITY_GENRES,
+  findGenre, formatGenre, UNCATEGORIZED_LABEL, applyGenreToRecord
+} from '../../site-source/sceneGenre.js';
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const jpeg = readFileSync(join(dir, 'sample.jpg'));
@@ -68,6 +72,29 @@ ok('stub shape', thumbStub('xyz').stored === 'separate' && thumbStub('xyz').url 
 ok('public field strips data URLs to stub', publicThumbnailField({ id: 'zz', thumbnail: jpgUrl })?.url === '/api/community-scenes/zz/thumb');
 ok('public field keeps stub', publicThumbnailField({ thumbnail: thumbStub('aa') })?.url === '/api/community-scenes/aa/thumb');
 ok('public field omits empty', publicThumbnailField({ thumbnail: '' }) === undefined);
+
+// --- genres ---
+ok('blank / missing is uncategorized', sanitizeGenre({}).genre === '' && sanitizeGenre({ genre: '', subGenre: '' }).subGenre === '' && !sanitizeGenre(null).error);
+ok('accepts Games / Action by label', sanitizeGenre({ genre: 'Games', subGenre: 'Action' }).genre === 'games' && sanitizeGenre({ genre: 'Games', subGenre: 'Action' }).subGenre === 'action');
+ok('accepts ids', sanitizeGenre({ genre: 'interactive-experiences', subGenre: 'shader-demos' }).subGenre === 'shader-demos');
+ok('unknown genre errors', sanitizeGenre({ genre: 'bogus', subGenre: 'action' }).error === 'Unknown genre');
+ok('unknown sub-genre errors', sanitizeGenre({ genre: 'games', subGenre: 'shader-demos' }).error === 'Unknown sub-genre');
+ok('genre without sub-genre errors', !!sanitizeGenre({ genre: 'games', subGenre: '' }).error);
+ok('corrupt stored values list as uncategorized', genreForList({ genre: 'nope', subGenre: 'x' }).genre === '');
+ok('Games and Interactive Experiences both exist', COMMUNITY_GENRES.map((g) => g.id).join() === 'games,interactive-experiences');
+ok('Games has expected subs including Other', findGenre('games').subGenres.some((s) => s.id === 'other') && findGenre('games').subGenres.length === 15);
+ok('Interactive Experiences has expected subs', findGenre('interactive-experiences').subGenres.length === 11);
+ok('format uncategorized', formatGenre({}) === UNCATEGORIZED_LABEL);
+ok('format tagged', formatGenre({ genre: 'games', subGenre: 'puzzle' }) === 'Games · Puzzle');
+const rec = { name: 'x' };
+applyGenreToRecord(rec, { genre: 'games', subGenre: 'racing' });
+ok('apply writes ids', rec.genre === 'games' && rec.subGenre === 'racing');
+applyGenreToRecord(rec, { genre: '', subGenre: '' });
+ok('apply clears uncategorized', rec.genre == null && rec.subGenre == null);
+ok('filter all matches everything', sceneMatchesGenreFilter({ genre: 'games', subGenre: 'action' }, { mode: 'all' }) && sceneMatchesGenreFilter({}, { mode: 'all' }));
+ok('filter uncategorized', sceneMatchesGenreFilter({}, { mode: 'uncategorized' }) && !sceneMatchesGenreFilter({ genre: 'games', subGenre: 'action' }, { mode: 'uncategorized' }));
+ok('filter genre all subs', sceneMatchesGenreFilter({ genre: 'games', subGenre: 'action' }, { mode: 'genre', genre: 'games' }) && !sceneMatchesGenreFilter({ genre: 'interactive-experiences', subGenre: 'educational' }, { mode: 'genre', genre: 'games' }));
+ok('filter sub-genre', sceneMatchesGenreFilter({ genre: 'games', subGenre: 'action' }, { mode: 'genre', genre: 'games', subGenre: 'action' }) && !sceneMatchesGenreFilter({ genre: 'games', subGenre: 'puzzle' }, { mode: 'genre', genre: 'games', subGenre: 'action' }));
 
 console.log(`\n${n - fails}/${n} passed`);
 process.exit(fails ? 1 : 0);

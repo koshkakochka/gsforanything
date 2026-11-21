@@ -3,7 +3,7 @@
 Checks the Community tab's responsive tile grid, save-time thumbnails (from
 the scene's initial camera pose), and editable per-scene descriptions.
 
-- `unit.mjs`: `sceneThumbnail.js` and `sceneDescription.js` helpers.
+- `unit.mjs`: `sceneThumbnail.js`, `sceneDescription.js`, and `sceneGenre.js` helpers.
   `node unit.mjs`
 - `vercel-sim.mjs`: `site-source/server.js` as on Vercel, with an in-memory
   Vercel Blob fake, on `http://localhost:3621` (`SIM_PORT`).
@@ -16,7 +16,9 @@ the scene's initial camera pose), and editable per-scene descriptions.
   moving the camera produces a thumbnail of the *initial* pose, served by
   the endpoint; every tile has a description section (empty ones show
   "No description yet" plus Edit); edit + save/cancel + persist + reload,
-  multiline and escaping, Esc/Cancel restores, guests can edit too.
+  multiline and escaping, Esc/Cancel restores, guests can edit too;
+  tile genre tagging (same permission model) and the Genres tab filter
+  (All / genre / sub-genre / Uncategorized), including immediate updates.
   `/api/chat` is stubbed. `SHOTS=/dir` saves screenshots (desktop grid, phone
   grid, placeholder/edit states, a VR-menu htmlInCanvas paint, a sample thumbnail).
 
