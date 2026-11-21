@@ -34,6 +34,7 @@
  */
 
 import { sanitizeSceneName, SCENE_NAME_MAX, DEFAULT_UPLOAD_NAME } from './sceneName.js';
+import { mountGenrePicker } from './sceneGenre.js';
 
 export const CONTEXT_FORMAT = 'gs-creation-context';
 export const CONTEXT_VERSION = 1;
@@ -761,6 +762,15 @@ const CSS = `
 .gs-ctx-name .gs-ctx-name-label { font-weight: 600; }
 .gs-ctx-name-input { box-sizing: border-box; width: 100%; min-height: 44px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.5); background: #2c2e3e; color: #fff; font-family: inherit; font-size: 16px; line-height: 1.4; }
 .gs-ctx-name-input:focus-visible { outline: 3px solid #facc15; outline-offset: 2px; }
+.gs-ctx-allow-export { font-size: 13px; }
+.gs-ctx-allow-export input { width: 18px; height: 18px; margin: 0; flex-shrink: 0; }
+.gs-ctx-inner .gs-genre-picker { display: flex; flex-wrap: wrap; gap: 10px 14px; margin: 4px 0 2px; }
+.gs-ctx-inner .gs-genre-field { display: flex; flex-direction: column; gap: 6px; flex: 1 1 160px; font-size: 13px; }
+.gs-ctx-inner .gs-genre-label { font-weight: 600; }
+.gs-ctx-inner .gs-genre-select { box-sizing: border-box; width: 100%; min-height: 44px; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.5); background: #2c2e3e; color: #fff; font-family: inherit; font-size: 16px; }
+.gs-ctx-inner.html-in-canvas-source .gs-genre-select { min-height: 56px; font-size: 18px; }
+.gs-ctx-inner.html-in-canvas-source .gs-ctx-allow-export { font-size: 18px; min-height: 44px; }
+.gs-ctx-inner.html-in-canvas-source .gs-ctx-allow-export input { width: 22px; height: 22px; }
 .gs-ctx-inner { overflow: auto; }
 .gs-ctx-inner.html-in-canvas-source { width: 520px !important; max-height: none !important; overflow: visible !important; font-size: 18px; }
 .gs-ctx-inner.html-in-canvas-source .gs-ctx-name-input { min-height: 56px; font-size: 18px; }
@@ -780,7 +790,9 @@ let publishMode = null; // 'page' | 'xr' | null
 const publishHooks = {
 	isImmersive: () => false,
 	onShow: null,  // (card, { input }) => void
-	onHide: null   // (card) => void
+	onHide: null,  // (card) => void
+	getAllowExport: () => true,
+	setAllowExport: null
 };
 
 /** main.js hands in the VR hooks (same window as gsDialog). */
@@ -995,7 +1007,7 @@ function openPublishDialog(sceneData, pref, secretsInCode, resolve) {
 		// phase), so WASD / arrows / shortcuts never reach the camera controls.
 		const swallow = (e) => {
 			if (!publishEl.classList.contains('visible')) return;
-			if (publishMode === 'xr' && !publishEl.contains(e.target)) return;
+			if (publishMode === 'xr' && !publishEl.contains(e.target) && !(publishCard() && publishCard().contains(e.target))) return;
 			e.stopPropagation();
 		};
 		document.addEventListener('keydown', (e) => publishEl._onKey?.(e), true);
@@ -1040,6 +1052,10 @@ function openPublishDialog(sceneData, pref, secretsInCode, resolve) {
 	const submit = async () => {
 		if (busy || done) return;
 		sceneData.name = sanitizeSceneName(nameInput.value, DEFAULT_UPLOAD_NAME);
+		const tagged = genrePicker.getValue();
+		if (tagged.error) return; // genre chosen but no valid sub-genre yet
+		sceneData.genre = tagged.genre;
+		sceneData.subGenre = tagged.subGenre;
 		if (hasContext) {
 			writePublishPref({ include: include.checked, files: includeFiles.checked });
 			if (include.checked) {
@@ -1058,7 +1074,7 @@ function openPublishDialog(sceneData, pref, secretsInCode, resolve) {
 	publishEl._onKey = (e) => {
 		if (!publishEl.classList.contains('visible')) return;
 		// In VR only keys aimed at the card count (the VR keyboard's Send/Enter).
-		if (publishMode === 'xr' && !publishEl.contains(e.target)) return;
+		if (publishMode === 'xr' && !publishEl.contains(e.target) && !(publishCard() && publishCard().contains(e.target))) return;
 		e.stopPropagation();
 		if (e.isComposing) return;
 		if (e.key === 'Escape' || e.key === 'Esc') { e.preventDefault(); finish(null); return; }
@@ -1099,6 +1115,19 @@ function openPublishDialog(sceneData, pref, secretsInCode, resolve) {
 		nameInput,
 		el('span', { class: 'gs-ctx-sub', id: 'gs-ctx-publish-name-hint' }, `Shown on the Community tile. Up to ${SCENE_NAME_MAX} characters.`)
 	);
+	// Same "Allow others to export uploads" control that used to sit in the
+	// Community tab header. Same id / default / effect; now it lives on this
+	// shared card so it is also visible and toggleable in the XR pane.
+	const allowExportBox = el('input', { type: 'checkbox', id: 'dchat-upload-allow-export' });
+	allowExportBox.checked = publishHooks.getAllowExport?.() !== false;
+	allowExportBox.addEventListener('change', () => publishHooks.setAllowExport?.(allowExportBox.checked));
+	const allowExportField = el('label', {
+		class: 'gs-ctx-check gs-ctx-allow-export dchat-upload-allow-export',
+		for: 'dchat-upload-allow-export',
+		title: 'Unchecked: people can view the scene but not download it as a 3D model or save its code'
+	}, allowExportBox, el('span', {}, 'Allow others to export uploads'));
+	const genreField = el('div', { class: 'gs-ctx-genre', id: 'gs-ctx-publish-genre-wrap' });
+	const genrePicker = mountGenrePicker(genreField, { idPrefix: 'gs-ctx-publish', allowUncategorized: true, value: { genre: sceneData.genre, subGenre: sceneData.subGenre } });
 	const contextBits = hasContext ? [
 		el('label', { class: 'gs-ctx-check' }, include, el('span', {}, el('strong', {}, 'Include creation context'), ' — the chat log and info log (settings, code edits)')),
 		el('label', { class: 'gs-ctx-check', style: 'margin-left:24px' }, includeFiles, el('span', {}, 'Include the contents of attached files (otherwise only their names and sizes)')),
@@ -1112,6 +1141,8 @@ function openPublishDialog(sceneData, pref, secretsInCode, resolve) {
 			? 'Community scenes are public: anyone with the link can open them. The creation context lets you (or anyone who opens the scene) see the original chat and files and keep building from where it left off.'
 			: 'Community scenes are public: anyone with the link can open them.'),
 		nameField,
+		genreField,
+		allowExportField,
 		...contextBits,
 		codeWarn,
 		el('div', { class: 'gs-ctx-actions' },

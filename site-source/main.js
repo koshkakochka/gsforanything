@@ -29,6 +29,10 @@ import { createCustomCameraModes } from './customCameraModes.js';
 import { CONTROLLER_STYLES, GLOBAL_PAD_ROWS, DEFAULT_LOCOMOTION, padValue, xrButtonOf, xrStickOf } from './inputBindings.js';
 import * as gsPadXrBindings from './controllerBindings.js';
 import { sanitizeDescription, DESCRIPTION_MAX_CHARS, DESCRIPTION_PLACEHOLDER } from './sceneDescription.js';
+import {
+	mountGenrePicker, genreForList, sceneMatchesGenreFilter, COMMUNITY_GENRES,
+	UNCATEGORIZED_LABEL, ALL_GENRES_LABEL, sanitizeGenre, applyGenreToRecord
+} from './sceneGenre.js';
 import { THUMB_WIDTH, THUMB_HEIGHT, THUMB_MAX_BYTES } from './sceneThumbnail.js';
 import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
 import { createSceneFit, DOME_MARGIN, FAR_MARGIN, isDomeObject } from './sceneFit.js';
@@ -293,17 +297,10 @@ const dchatHdriStatus = document.getElementById('dchat-hdri-status');
 // so there is one definition and one rendering path. All clicks (mouse,
 // touch, controller ray) funnel into handleMenuAction() below.
 // ============================================================================
-// AR / VR: which immersive session Enter starts (see "AR / VR mode" below).
-// Inside an AR session they switch live between passthrough and the colour
-// skybox; inside a VR session AR restarts the session as immersive-ar
-// (chooseXrMode). The top-bar AR | VR toggle does the same.
-const ENV_MODE_BUTTONS = [
-	{ id: 'ar', label: 'AR (passthrough)', action: 'env:ar' },
-	{ id: 'vr', label: 'VR (color)', action: 'env:vr' }
-];
-const EXIT_XR_BUTTON = [
-	{ id: 'exitXr', label: 'Exit VR', action: 'env:exit', variant: 'warning' }
-];
+// AR / VR / Exit VR used to be Environment-tab buttons. They now live only
+// in the window top bar (#gs-xr-mode + #XRButton + #gs-exit-vr-btn). The
+// env:ar / env:vr / env:exit actions in handleMenuAction still work if
+// something calls them.
 const SCENES_BUTTONS = [
 	{ id: 'importFile', label: 'Import .vrscene.json', action: 'scenes:importFile' },
 	{ id: 'clearScene', label: 'Clear All From Scene', action: 'scenes:clear', variant: 'secondary' }
@@ -423,6 +420,10 @@ function handleMenuAction(action) {
 			break;
 		case 'communitySection:themes':
 			setCommunitySection('themes');
+			renderDomSceneList();
+			break;
+		case 'communitySection:genres':
+			setCommunitySection('genres');
 			renderDomSceneList();
 			break;
 		case 'chatSection:scene':
@@ -659,7 +660,8 @@ let sceneFileExtension = 'vrscene';
 let scenePanelSubTab = 'scenes'; // 'scenes' | 'code' | 'community' - see SCENE_PANEL_SUB_TABS
 let communityScenesCache = []; // last-fetched list
 let communityThemesCache = [];
-let communitySection = 'scenes'; // Community tab: 'scenes' | 'themes'
+let communitySection = 'scenes'; // Community tab: 'scenes' | 'genres' | 'themes'
+let communityGenreFilter = { mode: 'all' };
 // In-flight fetches keyed by communityKey so spam-clicks share one apply.
 const communityLoadInflight = new Map();
 // Bumped by every Community click and every scene change; a fetch that lands
@@ -670,8 +672,8 @@ let communityApplyChain = Promise.resolve();
 let chatSection = 'scene'; // Chat tab: 'scene' | 'theme' | 'prompt'
 let displayOnlyMode = false; // share URL opened with editor chrome stripped
 let pendingShare = null; // share modal payload { id, name, editorUrl, viewUrl }
-// Community upload: "Allow others to export this scene" (Community tab and
-// Share tab checkboxes). Starts at Allow on every page load.
+// Community upload: "Allow others to export this scene" (Publish to Community
+// modal and Share tab checkboxes). Starts at Allow on every page load.
 let uploadAllowExport = true;
 let lastUploadedName = ''; // name chosen in the last Community upload (prefills the next one)
 let codeEditorDirty = false; // user has unsaved edits in Code tab
@@ -2184,23 +2186,13 @@ function syncBgColorPreview(hex) {
 	}
 }
 
-// Environment tab: AR/VR toggle (+ Exit VR while in a headset or phone XR)
-// and the background colour controls. Safe to call before the DOM exists.
+// Environment tab: background colour controls (and HDRI, origin, etc.).
+// AR / VR / Exit VR are not on this tab; they live in the window top bar.
+// Safe to call before the DOM exists.
 function renderDomEnv() {
-	if (!dchatEnvModeMount) return;
-	const inXr = !!(renderer && renderer.xr && renderer.xr.isPresenting) ||
-		(typeof mobileXRMode !== 'undefined' && !!mobileXRMode);
-	// In an AR session the buttons show what you see now (passthrough or
-	// skybox); otherwise which mode Enter will start.
-	const inArSession = !!(renderer && renderer.xr && renderer.xr.isPresenting) && xrSessionMode === 'immersive-ar';
-	const activeMode = inArSession ? (isVRMode ? 'vr' : 'ar') : effectiveXrMode();
-	const buttons = [
-		...ENV_MODE_BUTTONS.map(b => (xrModeSupport[b.id] === false && 'xr' in navigator && !(b.id === 'vr' && !xrModeSupport.ar)
-			? { ...b, label: b.id === 'ar' ? 'AR (not supported)' : 'VR (not supported)', variant: 'disabled' }
-			: { ...b, variant: b.id === activeMode ? 'active' : 'inactiveToggle' })),
-		...(inXr ? EXIT_XR_BUTTON : [])
-	];
-	mountButtonsToDOM(dchatEnvModeMount, buttons, { width: 256, height: 40, gap: 6, fontSize: 13, perRow: 2 }, handleMenuAction);
+	const envSection = document.getElementById('dchat-env-mode-section');
+	if (envSection) envSection.hidden = true;
+	if (dchatEnvModeMount) dchatEnvModeMount.replaceChildren();
 	const colorEnabled = envColorControlsEnabled();
 	if (dchatEnvControls) dchatEnvControls.classList.toggle('disabled', !colorEnabled);
 	const note = dchatEnvControls && dchatEnvControls.querySelector('.dchat-disabled-note');
@@ -3286,7 +3278,7 @@ async function copyText(text) {
 	return ok;
 }
 
-async function uploadCurrentSceneToCommunity({ showShare = true, allowExport = uploadAllowExport } = {}) {
+async function uploadCurrentSceneToCommunity({ showShare = true, allowExport } = {}) {
 	if (displayOnlyMode) return null;
 	// Prefill for the name field: the loaded scene's title, else the name
 	// used for the last upload this session, else the old default.
@@ -3308,6 +3300,10 @@ async function uploadCurrentSceneToCommunity({ showShare = true, allowExport = u
 		updateStatus('Upload cancelled', '');
 		return null;
 	}
+	// Read the live checkbox value after the publish dialog (the default
+	// would have been captured when Upload was clicked, before the user
+	// could toggle it in the modal).
+	if (allowExport === undefined) allowExport = uploadAllowExport;
 	// A custom HDRI file from this computer goes up right after the scene.
 	const hdriFile = hdriFileForUpload();
 	if (hdriFile) sceneData = { ...sceneData, environmentHdri: hdriFile.desc };
@@ -3641,6 +3637,59 @@ function bindCommunityDescription(wrap, cs) {
 	queueMicrotask(() => applyView());
 }
 
+/** Save a Community scene's genre (PATCH). Same permission as descriptions: anyone can tag or retag. */
+async function setCommunitySceneGenre(cs, tagged) {
+	if (!cs?.id) return false;
+	const value = sanitizeGenre(tagged);
+	if (value.error) {
+		updateStatus(`Genre error: ${value.error}`, 'error');
+		return false;
+	}
+	try {
+		const res = await fetch(`/api/community-scenes/${encodeURIComponent(cs.id)}`, {
+			method: 'PATCH',
+			headers: ownerHeaders(cs.id, { 'Content-Type': 'application/json' }),
+			body: JSON.stringify({ genre: value.genre, subGenre: value.subGenre })
+		});
+		const data = await res.json().catch(() => ({}));
+		if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
+		applyGenreToRecord(cs, value);
+		const cached = communityScenesCache.find((s) => s.id === cs.id);
+		if (cached) applyGenreToRecord(cached, value);
+		return true;
+	} catch (err) {
+		updateStatus(`Genre error: ${err.message}`, 'error');
+		return false;
+	}
+}
+
+function bindCommunityGenre(wrap, cs) {
+	const stop = (e) => e.stopPropagation();
+	for (const ev of ['click', 'pointerdown', 'mousedown', 'touchstart']) {
+		wrap.addEventListener(ev, stop);
+	}
+	const current = genreForList(cs);
+	let saving = false;
+	const picker = mountGenrePicker(wrap, {
+		idPrefix: `gs-tile-genre-${cs.id || 'x'}`,
+		allowUncategorized: true,
+		value: current,
+		onChange: async (v) => {
+			if (saving || v.error) return;
+			const prev = genreForList(cs);
+			if (prev.genre === v.genre && prev.subGenre === v.subGenre) return;
+			saving = true;
+			const ok = await setCommunitySceneGenre(cs, v);
+			saving = false;
+			if (!ok) picker.setValue(prev);
+			else {
+				fillCommunitySceneList(dchatCommunityList, communityScenesCache);
+				renderCommunityGenresList();
+			}
+		}
+	});
+}
+
 function communityThumbUrl(cs) {
 	if (cs && cs.hasThumbnail && cs.thumbUrl) return cs.thumbUrl;
 	if (cs && cs.thumbnail && typeof cs.thumbnail === 'object' && cs.thumbnail.url) return cs.thumbnail.url;
@@ -3648,16 +3697,14 @@ function communityThumbUrl(cs) {
 	return '';
 }
 
-function renderCommunitySceneList(scenes) {
-	communityScenesCache = scenes;
-	if (scenePanelSubTab === 'community') renderDomSceneList();
-
-	dchatCommunityList.innerHTML = '';
-	if (scenes.length === 0) {
+function fillCommunitySceneList(container, scenes, { emptyText } = {}) {
+	if (!container) return;
+	container.innerHTML = '';
+	if (!scenes.length) {
 		const empty = document.createElement('div');
 		empty.className = 'dchat-scene-empty';
-		empty.textContent = 'No community scenes yet. Be the first to upload one!';
-		dchatCommunityList.appendChild(empty);
+		empty.textContent = emptyText || 'No community scenes yet. Be the first to upload one!';
+		container.appendChild(empty);
 		return;
 	}
 	for (const cs of scenes) {
@@ -3747,10 +3794,90 @@ function renderCommunitySceneList(scenes) {
 		}
 		GSMerge.decorateCommunityRow(actions, cs); // "Merge" pick button
 		bindCommunityDescription(descWrap, cs);
-		body.append(nameRow, descWrap, actions);
+		const genreWrap = document.createElement('div');
+		genreWrap.className = 'dchat-community-genre-wrap';
+		bindCommunityGenre(genreWrap, cs);
+		body.append(nameRow, descWrap, genreWrap, actions);
 		item.append(thumbWrap, body);
-		dchatCommunityList.appendChild(item);
+		container.appendChild(item);
 	}
+}
+
+function renderCommunityGenresFilters() {
+	const host = document.getElementById('dchat-community-genres-filters');
+	if (!host) return;
+	host.innerHTML = '';
+	const top = document.createElement('div');
+	top.className = 'gs-genre-filter-row';
+	top.setAttribute('role', 'group');
+	top.setAttribute('aria-label', 'Genre');
+	const addBtn = (row, label, active, onClick) => {
+		const b = document.createElement('button');
+		b.type = 'button';
+		b.className = 'gs-genre-filter-btn' + (active ? ' active' : '');
+		b.textContent = label;
+		if (active) b.setAttribute('aria-pressed', 'true');
+		b.addEventListener('click', onClick);
+		row.appendChild(b);
+		return b;
+	};
+	addBtn(top, ALL_GENRES_LABEL, communityGenreFilter.mode === 'all', () => {
+		communityGenreFilter = { mode: 'all' };
+		renderCommunityGenresFilters();
+		renderCommunityGenresList();
+	});
+	for (const g of COMMUNITY_GENRES) {
+		addBtn(top, g.label, communityGenreFilter.mode === 'genre' && communityGenreFilter.genre === g.id, () => {
+			communityGenreFilter = { mode: 'genre', genre: g.id, subGenre: '' };
+			renderCommunityGenresFilters();
+			renderCommunityGenresList();
+		});
+	}
+	addBtn(top, UNCATEGORIZED_LABEL, communityGenreFilter.mode === 'uncategorized', () => {
+		communityGenreFilter = { mode: 'uncategorized' };
+		renderCommunityGenresFilters();
+		renderCommunityGenresList();
+	});
+	host.appendChild(top);
+	if (communityGenreFilter.mode === 'genre') {
+		const g = COMMUNITY_GENRES.find((x) => x.id === communityGenreFilter.genre);
+		if (g) {
+			const sub = document.createElement('div');
+			sub.className = 'gs-genre-filter-row';
+			sub.setAttribute('role', 'group');
+			sub.setAttribute('aria-label', 'Sub-genre');
+			addBtn(sub, ALL_GENRES_LABEL, !communityGenreFilter.subGenre, () => {
+				communityGenreFilter = { mode: 'genre', genre: g.id, subGenre: '' };
+				renderCommunityGenresFilters();
+				renderCommunityGenresList();
+			});
+			for (const s of g.subGenres) {
+				addBtn(sub, s.label, communityGenreFilter.subGenre === s.id, () => {
+					communityGenreFilter = { mode: 'genre', genre: g.id, subGenre: s.id };
+					renderCommunityGenresFilters();
+					renderCommunityGenresList();
+				});
+			}
+			host.appendChild(sub);
+		}
+	}
+}
+
+function renderCommunityGenresList() {
+	const list = document.getElementById('dchat-community-genres-list');
+	const filtered = communityScenesCache.filter((s) => sceneMatchesGenreFilter(s, communityGenreFilter));
+	const empty = communityGenreFilter.mode === 'all'
+		? 'No community scenes yet. Be the first to upload one!'
+		: 'No scenes in this genre yet.';
+	fillCommunitySceneList(list, filtered, { emptyText: empty });
+}
+
+function renderCommunitySceneList(scenes) {
+	communityScenesCache = scenes;
+	if (scenePanelSubTab === 'community') renderDomSceneList();
+	fillCommunitySceneList(dchatCommunityList, scenes);
+	renderCommunityGenresFilters();
+	renderCommunityGenresList();
 }
 
 // Identity of a Community scene: server id, else the blob url for legacy
@@ -3787,18 +3914,6 @@ function mountHtmlActionButtons(container, specs, { accentVariants = ['accent', 
 
 function renderCommunityDesktopButtons() {
 	mountHtmlActionButtons(dchatCommunityButtonsMount, COMMUNITY_BUTTONS);
-	// Upload choice: allow or don't allow others to export the uploaded scene.
-	if (!dchatCommunityButtonsMount) return;
-	const label = document.createElement('label');
-	label.className = 'dchat-upload-allow-export';
-	label.title = 'Unchecked: people can view the scene but not download it as a 3D model or save its code';
-	const box = document.createElement('input');
-	box.type = 'checkbox';
-	box.id = 'dchat-upload-allow-export';
-	box.checked = uploadAllowExport;
-	box.addEventListener('change', () => setUploadAllowExport(box.checked));
-	label.append(box, document.createTextNode(' Allow others to export uploads'));
-	dchatCommunityButtonsMount.appendChild(label);
 }
 
 function enqueueCommunityApply(fn) {
@@ -4111,13 +4226,15 @@ function parseThemeJsonBlocks(text) {
 }
 
 function setCommunitySection(section) {
-	communitySection = section === 'themes' ? 'themes' : 'scenes';
+	communitySection = section === 'themes' ? 'themes' : section === 'genres' ? 'genres' : 'scenes';
 	document.querySelectorAll('#dchat-community-subtabs .dchat-subtab').forEach(btn => {
 		btn.classList.toggle('active', btn.dataset.communitySection === communitySection);
 	});
 	const scenesSec = document.getElementById('dchat-community-section-scenes');
+	const genresSec = document.getElementById('dchat-community-section-genres');
 	const themesSec = document.getElementById('dchat-community-section-themes');
 	if (scenesSec) scenesSec.classList.toggle('active', communitySection === 'scenes');
+	if (genresSec) genresSec.classList.toggle('active', communitySection === 'genres');
 	if (themesSec) themesSec.classList.toggle('active', communitySection === 'themes');
 	if (communitySection === 'themes') refreshCommunityThemes();
 	else refreshCommunityScenes();
@@ -9425,11 +9542,8 @@ if (dchatCodeEditor && dchatCodeHighlight) {
 	codeHighlightApi = mountCodeHighlight(dchatCodeEditor, dchatCodeHighlight);
 }
 
-// Environment tab: VR mode (shared button spec, see ENV_MODE_BUTTONS/
-// handleMenuAction) and the "Select Color" bar (native color input overlaid
-// on the active-color preview). The toggle buttons themselves are
-// (re)mounted by renderDomEnv() since their active/inactive styling depends
-// on isVRMode.
+// Environment tab: the "Select Color" bar (native color input overlaid
+// on the active-color preview). AR / VR / Exit VR are in the top bar, not here.
 dchatColorPicker.addEventListener('input', () => {
 	const hex = dchatColorPicker.value;
 	const c = new THREE.Color(hex);
@@ -9987,6 +10101,8 @@ function initVrDialogWindow() {
 	// at the name field opens the VR keyboard, whose Send key publishes.
 	GSContext.configurePublishDialog({
 		isImmersive: () => xrSessionActive(),
+		getAllowExport: () => uploadAllowExport,
+		setAllowExport: (v) => setUploadAllowExport(v),
 		onShow: (card, d) => {
 			if (!card) return;
 			vrDialogWindow.setSource(card);

@@ -338,9 +338,10 @@ export function initCommunityMerge(hostApi) {
 	document.head.appendChild(style);
 	const list = document.getElementById('dchat-community-list');
 	if (list) {
-		const bar = el('div', { id: 'gs-merge-bar' },
-			el('button', { type: 'button', class: 'dchat-btn accent', id: 'gs-merge-open', title: 'Combine two Community scenes into a new one with the AI', onclick: () => openMergeDialog() }, '🔀 Merge scenes'),
-			el('span', { class: 'gs-merge-sel', id: 'gs-merge-sel' }, 'or press Merge on two scenes below')
+		// Selection status only. The top "Merge scenes" button was removed;
+		// merges start from the Merge button on each Community tile.
+		const bar = el('div', { id: 'gs-merge-bar', hidden: '' },
+			el('span', { class: 'gs-merge-sel', id: 'gs-merge-sel' }, '')
 		);
 		list.parentNode.insertBefore(bar, list);
 	}
@@ -352,7 +353,9 @@ function updateBar() {
 	const sel = document.getElementById('gs-merge-sel');
 	if (sel) sel.textContent = state.a || state.b
 		? `A: ${sceneLabel(state.a)} · B: ${sceneLabel(state.b)}`
-		: 'or press Merge on two scenes below';
+		: '';
+	const bar = document.getElementById('gs-merge-bar');
+	if (bar) bar.hidden = !(state.a || state.b);
 	for (const btn of document.querySelectorAll('.gs-merge-row-btn')) {
 		const id = btn.dataset.sceneId;
 		const tag = state.a?.id === id ? 'A' : state.b?.id === id ? 'B' : '';

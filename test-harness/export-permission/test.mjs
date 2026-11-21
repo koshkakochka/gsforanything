@@ -69,12 +69,12 @@ const formatsOn = (st) => st.formatsDisabled.length === 5 && st.formatsDisabled.
 
 async function uploadVia(p, { allow }) {
   await tab(p, 'community');
-  const box = await p.$('#dchat-upload-allow-export');
-  const cur = await p.$eval('#dchat-upload-allow-export', x => x.checked);
-  if (cur !== allow) await box.click();
   const resP = p.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/api/community-scenes'), { timeout: 20000 });
   ok('  upload clicked', await clickText(p, '#dchat-community-buttons', 'Upload Current Scene'));
-  await p.waitForSelector('#gs-ctx-publish.visible', { timeout: 8000 }); await p.click('#gs-ctx-publish-btn');
+  await p.waitForSelector('#gs-ctx-publish.visible', { timeout: 8000 });
+  const cur = await p.$eval('#gs-ctx-publish #dchat-upload-allow-export', x => x.checked);
+  if (cur !== allow) await p.click('#gs-ctx-publish #dchat-upload-allow-export');
+  await p.click('#gs-ctx-publish-btn');
   const data = await (await resP).json();
   await p.waitForSelector('#share-modal.visible', { timeout: 20000 });
   await sleep(400);

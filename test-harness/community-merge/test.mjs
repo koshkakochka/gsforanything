@@ -97,7 +97,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 900 }, { name: 'phone'
   await p.evaluate(() => { window.__gsScene = null; }); // set below
   await p.evaluate(() => { const THREEscene = (window.__findScene = () => null); });
   await tab(p, 'community'); await sleep(1500);
-  ok(`${H} Merge scenes button in Community`, await p.$('#gs-merge-open') !== null);
+  ok(`${H} no top-level Merge scenes button`, await p.$('#gs-merge-open') === null && !(await p.evaluate(() => [...document.querySelectorAll('button')].some(b => /^🔀?\s*Merge scenes$/i.test(b.textContent.trim())))));
   const rowBtns = await p.$$eval('.gs-merge-row-btn', bs => bs.length);
   ok(`${H} Merge button on each row`, rowBtns >= 2, String(rowBtns));
   // Pick A then B from the rows -> dialog opens prefilled
@@ -178,7 +178,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 900 }, { name: 'phone'
 // Dialog screenshot on phone + error path (unknown token)
 const e = await newPage({ width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 await tab(e, 'community'); await sleep(1200);
-await e.click('#gs-merge-open'); await sleep(500);
+await e.evaluate(() => window.GSMerge.openMergeDialog()); await sleep(500);
 await e.screenshot({ path: 'dialog-phone.png' });
 const errRun = await e.evaluate(async (a, bb) => { try { const t = { assets: new Map(), blocks: new Map() }; GSMerge.expandMergedBlocks(['x = __GS_ASSET_A7__'], t); return 'no error'; } catch (err) { return err.message; } }, A.id, B.id);
 ok('[phone] unknown asset token is rejected', /unknown asset token __GS_ASSET_A7__/.test(errRun));
