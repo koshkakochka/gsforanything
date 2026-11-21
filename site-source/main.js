@@ -464,13 +464,15 @@ const WELCOME_MSG = 'VR Code Assistant ready. Ask me to add objects, modify the 
 let isLoading = false;
 let selectedBackend = null; // backend key from /api/backends (e.g. 'claude', 'openai-sol', 'ollama') - set once it resolves
 let backendLabels = {}; // id -> display label from /api/backends
-let backendProviders = {}; // id -> 'claude' | 'openai' | 'ollama' from /api/backends
+let backendProviders = {}; // id -> 'claude' | 'openai' | 'xai' | 'ollama' from /api/backends
 
 /** Provider for a backend key; falls back to the key prefix for older servers. */
 function backendProvider(id) {
 	if (backendProviders[id]) return backendProviders[id];
 	if (id === 'ollama') return 'ollama';
-	return /^openai/.test(id || '') ? 'openai' : 'claude';
+	if (/^openai/.test(id || '')) return 'openai';
+	if (/^grok/.test(id || '')) return 'xai';
+	return 'claude';
 }
 
 /** Human-readable name for the currently selected model/provider. */
@@ -496,6 +498,8 @@ function getActiveModelDisplayName() {
 		'claude-opus-55': 'Claude Opus 5.5',
 		'claude-sonnet-55': 'Claude Sonnet 5.5',
 		'claude-haiku-55': 'Claude Haiku 5.5',
+		grok: 'Grok 4.7',
+		'grok-43': 'Grok 4.3',
 		ollama: 'Ollama'
 	};
 	return fallbacks[selectedBackend] || 'Assistant';
@@ -5638,7 +5642,7 @@ function initChatFileDrop() {
 // Shapes attached files into whatever the selected backend expects. Text
 // files fold directly into the plain-text message (works identically for
 // every backend); images need a backend-specific content shape, since
-// Anthropic, OpenAI, and Ollama each represent an inline image differently.
+// Anthropic, OpenAI / xAI, and Ollama each represent an inline image differently.
 function buildUserContent(userMessage, attachments, backend) {
 	let text = userMessage;
 	for (const att of attachments) text += contextTextForAttachment(att);
@@ -5653,7 +5657,8 @@ function buildUserContent(userMessage, attachments, backend) {
 		return { content: text || '(see attached image)', images: images.map(a => a.base64) };
 	}
 
-	if (provider === 'openai') {
+	// xAI's Chat Completions API is OpenAI-compatible, including image_url parts.
+	if (provider === 'openai' || provider === 'xai') {
 		const parts = [{ type: 'text', text: text || '(see attached image)' }];
 		for (const att of images) {
 			parts.push({ type: 'image_url', image_url: { url: `data:${att.mediaType};base64,${att.base64}` } });

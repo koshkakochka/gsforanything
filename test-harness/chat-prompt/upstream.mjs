@@ -3,7 +3,7 @@
 //   node upstream.mjs
 //   WORKER_BASE=http://127.0.0.1:8797 node upstream.mjs   # also check a running wrangler dev
 // server.js runs with fake keys and mock-llm-https.mjs preloaded (captures the
-// api.anthropic.com / api.openai.com request bodies). worker/index.js runs in
+// api.anthropic.com / api.openai.com / api.x.ai request bodies). worker/index.js runs in
 // Node with a fake env and a mocked fetch that captures its upstream calls.
 import { spawn } from 'child_process';
 import fs from 'fs';
@@ -64,6 +64,40 @@ async function scenario(H, base, captured) {
   ok(`${H} /api/fix-code ignores systemPrompt (fix prompt)`, r.status === 200 && captured().slice(n)[0]?.body.system === prompts.FIX_CODE_PROMPT);
 }
 
+async function xaiScenario(H, base, captured) {
+  const post = async (p, body) => { const r = await fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, json: await r.json().catch(() => null) }; };
+  const listed = await (await fetch(base + '/api/backends')).json();
+  ok(`${H} /api/backends lists Grok 4.7 and Grok 4.3 as available xAI backends`,
+    listed.backends?.grok?.provider === 'xai' && listed.backends.grok.available === true && listed.backends.grok.label === 'Grok 4.7'
+    && listed.backends['grok-43']?.provider === 'xai' && listed.backends['grok-43'].available === true && listed.backends['grok-43'].label === 'Grok 4.3',
+    JSON.stringify({ grok: listed.backends?.grok, 'grok-43': listed.backends?.['grok-43'] }));
+  let n = captured().length;
+  let r = await post('/api/chat', { messages: msgs, backend: 'grok' });
+  let c = captured().slice(n);
+  ok(`${H} grok: stubbed xAI reply from api.x.ai, model grok-4.7`,
+    r.status === 200 && r.json?.content?.[0]?.text === 'mock xai reply' && c.length === 1 && c[0].host === 'api.x.ai' && c[0].path === '/v1/chat/completions' && c[0].body.model === 'grok-4.7' && c[0].body.messages?.[0]?.role === 'system' && c[0].body.messages[0].content === prompts.SYSTEM_PROMPT,
+    `${r.status} ${JSON.stringify(r.json).slice(0, 160)} ${c.length} ${JSON.stringify(c[0] && { host: c[0].host, path: c[0].path, model: c[0].body?.model }).slice(0, 160)}`);
+  n = captured().length;
+  r = await post('/api/chat', { messages: msgs, backend: 'grok-43', systemPrompt: CUSTOM });
+  c = captured().slice(n);
+  ok(`${H} grok-43: stubbed xAI reply, model grok-4.3, custom prompt + required section`,
+    r.status === 200 && r.json?.content?.[0]?.text === 'mock xai reply' && c.length === 1 && c[0].host === 'api.x.ai' && c[0].body.model === 'grok-4.3' && c[0].body.messages?.[0]?.content === EXPECT,
+    `${r.status} ${c.length} ${c[0]?.body?.model}`);
+}
+
+async function xaiUnavailable(H, base, captured) {
+  const listed = await (await fetch(base + '/api/backends')).json();
+  ok(`${H} /api/backends marks Grok unavailable when XAI_API_KEY is unset`,
+    listed.backends?.grok?.available === false && listed.backends['grok-43']?.available === false,
+    JSON.stringify({ grok: listed.backends?.grok, 'grok-43': listed.backends?.['grok-43'] }));
+  const n = captured().length;
+  const r = await fetch(base + '/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: msgs, backend: 'grok' }) });
+  const json = await r.json().catch(() => null);
+  ok(`${H} grok /api/chat → 400 and no upstream call when XAI_API_KEY is unset`,
+    r.status === 400 && /XAI_API_KEY/.test(json?.error?.message || json?.error || '') && captured().length === n,
+    `${r.status} ${JSON.stringify(json).slice(0, 160)} cap=${captured().length - n}`);
+}
+
 // ---------------------------------------------------------------- server.js
 {
   const CAP = `/tmp/gs-llm-capture-${process.pid}.jsonl`;
@@ -71,14 +105,16 @@ async function scenario(H, base, captured) {
   const port = 4300 + Math.floor(Math.random() * 500);
   const child = spawn(process.execPath, ['--import', pathToFileURL(path.join(HERE, 'mock-llm-https.mjs')).href, 'server.js'], {
     cwd: path.join(ROOT, 'site-source'),
-    env: { ...process.env, PORT: String(port), CLAUDE_API_KEY: 'fake-claude', OPENAI_API_KEY: 'fake-openai', ANTHROPIC_API_KEY: '', GS_LLM_CAPTURE: CAP },
+    env: { ...process.env, PORT: String(port), CLAUDE_API_KEY: 'fake-claude', OPENAI_API_KEY: 'fake-openai', XAI_API_KEY: 'fake-xai', ANTHROPIC_API_KEY: '', GS_LLM_CAPTURE: CAP },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   let log = ''; child.stdout.on('data', d => log += d); child.stderr.on('data', d => log += d);
   const base = `https://127.0.0.1:${port}`;
   for (let i = 0; i < 60; i++) { try { await fetch(base + '/api/prompts'); break; } catch { await sleep(250); } }
   try {
-    await scenario('[server.js]', base, () => fs.readFileSync(CAP, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)));
+    const captured = () => fs.readFileSync(CAP, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+    await scenario('[server.js]', base, captured);
+    await xaiScenario('[server.js]', base, captured);
   } catch (e) { ok('[server.js] scenario ran', false, e.stack + '\n' + log.slice(-800)); }
   child.kill();
   fs.rmSync(CAP, { force: true });
@@ -94,14 +130,14 @@ async function scenario(H, base, captured) {
   globalThis.fetch = async (input, init) => {
     const req = new Request(input, init);
     const u = new URL(req.url);
-    if (u.hostname !== 'api.anthropic.com' && u.hostname !== 'api.openai.com') throw new Error('unexpected outbound fetch ' + req.url);
+    if (u.hostname !== 'api.anthropic.com' && u.hostname !== 'api.openai.com' && u.hostname !== 'api.x.ai') throw new Error('unexpected outbound fetch ' + req.url);
     cap.push({ host: u.hostname, path: u.pathname, body: await req.json() });
-    const reply = u.hostname === 'api.openai.com' ? { choices: [{ message: { content: 'mock openai reply' } }] } : { content: [{ type: 'text', text: 'mock claude reply' }] };
+    const reply = u.hostname === 'api.openai.com' ? { choices: [{ message: { content: 'mock openai reply' } }] } : u.hostname === 'api.x.ai' ? { choices: [{ message: { content: 'mock xai reply' } }] } : { content: [{ type: 'text', text: 'mock claude reply' }] };
     return new Response(JSON.stringify(reply), { headers: { 'content-type': 'application/json' } });
   };
   const kv = new Map();
   const env = {
-    CLAUDE_API_KEY: 'fake-claude', OPENAI_API_KEY: 'fake-openai',
+    CLAUDE_API_KEY: 'fake-claude', OPENAI_API_KEY: 'fake-openai', XAI_API_KEY: 'fake-xai',
     SCENES: { get: async (k, t) => { const v = kv.get(k); return v == null ? null : t === 'json' ? JSON.parse(v) : v; }, put: async (k, v) => { kv.set(k, v); }, list: async () => ({ keys: [...kv.keys()].map(name => ({ name })), list_complete: true }), delete: async (k) => { kv.delete(k); } },
     ASSETS: { fetch: async () => new Response('asset', { status: 200 }) }
   };
@@ -114,7 +150,20 @@ async function scenario(H, base, captured) {
     if (new URL(req.url).hostname === 'gs.test') return worker.fetch(req, env, { waitUntil() {}, passThroughOnException() {} });
     return origFetchForScenario(req);
   };
-  try { await scenario('[worker]', base, () => cap); } catch (e) { ok('[worker] scenario ran', false, e.stack); }
+  try {
+    await scenario('[worker]', base, () => cap);
+    await xaiScenario('[worker]', base, () => cap);
+  } catch (e) { ok('[worker] scenario ran', false, e.stack); }
+  // Same worker, but without XAI_API_KEY: Grok must be marked unavailable and /api/chat must 400.
+  {
+    const noXai = { ...env }; delete noXai.XAI_API_KEY;
+    globalThis.fetch = async (input, init) => {
+      const req = new Request(input, init);
+      if (new URL(req.url).hostname === 'gs.test') return worker.fetch(req, noXai, { waitUntil() {}, passThroughOnException() {} });
+      return origFetchForScenario(req);
+    };
+    try { await xaiUnavailable('[worker no XAI_API_KEY]', base, () => cap); } catch (e) { ok('[worker no XAI_API_KEY] ran', false, e.stack); }
+  }
   globalThis.fetch = realFetch;
 }
 

@@ -1,6 +1,6 @@
-// Preload for server.js (node --import): answers api.anthropic.com and
-// api.openai.com requests locally and appends each request body to
-// $GS_LLM_CAPTURE (one JSON line per call). Nothing leaves the machine.
+// Preload for server.js (node --import): answers api.anthropic.com,
+// api.openai.com, and api.x.ai requests locally and appends each request body
+// to $GS_LLM_CAPTURE (one JSON line per call). Nothing leaves the machine.
 import https from 'https';
 import fs from 'fs';
 import { EventEmitter } from 'events';
@@ -9,7 +9,7 @@ const CAPTURE = process.env.GS_LLM_CAPTURE;
 const real = https.request;
 https.request = function (opts, cb) {
   const host = typeof opts === 'object' && !(opts instanceof URL) ? opts.hostname || opts.host : new URL(opts).hostname;
-  if (host !== 'api.anthropic.com' && host !== 'api.openai.com') return real.apply(this, arguments);
+  if (host !== 'api.anthropic.com' && host !== 'api.openai.com' && host !== 'api.x.ai') return real.apply(this, arguments);
   const req = new EventEmitter();
   let body = '';
   req.write = (c) => { body += c; return true; };
@@ -21,7 +21,9 @@ https.request = function (opts, cb) {
     fs.appendFileSync(CAPTURE, JSON.stringify({ host, path: opts.path, body: parsed }) + '\n');
     const reply = host === 'api.openai.com'
       ? { choices: [{ message: { content: 'mock openai reply' } }] }
-      : { content: [{ type: 'text', text: 'mock claude reply' }] };
+      : host === 'api.x.ai'
+        ? { choices: [{ message: { content: 'mock xai reply' } }] }
+        : { content: [{ type: 'text', text: 'mock claude reply' }] };
     const res = Readable.from([JSON.stringify(reply)]);
     res.statusCode = 200; res.headers = { 'content-type': 'application/json' };
     setImmediate(() => cb(res));
