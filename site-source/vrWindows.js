@@ -150,11 +150,19 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 		// When the WICG HTML-in-Canvas API is present, wrap the source in the
 		// paint canvas so drawElementImage can snapshot the same node. The
 		// canvas stays in the viewport (behind the WebGL view) so the browser
-		// can record a paint; the walker still works if there is no snapshot
-		// (typical while an immersive session is presenting). Desktop layout
-		// is restored on hide, so the on-page modal is unchanged.
+		// can record a paint. Do not wrap during an immersive session: Quest
+		// (and some other WebXR browsers) may expose drawElementImage but not
+		// reliably lay out canvas descendants, so getBoundingClientRect used
+		// for ray hit-testing goes empty and controller/hand clicks no-op.
+		// The walker + off-screen .html-in-canvas-source path is the proven
+		// XR mapping. Desktop layout is restored on hide.
+		const immersiveXr = () => !!(
+			document.body.classList.contains('gs-xr-presenting')
+			|| document.body.classList.contains('gs-cardboard-active')
+		);
 		const wrapNative = (el) => {
 			if (!supportsNativeHtmlInCanvas() || !el) return;
+			if (immersiveXr()) return;
 			if (el.parentElement === canvas) return;
 			enableNativeHtmlInCanvasHost(canvas);
 			win._homeParent = el.parentNode;
@@ -188,7 +196,7 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 
 		win.setVisible = (on) => {
 			on = !!on;
-			if (on) wrapNative(source);
+			if (on && !immersiveXr()) wrapNative(source);
 			else unwrapNative(source);
 			source.classList.toggle(SOURCE_CLASS, on);
 			if (on && !win._observer) {
