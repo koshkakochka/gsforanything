@@ -28,7 +28,7 @@ import { activateSelectInXr, closeXrSelect, isXrSelectElement } from './xrSelect
 export const VR_WINDOW_DISTANCE = 1.5;           // metres, world windows
 export const VR_PX_TO_M = 1.12 / 640;            // 640 CSS px wide -> 1.12 m at 1.5 m
 export const HTML_PAINT_MIN_MS = 66;             // cap repaints at ~15/s while content changes
-export const HTML_PAINT_IDLE_MS = 2000;          // safety refresh for CSS-only changes
+export const HTML_PAINT_IDLE_MS = 8000;          // occasional safety refresh for CSS-only changes
 const SCROLL_DRAG_PX = 8;
 const HOVER_MIN_MS = 50;
 // Synthetic pointer event at a window point (ray drags on data-gs-ray-drag widgets).
@@ -302,10 +302,16 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 
 		win.tick = (force = false, now = performance.now()) => {
 			if (!mesh.visible) return false;
+			if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+				if (win._live) win.updateLive();
+				return false;
+			}
 			if (win._live) win.updateLive();
 			if (!force) {
 				const since = now - win._paintAt;
 				if (win._dirty ? since < HTML_PAINT_MIN_MS : since < HTML_PAINT_IDLE_MS) return false;
+				// A minimized / display:none source has no box to paint.
+				if (source && (source.clientWidth < 2 || source.clientHeight < 2)) return false;
 			}
 			win._paintAt = now;
 			win._dirty = false;

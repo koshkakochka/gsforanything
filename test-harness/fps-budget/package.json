@@ -1,0 +1,9 @@
+{
+  "name": "gs-fps-budget-test",
+  "private": true,
+  "type": "module",
+  "description": "Frame-budget checks: pixel-ratio cap, XR foveation, menu-layer throttle, hidden-tab skip.",
+  "dependencies": {
+    "puppeteer-core": "24.43.1"
+  }
+}

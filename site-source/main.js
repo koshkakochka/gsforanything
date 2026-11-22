@@ -106,10 +106,13 @@ const MENU_RENDER_ORDER = 10000;
 const MENU_RETICLE_RENDER_ORDER = 10001;
 const menuPriorityRoots = [];
 
+let _menuLayerDirty = true;
+let _menuLayerAt = 0;
 function registerMenuRoot(object, renderOrder = MENU_RENDER_ORDER) {
 	if (!object || menuPriorityRoots.indexOf(object) !== -1) return;
 	object.userData.menuRenderOrder = renderOrder;
 	menuPriorityRoots.push(object);
+	_menuLayerDirty = true;
 }
 
 function applyMenuLayerPriority() {
@@ -125,6 +128,16 @@ function applyMenuLayerPriority() {
 	// UI rays must test layer 1 or panel hits/reticles stop registering.
 	raycaster.layers.enable(MENU_LAYER);
 	_hitRaycaster.layers.enable(MENU_LAYER);
+
+	// Traversing every menu root and rewriting layers/materials every frame is
+	// wasted work once the graph is stable. Re-run when a root is registered,
+	// when scene animations may have parented into the menu, or at 5 Hz as a
+	// safety net for attach() that does not go through registerMenuRoot.
+	const now = performance.now();
+	const animating = window._vrAnimations && window._vrAnimations.length > 0;
+	if (!animating && !_menuLayerDirty && now - _menuLayerAt < 200) return;
+	_menuLayerDirty = false;
+	_menuLayerAt = now;
 
 	for (let i = 0; i < menuPriorityRoots.length; i++) {
 		const root = menuPriorityRoots[i];
@@ -163,9 +176,10 @@ window.gsContextWatch = watchContextLoss(renderer);
 // Drawing-buffer size is kept in sync by applyRendererSize(); pass false so
 // the CSS (position:fixed; inset:0; 100%/100dvh) keeps the canvas covering
 // the visible page instead of being locked to stale inline pixel sizes.
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 3));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.xr.enabled = true;
+try { if (typeof renderer.xr.setFoveation === 'function') renderer.xr.setFoveation(1); } catch { /* ignore */ }
 appElement.appendChild(renderer.domElement);
 renderer.setClearColor(0x000000, 0.0);
 renderer.domElement.style.touchAction = 'none';
@@ -9819,7 +9833,7 @@ function setImmersiveUiMode(immersive) {
 // devicePixelRatio changes. Size comes from the live layout (canvas client
 // box, visualViewport, innerWidth/innerHeight) rather than cached values.
 // Skip while WebXR is presenting — three.js owns the buffer then.
-const MAX_PIXEL_RATIO = 3;
+const MAX_PIXEL_RATIO = 2;
 var _rendererSize = { w: window.innerWidth, h: window.innerHeight };
 var _rendererResizeRaf = 0;
 
@@ -9915,6 +9929,10 @@ if (typeof ResizeObserver === 'function') {
 applyRendererSize();
 
 renderer.xr.addEventListener('sessionstart', () => {
+	// Maximum compositor foveation on Quest: the centre stays full resolution,
+	// the periphery is cheaper. three.js already defaults to 1; set it on the
+	// live layer so a browser that resets the XR layer cannot drop it to 0.
+	try { if (typeof renderer.xr.setFoveation === 'function') renderer.xr.setFoveation(1); } catch { /* ignore */ }
 	// 'local-floor' reference space: origin at the real floor, eye level
 	// is around y=1.6, so the menu sits just below eye level for comfort.
 	layoutVrWindows();
@@ -10548,10 +10566,40 @@ window.gsVrInput = {
 	playerQuaternion() { return player ? player.quaternion.clone() : null; }
 };
 
+const _gsPerfSamples = [];
+window.gsPerf = {
+	frames: 0,
+	cpuMs: 0,
+	reset() { this.frames = 0; this.cpuMs = 0; _gsPerfSamples.length = 0; },
+	_end(t0) {
+		const ms = performance.now() - t0;
+		this.frames++;
+		this.cpuMs += ms;
+		_gsPerfSamples.push(ms);
+		if (_gsPerfSamples.length > 180) _gsPerfSamples.shift();
+	},
+	stats() {
+		const a = _gsPerfSamples;
+		if (!a.length) return { frames: this.frames, avg: 0, p50: 0, p95: 0, max: 0 };
+		const s = a.slice().sort((x, y) => x - y);
+		const n = s.length;
+		return { frames: this.frames, avg: this.cpuMs / this.frames, p50: s[n >> 1], p95: s[Math.min(n - 1, Math.floor(n * 0.95))], max: s[n - 1] };
+	}
+};
+
 renderer.setAnimationLoop((time) => {
+	const _gsPerfT0 = performance.now();
 	// Frame delta (seconds), clamped so a paused/backgrounded tab doesn't jump.
 	const dt = _locoPrevTime ? Math.min(0.1, (time - _locoPrevTime) / 1000) : 0;
 	_locoPrevTime = time;
+
+	// A hidden desktop tab still gets rAF, but nothing is shown. Keep VAD
+	// running for always-on mic; skip the rest of the frame (and the draw).
+	if (document.visibilityState === 'hidden' && !renderer.xr.isPresenting) {
+		pumpVad();
+		window.gsPerf._end(_gsPerfT0);
+		return;
+	}
 
 	// Voice-activity detection for always-on mic. Driven here (not via
 	// window.requestAnimationFrame, which is paused during immersive sessions) so
@@ -10756,4 +10804,5 @@ renderer.setAnimationLoop((time) => {
 	} else {
 		renderer.render(scene, camera);
 	}
+	window.gsPerf._end(_gsPerfT0);
 });
