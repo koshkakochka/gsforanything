@@ -180,7 +180,50 @@ window.gsContextWatch = watchContextLoss(renderer);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.xr.enabled = true;
-try { if (typeof renderer.xr.setFoveation === 'function') renderer.xr.setFoveation(1); } catch { /* ignore */ }
+
+// XR compositor foveation (Quest): edges render at lower resolution when on.
+// Default on; stored in localStorage like render distance. 1 = max, 0 = off.
+const FOVEATION_STORAGE_KEY = 'gs.foveation';
+const FOVEATION_ON = 1;
+const FOVEATION_OFF = 0;
+function readStoredFoveation() {
+	try {
+		const v = localStorage.getItem(FOVEATION_STORAGE_KEY);
+		if (v == null || v === '') return true;
+		return !/^(0|false|off|no)$/i.test(String(v).trim());
+	} catch { return true; }
+}
+let foveationEnabled = readStoredFoveation();
+function applyFoveation() {
+	if (typeof renderer.xr.setFoveation !== 'function') return false;
+	try {
+		renderer.xr.setFoveation(foveationEnabled ? FOVEATION_ON : FOVEATION_OFF);
+		return true;
+	} catch { return false; }
+}
+function setFoveationEnabled(on, { persist = true } = {}) {
+	foveationEnabled = !!on;
+	applyFoveation();
+	if (persist) {
+		try {
+			if (foveationEnabled) localStorage.removeItem(FOVEATION_STORAGE_KEY);
+			else localStorage.setItem(FOVEATION_STORAGE_KEY, '0');
+		} catch { /* storage blocked */ }
+	}
+	const box = document.getElementById('dchat-foveation');
+	if (box && box.checked !== foveationEnabled) box.checked = foveationEnabled;
+	if (renderer?.xr?.isPresenting) vrWindows?.byName('menu')?.markDirty();
+	return foveationEnabled;
+}
+applyFoveation();
+window.gsFoveation = {
+	get enabled() { return foveationEnabled; },
+	set enabled(v) { setFoveationEnabled(v); },
+	set: (v, opts) => setFoveationEnabled(v, opts),
+	apply: applyFoveation,
+	storageKey: FOVEATION_STORAGE_KEY,
+	defaults: { enabled: true }
+};
 appElement.appendChild(renderer.domElement);
 renderer.setClearColor(0x000000, 0.0);
 renderer.domElement.style.touchAction = 'none';
@@ -6595,6 +6638,11 @@ let modelTransformDragging = false;
 		input.addEventListener('focus', () => { input.select(); gsKeyBindings?.keepSelection?.(input); });
 		syncRenderDistanceInput();
 	}
+	const foveationBox = document.getElementById('dchat-foveation');
+	if (foveationBox) {
+		foveationBox.checked = foveationEnabled;
+		foveationBox.addEventListener('change', () => setFoveationEnabled(foveationBox.checked));
+	}
 }
 
 function cameraControlsSuspended() {
@@ -9961,10 +10009,9 @@ if (typeof ResizeObserver === 'function') {
 applyRendererSize();
 
 renderer.xr.addEventListener('sessionstart', () => {
-	// Maximum compositor foveation on Quest: the centre stays full resolution,
-	// the periphery is cheaper. three.js already defaults to 1; set it on the
-	// live layer so a browser that resets the XR layer cannot drop it to 0.
-	try { if (typeof renderer.xr.setFoveation === 'function') renderer.xr.setFoveation(1); } catch { /* ignore */ }
+	// Apply the saved foveation choice on the live XR layer (a browser may
+	// reset the layer to its default when the session starts).
+	applyFoveation();
 	// 'local-floor' reference space: origin at the real floor, eye level
 	// is around y=1.6, so the menu sits just below eye level for comfort.
 	layoutVrWindows();

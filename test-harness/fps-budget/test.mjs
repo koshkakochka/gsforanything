@@ -16,6 +16,7 @@ const ok = (n, c, d = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS' : 
 const p = await browser.newPage();
 p.setDefaultTimeout(60000);
 await p.setViewport({ width: 1280, height: 800, deviceScaleFactor: 3 });
+await p.evaluateOnNewDocument(() => { try { localStorage.removeItem('gs.foveation'); } catch { /* ignore */ } });
 await p.goto(BASE + '/', { waitUntil: 'networkidle2', timeout: 60000 });
 await p.waitForFunction(() => window.renderer && window.gsPerf, { timeout: 30000 });
 await sleep(1500);
@@ -23,9 +24,13 @@ await sleep(1500);
 const cfg = await p.evaluate(() => ({
   pr: renderer.getPixelRatio(),
   dpr: window.devicePixelRatio,
-  fov: typeof renderer.xr.getFoveation === 'function' ? renderer.xr.getFoveation() : null
+  box: !!document.getElementById('dchat-foveation'),
+  checked: document.getElementById('dchat-foveation')?.checked,
+  api: window.gsFoveation && window.gsFoveation.enabled,
+  label: document.querySelector('label[for="dchat-foveation"]')?.textContent?.replace(/\s+/g, ' ').trim()
 }));
 ok('desktop pixel ratio is capped at 2 even when devicePixelRatio is 3', cfg.dpr >= 2.99 && Math.abs(cfg.pr - 2) < 0.01, cfg);
+ok('Environment tab has a Foveated rendering checkbox, on by default', cfg.box && cfg.checked === true && cfg.api === true && /Foveated rendering/.test(cfg.label || ''), cfg);
 
 const trav = await p.evaluate(async () => {
   const orig = THREE.Object3D.prototype.traverse;
@@ -66,16 +71,48 @@ const p2ctx = await browser.createBrowserContext();
 const p2 = await p2ctx.newPage();
 await p2.setViewport({ width: 1600, height: 900 });
 await p2.evaluateOnNewDocument(IWER + '\n;window.__xrDevice = new IWER.XRDevice(IWER.metaQuest3); window.__xrDevice.installRuntime({ forceInstall: true });');
+await p2.evaluateOnNewDocument(() => { try { localStorage.removeItem('gs.foveation'); } catch { /* ignore */ } });
 await p2.goto(BASE + '/', { waitUntil: 'networkidle2', timeout: 60000 });
-await p2.waitForFunction(() => window.renderer, { timeout: 30000 });
+await p2.waitForFunction(() => window.renderer && window.gsFoveation, { timeout: 30000 });
 await sleep(800);
 await p2.evaluate(() => { const d = window.__xrDevice; d.position.set(0, 1.6, 0); d.quaternion.set(0, 0, 0, 1); });
 await p2.click('#XRButton').catch(() => {});
 for (let i = 0; i < 40 && !(await p2.evaluate(() => renderer.xr.isPresenting)); i++) await sleep(250);
-const xr = await p2.evaluate(() => ({ presenting: renderer.xr.isPresenting, fov: typeof renderer.xr.getFoveation === 'function' ? renderer.xr.getFoveation() : null }));
+const xr = await p2.evaluate(() => ({ presenting: renderer.xr.isPresenting, fov: typeof renderer.xr.getFoveation === 'function' ? renderer.xr.getFoveation() : null, enabled: window.gsFoveation.enabled }));
 ok('entered immersive VR to check foveation', xr.presenting, xr);
-ok('XR foveation is 1 (maximum) during a Quest session', xr.fov === 1, xr);
+ok('XR foveation is 1 (maximum) during a Quest session when the option is on', xr.fov === 1 && xr.enabled === true, xr);
+const toggled = await p2.evaluate(() => {
+  const box = document.getElementById('dchat-foveation');
+  box.checked = false;
+  box.dispatchEvent(new Event('change', { bubbles: true }));
+  const off = typeof renderer.xr.getFoveation === 'function' ? renderer.xr.getFoveation() : null;
+  box.checked = true;
+  box.dispatchEvent(new Event('change', { bubbles: true }));
+  const on = typeof renderer.xr.getFoveation === 'function' ? renderer.xr.getFoveation() : null;
+  return { off, on, stored: localStorage.getItem('gs.foveation') };
+});
+ok('unchecking Foveated rendering sets foveation to 0 during a session; checking it sets 1', toggled.off === 0 && toggled.on === 1, toggled);
 await p2ctx.close();
+
+const p3ctx = await browser.createBrowserContext();
+const p3 = await p3ctx.newPage();
+await p3.setViewport({ width: 1600, height: 900 });
+await p3.evaluateOnNewDocument(IWER + '\n;window.__xrDevice = new IWER.XRDevice(IWER.metaQuest3); window.__xrDevice.installRuntime({ forceInstall: true });');
+await p3.evaluateOnNewDocument(() => { try { localStorage.setItem('gs.foveation', '0'); } catch { /* ignore */ } });
+await p3.goto(BASE + '/', { waitUntil: 'networkidle2', timeout: 60000 });
+await p3.waitForFunction(() => window.renderer && window.gsFoveation, { timeout: 30000 });
+await sleep(800);
+const persisted = await p3.evaluate(() => ({
+  checked: document.getElementById('dchat-foveation')?.checked,
+  enabled: window.gsFoveation.enabled
+}));
+ok('gs.foveation=0 is restored: checkbox off, API disabled', persisted.checked === false && persisted.enabled === false, persisted);
+await p3.evaluate(() => { const d = window.__xrDevice; d.position.set(0, 1.6, 0); d.quaternion.set(0, 0, 0, 1); });
+await p3.click('#XRButton').catch(() => {});
+for (let i = 0; i < 40 && !(await p3.evaluate(() => renderer.xr.isPresenting)); i++) await sleep(250);
+const xrOff = await p3.evaluate(() => ({ presenting: renderer.xr.isPresenting, fov: typeof renderer.xr.getFoveation === 'function' ? renderer.xr.getFoveation() : null }));
+ok('saved-off choice is applied at session start (foveation 0)', xrOff.presenting && xrOff.fov === 0, xrOff);
+await p3ctx.close();
 
 await browser.close();
 console.log(`\n${pass} passed, ${fail} failed`);

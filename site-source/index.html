@@ -969,8 +969,13 @@
 		html.gs-phone #dchat-origin-gizmo { width: 200px; height: 200px; }
 		html.gs-phone .dchat-origin-fields input[type="number"] { width: 88px; }
 
-		/* Environment tab: render distance (metres) */
+		/* Environment tab: render settings (distance + foveation) */
 		.dchat-render-distance-row { display: flex; align-items: center; gap: 8px; }
+		.dchat-foveation-label {
+			display: flex; align-items: center; gap: 8px; margin-top: 12px;
+			font-size: 13px; color: rgba(255, 255, 255, 0.85); cursor: pointer; user-select: none;
+		}
+		.dchat-foveation-label input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; margin: 0; accent-color: #818cf8; }
 		#desktop-chat #dchat-render-distance-input {
 			width: 96px; box-sizing: border-box; padding: 7px 8px; border-radius: 8px;
 			border: 1px solid var(--dchat-field-border, rgba(255,255,255,0.5));
@@ -3476,16 +3481,24 @@
 					<button id="dchat-reset-camera" class="dchat-btn secondary" style="width:100%">Reset Camera View</button>
 				</div>
 				<div id="dchat-render-distance">
-					<div class="dchat-section-label" style="margin-bottom:8px">
-						<label for="dchat-render-distance-input">Render distance</label>
+					<div class="dchat-section-label" style="margin-bottom:8px">Render settings</div>
+					<div style="margin-bottom:8px">
+						<label for="dchat-render-distance-input" style="display:block;font-size:13px;color:rgba(255,255,255,0.85);margin-bottom:6px">Render distance</label>
+						<div class="dchat-env-note" style="margin-bottom:8px">
+							<span id="dchat-render-distance-help">How far the view draws, in metres (default 100). In a headset this is the distance from your eyes. The far plane still extends if the scene is larger.</span>
+						</div>
+						<div class="dchat-render-distance-row">
+							<input type="text" id="dchat-render-distance-input" inputmode="decimal" autocomplete="off" spellcheck="false"
+								aria-label="Render distance in metres" aria-describedby="dchat-render-distance-help" value="100" />
+							<span class="dchat-render-distance-unit">m</span>
+						</div>
 					</div>
-					<div class="dchat-env-note" style="margin-bottom:8px">
-						<span id="dchat-render-distance-help">How far the view draws, in metres (default 100). In a headset this is the distance from your eyes. The far plane still extends if the scene is larger.</span>
-					</div>
-					<div class="dchat-render-distance-row">
-						<input type="text" id="dchat-render-distance-input" inputmode="decimal" autocomplete="off" spellcheck="false"
-							aria-label="Render distance in metres" aria-describedby="dchat-render-distance-help" value="100" />
-						<span class="dchat-render-distance-unit">m</span>
+					<label class="dchat-foveation-label" for="dchat-foveation">
+						<input type="checkbox" id="dchat-foveation" checked aria-describedby="dchat-foveation-help" />
+						Foveated rendering
+					</label>
+					<div class="dchat-env-note" id="dchat-foveation-help" style="margin-top:6px">
+						In a headset, draw the edges at a lower resolution so the centre stays sharp and the frame rate stays higher. Turn off for full-resolution edges.
 					</div>
 				</div>
 				<div id="dchat-origin">
