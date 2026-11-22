@@ -17,6 +17,13 @@ const check = (n, ok, d = '') => {
 	console.log(`${ok ? 'PASS' : 'FAIL'} ${n}${!ok && d !== '' ? '  — ' + (typeof d === 'string' ? d : JSON.stringify(d)) : ''}`);
 };
 
+const REPO = path.join(path.dirname(new URL(import.meta.url).pathname), '../..');
+check(
+	'modelImport.js shipped to the Worker and Vercel',
+	/modelImport\.js/.test(fs.readFileSync(path.join(REPO, 'worker/sync-public.sh'), 'utf8')) &&
+	/site-source\/modelImport\.js/.test(fs.readFileSync(path.join(REPO, 'vercel.json'), 'utf8'))
+);
+
 function splatPly({ n = 5 } = {}) {
 	const verts = [];
 	const logit = (p) => Math.log(p / (1 - p));
