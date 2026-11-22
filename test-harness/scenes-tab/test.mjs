@@ -17,6 +17,7 @@ const check = (n, ok, d = '') => {
 const PHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 const EXPECTED = [
 	{ action: 'scenes:importFile', label: 'Import .vrscene.json' },
+	{ action: 'scenes:importModel', label: 'Import model' },
 	{ action: 'scenes:clear', label: 'Clear All From Scene' }
 ];
 const FIXTURE = {
@@ -106,8 +107,8 @@ function measureButtons() {
 
 async function assertScenesButtons(p, label, { minHeight = 0 } = {}) {
 	const m = await p.evaluate(measureButtons);
-	check(`${label}: exactly two Scenes buttons`, m.btns.length === 2 && m.actions.length === 2, m);
-	check(`${label}: only Import and Clear actions`,
+	check(`${label}: exactly three Scenes buttons`, m.btns.length === 3 && m.actions.length === 3, m);
+	check(`${label}: only Import scene, Import model, and Clear actions`,
 		m.actions.join(',') === EXPECTED.map((e) => e.action).join(',')
 		&& !m.actions.includes('scenes:export') && !m.actions.includes('scenes:loadSaved')
 		&& !m.actions.includes('scenes:openShareTab'), m.actions);

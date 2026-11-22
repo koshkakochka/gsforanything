@@ -1,0 +1,9 @@
+{
+  "name": "gs-model-import-tests",
+  "private": true,
+  "type": "module",
+  "description": "Import .ply Gaussian splats and every format GS can export; transforms persist",
+  "scripts": {
+    "test": "node test.mjs"
+  }
+}
