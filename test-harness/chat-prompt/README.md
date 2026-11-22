@@ -10,7 +10,7 @@
 
 No real API calls: `test.mjs` intercepts `/api/chat` in the browser and blocks
 Community POSTs; `upstream.mjs` runs `server.js` with `mock-llm-https.mjs`
-preloaded (answers api.anthropic.com / api.openai.com locally and records the
+preloaded (answers api.anthropic.com / api.openai.com / api.x.ai locally and records the
 request bodies) and runs `worker/index.js` in Node with a mocked `fetch`.
 
 `test.mjs` checks (screenshots in `SHOT_DIR`, default `/workspace/gs-prompt-shots`):
@@ -37,7 +37,7 @@ request bodies) and runs `worker/index.js` in Node with a mocked `fetch`.
   the pill fits, sends carry the prompt, reset works, no console errors.
 
 `upstream.mjs` checks, for server.js and the Worker, with a Claude and an
-OpenAI backend: no `systemPrompt` → `SYSTEM_PROMPT`; custom → custom +
+OpenAI backend, plus a stubbed xAI (Grok) chat path: no `systemPrompt` → `SYSTEM_PROMPT`; custom → custom +
 `CHAT_PROMPT_REQUIRED`; messages unchanged; blank → default; 40,001 characters
 or a non-string → 400 with no upstream call; 40,000 accepted; `/api/theme-chat`
 and `/api/fix-code` ignore it; `/api/prompts` returns the new fields; the

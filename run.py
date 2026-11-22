@@ -318,13 +318,20 @@ def cmd_start(api_key=None, api_key_file=None, use_ollama=False, ollama_model=No
         }
     else:
         resolved_key = resolve_api_key(api_key, api_key_file)
-        if not resolved_key and not os.environ.get("OPENAI_API_KEY"):
+        if (not resolved_key and not os.environ.get("OPENAI_API_KEY")
+                and not os.environ.get("XAI_API_KEY")):
             cprint(ERR_COL,
-                   "No Claude API key supplied and no OPENAI_API_KEY set — pass "
-                   "--api-key, --api-key-file, set OPENAI_API_KEY, or use --ollama "
-                   "for a local model.")
+                   "No Claude API key supplied and no OPENAI_API_KEY or "
+                   "XAI_API_KEY set — pass --api-key, --api-key-file, set "
+                   "OPENAI_API_KEY or XAI_API_KEY, or use --ollama for a local model.")
             return 1
-        backend_env = {"LLM_BACKEND": "claude" if resolved_key else "openai"}
+        if resolved_key:
+            default_backend = "claude"
+        elif os.environ.get("OPENAI_API_KEY"):
+            default_backend = "openai"
+        else:
+            default_backend = "grok"
+        backend_env = {"LLM_BACKEND": default_backend}
         if resolved_key:
             backend_env["CLAUDE_API_KEY"] = resolved_key
 
@@ -332,6 +339,8 @@ def cmd_start(api_key=None, api_key_file=None, use_ollama=False, ollama_model=No
         backend_env["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"]
     if os.environ.get("OPENAI_MODEL"):
         backend_env["OPENAI_MODEL"] = os.environ["OPENAI_MODEL"]
+    if os.environ.get("XAI_API_KEY"):
+        backend_env["XAI_API_KEY"] = os.environ["XAI_API_KEY"]
 
     if port is not None:
         backend_env["PORT"] = str(port)

@@ -33,7 +33,7 @@ const PORT = process.env.PORT || 3000;
 // it. The server therefore always listens over HTTPS (self-signed cert,
 // generated on first run).
 
-// Which model backend to use by default: 'claude', 'openai', or 'ollama'.
+// Which model backend to use by default: 'claude', 'openai', 'grok', or 'ollama'.
 // The client can override this per-request (see the model dropdown in the
 // chat UI) - this is just the fallback when a request doesn't specify one.
 const LLM_BACKEND = (process.env.LLM_BACKEND || 'openai').toLowerCase();
@@ -49,6 +49,7 @@ const OPENAI_SOL_MODEL = 'gpt-6.1-sol';
 // should just gray out that option, not crash the whole server.
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const XAI_API_KEY = process.env.XAI_API_KEY;
 
 // Ollama is NOT proxied through this server. The server has no network path
 // to a user's own machine when this app is deployed on Vercel - "localhost"
@@ -74,20 +75,32 @@ const BACKENDS = {
 	'openai-luna': { provider: 'openai', model: 'gpt-6-luna', label: 'GPT6 Luna' },
 	// OPENAI_MODEL env override applies to this key only.
 	openai: { provider: 'openai', model: OPENAI_MODEL, label: 'GPT6 Astra' },
+	// xAI Chat Completions (OpenAI-compatible, https://api.x.ai/v1). grok-4.7 is
+	// the current flagship; grok-4.3 is the cheaper/faster public option
+	// (retired grok-*-fast slugs redirect there). grok-4.7 Fast is not on the public API.
+	grok: { provider: 'xai', model: 'grok-4.7', label: 'Grok 4.7' },
+	'grok-43': { provider: 'xai', model: 'grok-4.3', label: 'Grok 4.3' },
 	ollama: { provider: 'ollama', label: 'Ollama (runs in your browser, local)', local: true },
 };
+
+function providerHasKey(provider) {
+	if (provider === 'ollama') return true;
+	if (provider === 'openai') return !!OPENAI_API_KEY;
+	if (provider === 'xai') return !!XAI_API_KEY;
+	return !!CLAUDE_API_KEY;
+}
 
 function getAvailableBackends() {
 	const out = {};
 	for (const [id, b] of Object.entries(BACKENDS)) {
-		const available = b.provider === 'ollama' ? true : b.provider === 'openai' ? !!OPENAI_API_KEY : !!CLAUDE_API_KEY;
+		const available = providerHasKey(b.provider);
 		out[id] = { label: b.label, provider: b.provider, available, ...(b.local ? { local: true } : {}) };
 	}
 	return out;
 }
 
-if (!CLAUDE_API_KEY && !OPENAI_API_KEY) {
-	console.error('\x1b[31mWarning: neither CLAUDE_API_KEY nor OPENAI_API_KEY is set.\x1b[0m');
+if (!CLAUDE_API_KEY && !OPENAI_API_KEY && !XAI_API_KEY) {
+	console.error('\x1b[31mWarning: none of CLAUDE_API_KEY, OPENAI_API_KEY, or XAI_API_KEY is set.\x1b[0m');
 	console.error('Set at least one before running the server, e.g.:');
 	console.error('  Windows:  set CLAUDE_API_KEY=your-key-here');
 	console.error('  Mac/Linux: export CLAUDE_API_KEY=your-key-here');
@@ -428,10 +441,12 @@ function callClaudeAPI(systemPrompt, messages, maxTokens = 16384, model = 'claud
 	});
 }
 
-// Shared function: call the OpenAI API and normalize the response into the
-// same { content: [{ text }] } shape the client expects from Claude.
-function callOpenAIAPI(systemPrompt, messages, maxTokens = 16384, model = OPENAI_MODEL) {
+// Shared function: call an OpenAI-compatible Chat Completions API (OpenAI or
+// xAI at api.x.ai) and normalize the response into the same
+// { content: [{ text }] } shape the client expects from Claude.
+function callOpenAICompatibleAPI(apiKey, systemPrompt, messages, maxTokens, model, hostname) {
 	return new Promise((resolve, reject) => {
+		const label = hostname === 'api.x.ai' ? 'xAI' : 'OpenAI';
 		const postBody = JSON.stringify({
 			model,
 			max_completion_tokens: maxTokens,
@@ -442,12 +457,12 @@ function callOpenAIAPI(systemPrompt, messages, maxTokens = 16384, model = OPENAI
 		});
 
 		const apiReq = https.request({
-			hostname: 'api.openai.com',
+			hostname,
 			path: '/v1/chat/completions',
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
-				'Authorization': `Bearer ${OPENAI_API_KEY}`,
+				'Authorization': `Bearer ${apiKey}`,
 				'Content-Length': Buffer.byteLength(postBody)
 			}
 		}, (apiRes) => {
@@ -463,7 +478,7 @@ function callOpenAIAPI(systemPrompt, messages, maxTokens = 16384, model = OPENAI
 						resolve({ error: false, data: { content: [{ text }] } });
 					}
 				} catch (e) {
-					reject(new Error(`Invalid JSON response from OpenAI: ${body.slice(0, 200)}`));
+					reject(new Error(`Invalid JSON response from ${label}: ${body.slice(0, 200)}`));
 				}
 			});
 		});
@@ -472,6 +487,14 @@ function callOpenAIAPI(systemPrompt, messages, maxTokens = 16384, model = OPENAI
 		apiReq.write(postBody);
 		apiReq.end();
 	});
+}
+
+function callOpenAIAPI(systemPrompt, messages, maxTokens = 16384, model = OPENAI_MODEL) {
+	return callOpenAICompatibleAPI(OPENAI_API_KEY, systemPrompt, messages, maxTokens, model, 'api.openai.com');
+}
+
+function callXaiAPI(systemPrompt, messages, maxTokens = 16384, model = 'grok-4.7') {
+	return callOpenAICompatibleAPI(XAI_API_KEY, systemPrompt, messages, maxTokens, model, 'api.x.ai');
 }
 
 // Dispatches to whichever backend was requested (falls back to LLM_BACKEND
@@ -492,6 +515,11 @@ function callLLM(systemPrompt, messages, maxTokens = 16384, backend) {
 	if (entry.provider === 'openai') {
 		if (!OPENAI_API_KEY) return Promise.resolve({ error: true, status: 400, data: { error: { message: 'OPENAI_API_KEY is not configured on the server.' } } });
 		return callOpenAIAPI(systemPrompt, messages, maxTokens, entry.model);
+	}
+
+	if (entry.provider === 'xai') {
+		if (!XAI_API_KEY) return Promise.resolve({ error: true, status: 400, data: { error: { message: 'XAI_API_KEY is not configured on the server.' } } });
+		return callXaiAPI(systemPrompt, messages, maxTokens, entry.model);
 	}
 
 	if (!CLAUDE_API_KEY) return Promise.resolve({ error: true, status: 400, data: { error: { message: 'CLAUDE_API_KEY is not configured on the server.' } } });

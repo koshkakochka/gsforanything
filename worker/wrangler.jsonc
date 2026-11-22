@@ -1,7 +1,7 @@
 {
   // Cloudflare Worker "gs": https://gsforanything.com (+ www), with
   // https://gs.krossruiz.workers.dev kept on as a fallback (workers_dev).
-  // Secrets (CLAUDE_API_KEY, OPENAI_API_KEY, ...) are stored in Cloudflare with
+  // Secrets (CLAUDE_API_KEY, OPENAI_API_KEY, XAI_API_KEY, ...) are stored in Cloudflare with
   // `wrangler secret put` and are NOT in this repo; deploys keep them.
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "gs",

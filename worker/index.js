@@ -58,13 +58,25 @@ const BACKENDS = {
   "openai-6-sol": { provider: "openai", model: "gpt-6-sol", label: "GPT6 Sol" },
   "openai-luna": { provider: "openai", model: "gpt-6-luna", label: "GPT6 Luna" },
   openai: { provider: "openai", model: null, label: "GPT6 Astra" },
+  // xAI Chat Completions (OpenAI-compatible, https://api.x.ai/v1). grok-4.7 is
+  // the current flagship; grok-4.3 is the cheaper/faster public option
+  // (retired grok-*-fast slugs redirect there). grok-4.7 Fast is not on the public API.
+  grok: { provider: "xai", model: "grok-4.7", label: "Grok 4.7" },
+  "grok-43": { provider: "xai", model: "grok-4.3", label: "Grok 4.3" },
   ollama: { provider: "ollama", label: "Ollama (runs in your browser, local)", local: true },
 };
+
+function providerHasKey(provider, env) {
+  if (provider === "ollama") return true;
+  if (provider === "openai") return !!env.OPENAI_API_KEY;
+  if (provider === "xai") return !!env.XAI_API_KEY;
+  return !!env.CLAUDE_API_KEY;
+}
 
 function getAvailableBackends(env) {
   const out = {};
   for (const [id, b] of Object.entries(BACKENDS)) {
-    const available = b.provider === "ollama" ? true : b.provider === "openai" ? !!env.OPENAI_API_KEY : !!env.CLAUDE_API_KEY;
+    const available = providerHasKey(b.provider, env);
     out[id] = { label: b.label, provider: b.provider, available, ...(b.local ? { local: true } : {}) };
   }
   return out;
@@ -106,8 +118,9 @@ async function callClaudeAPI(apiKey, systemPrompt, messages, maxTokens, model) {
   return { error: false, data: parsed };
 }
 
-async function callOpenAIAPI(apiKey, systemPrompt, messages, maxTokens, model) {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+async function callOpenAICompatibleAPI(apiKey, systemPrompt, messages, maxTokens, model, hostname) {
+  const label = hostname === "api.x.ai" ? "xAI" : "OpenAI";
+  const res = await fetch(`https://${hostname}/v1/chat/completions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -127,13 +140,21 @@ async function callOpenAIAPI(apiKey, systemPrompt, messages, maxTokens, model) {
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error(`Invalid JSON response from OpenAI: ${text.slice(0, 200)}`);
+    throw new Error(`Invalid JSON response from ${label}: ${text.slice(0, 200)}`);
   }
   if (res.status >= 400) {
     return { error: true, status: res.status, data: { error: { message: parsed.error?.message || text } } };
   }
   const answer = parsed.choices?.[0]?.message?.content || "";
   return { error: false, data: { content: [{ text: answer }] } };
+}
+
+function callOpenAIAPI(apiKey, systemPrompt, messages, maxTokens, model) {
+  return callOpenAICompatibleAPI(apiKey, systemPrompt, messages, maxTokens, model, "api.openai.com");
+}
+
+function callXaiAPI(apiKey, systemPrompt, messages, maxTokens, model) {
+  return callOpenAICompatibleAPI(apiKey, systemPrompt, messages, maxTokens, model, "api.x.ai");
 }
 
 function callLLM(env, systemPrompt, messages, maxTokens, backend) {
@@ -153,6 +174,12 @@ function callLLM(env, systemPrompt, messages, maxTokens, backend) {
     }
     const model = entry.model || env.OPENAI_MODEL || OPENAI_MODEL_DEFAULT;
     return callOpenAIAPI(env.OPENAI_API_KEY, systemPrompt, messages, maxTokens, model);
+  }
+  if (entry.provider === "xai") {
+    if (!env.XAI_API_KEY) {
+      return Promise.resolve({ error: true, status: 400, data: { error: { message: "XAI_API_KEY is not configured on the server." } } });
+    }
+    return callXaiAPI(env.XAI_API_KEY, systemPrompt, messages, maxTokens, entry.model);
   }
   if (!env.CLAUDE_API_KEY) {
     return Promise.resolve({ error: true, status: 400, data: { error: { message: "CLAUDE_API_KEY is not configured on the server." } } });
