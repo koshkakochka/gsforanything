@@ -26,6 +26,11 @@ const ok = (name, cond, extra = '') => {
   console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`);
 };
 
+const repoRoot = join(dir, '../..');
+const syncPublic = readFileSync(join(repoRoot, 'worker/sync-public.sh'), 'utf8');
+const vercelJson = readFileSync(join(repoRoot, 'vercel.json'), 'utf8');
+ok('sceneGenre.js shipped to the Worker and Vercel', /sceneGenre\.js/.test(syncPublic) && /site-source\/sceneGenre\.js/.test(vercelJson));
+
 // --- descriptions ---
 ok('empty / whitespace becomes ""', sanitizeDescription('') === '' && sanitizeDescription('  \n\t  ') === '');
 ok('null/undefined becomes ""', sanitizeDescription(null) === '' && sanitizeDescription(undefined) === '');
