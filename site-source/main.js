@@ -16,6 +16,8 @@ import * as GSMerge from './communityMerge.js';
 import { normalizeEnvironmentHdri, environmentHdriLoadUrl, environmentHdriSignature, hdriFormatFromName, HDRI_FILE_MAX_BYTES } from './sceneHdri.js';
 import * as ChatPrompt from './chatPrompt.js';
 import { gsAlert, gsConfirm, gsPrompt, configureDialogs, dialogCard, refreshDialogMode, installDialogGlobals } from './gsDialog.js';
+import { openGsModal, closeGsModal, currentModal, configureModals, refreshModalMode, ensureGsModalShell } from './gsModal.js';
+import { closeXrSelect } from './xrSelect.js';
 import { createRendererOrExplain, watchContextLoss } from './webglGuard.js';
 import { EXPORTS_OFF_MESSAGE, OWNER_KEY_HEADER } from './sceneExportPolicy.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
@@ -2983,16 +2985,75 @@ function resetSceneChat() {
 	renderDomChat();
 }
 
+let exportHandle = null;
+function fillExportModalBody(host) {
+	host.replaceChildren();
+	const nameLab = document.createElement('label');
+	nameLab.htmlFor = 'export-name';
+	nameLab.textContent = 'Scene Name';
+	const name = document.createElement('input');
+	name.type = 'text';
+	name.id = 'export-name';
+	name.value = activeScene?.name || 'My Scene';
+	name.autocomplete = 'off';
+	const extLab = document.createElement('label');
+	extLab.htmlFor = 'export-ext';
+	extLab.textContent = 'File Extension';
+	const ext = document.createElement('input');
+	ext.type = 'text';
+	ext.id = 'export-ext';
+	ext.value = sceneFileExtension;
+	ext.autocomplete = 'off';
+	const shotLab = document.createElement('label');
+	shotLab.textContent = 'Screenshot';
+	const area = document.createElement('div');
+	area.id = 'export-preview-area';
+	const preview = document.createElement('div');
+	preview.id = 'export-preview';
+	preview.innerHTML = '<span style="color:rgba(255,255,255,0.4);font-size:12px;text-align:center">No screenshot</span>';
+	const cap = document.createElement('button');
+	cap.type = 'button';
+	cap.id = 'export-screenshot-btn';
+	cap.textContent = '📸 Capture';
+	cap.addEventListener('click', () => {
+		pendingExportThumbnail = captureScreenshot();
+		preview.innerHTML = `<img src="${pendingExportThumbnail}" style="width:80px;height:80px;border-radius:8px;object-fit:cover;">`;
+	});
+	area.append(preview, cap);
+	host.append(nameLab, name, extLab, ext, shotLab, area);
+}
+
 function showExportModal() {
-	exportNameInput.value = activeScene?.name || 'My Scene';
-	exportExtInput.value = sceneFileExtension;
+	if (!sceneExportsAllowed()) {
+		const m = document.getElementById('export-modal');
+		if (m) { m.classList.remove('visible'); m.style.display = 'none'; m.hidden = true; }
+		showExportsBlocked();
+		return;
+	}
 	pendingExportThumbnail = null;
-	exportPreview.innerHTML = '<span style="color:rgba(255,255,255,0.4);font-size:12px;text-align:center">No screenshot</span>';
-	exportModal.style.display = 'flex';
+	const root = document.getElementById('export-modal');
+	if (root) root.style.display = '';
+	exportHandle = openGsModal({
+		id: 'export-modal',
+		cardId: 'export-modal-inner',
+		title: 'Export Scene',
+		body: fillExportModalBody,
+		closeOnBackdrop: true,
+		initialFocus: () => document.getElementById('export-name'),
+		xrInput: () => document.getElementById('export-name'),
+		actions: [
+			{ id: 'export-cancel-btn', label: 'Cancel', close: true },
+			{ id: 'export-download-btn', label: 'Save to Device', close: false, onClick: () => { doDownloadExport(); return false; } },
+			{ id: 'export-confirm-btn', label: 'Export', variant: 'primary', close: false, onClick: () => { doExport(); return false; } }
+		],
+		onClose: () => { exportHandle = null; }
+	});
 }
 
 function hideExportModal() {
-	exportModal.style.display = 'none';
+	if (exportHandle) { exportHandle.close('hide'); exportHandle = null; }
+	const m = document.getElementById('export-modal');
+	if (m) { m.classList.remove('visible'); m.style.display = 'none'; m.hidden = true; }
 }
 
 // Gathers the current exportable scene (the active scene + the code chat
@@ -3018,8 +3079,8 @@ function buildSceneData(name) {
 
 async function doExport() {
 	if (!sceneExportsAllowed()) { hideExportModal(); showExportsBlocked(); return; }
-	const name = exportNameInput.value.trim() || 'Untitled';
-	const ext = exportExtInput.value.trim().replace(/^\./, '') || 'vrscene';
+	const name = (document.getElementById('export-name')?.value || '').trim() || 'Untitled';
+	const ext = (document.getElementById('export-ext')?.value || '').trim().replace(/^\./, '') || 'vrscene';
 	sceneFileExtension = ext;
 
 	// Saved scenes carry their creation context (chat + info log, scrubbed).
@@ -3064,8 +3125,8 @@ function sceneFileStem(name) {
 // "Export" above which only saves to this server's single scene slot).
 async function doDownloadExport() {
 	if (!sceneExportsAllowed()) { hideExportModal(); showExportsBlocked(); return; }
-	const name = exportNameInput.value.trim() || 'Untitled';
-	const ext = exportExtInput.value.trim().replace(/^\./, '') || 'vrscene';
+	const name = (document.getElementById('export-name')?.value || '').trim() || 'Untitled';
+	const ext = (document.getElementById('export-ext')?.value || '').trim().replace(/^\./, '') || 'vrscene';
 	sceneFileExtension = ext;
 
 	const sceneData = await GSContext.withCreationContext(buildSceneData(name));
@@ -3224,7 +3285,8 @@ function applyDisplayOnlyMode() {
 
 function currentShareUrl() {
 	if (!pendingShare) return '';
-	return shareDisplayOnly && shareDisplayOnly.checked ? pendingShare.viewUrl : pendingShare.editorUrl;
+	const box = document.getElementById('share-display-only');
+	return box && box.checked ? pendingShare.viewUrl : pendingShare.editorUrl;
 }
 
 function sharePayloadFromMeta(meta, urls = {}) {
@@ -3240,39 +3302,110 @@ function sharePayloadFromMeta(meta, urls = {}) {
 	};
 }
 
+let shareHandle = null;
+function fillShareModalBody(host) {
+	host.replaceChildren();
+	const lab = document.createElement('label');
+	lab.className = 'share-modal-check';
+	const box = document.createElement('input');
+	box.type = 'checkbox';
+	box.id = 'share-display-only';
+	const span = document.createElement('span');
+	span.textContent = 'Display only — hide the chatbot, community panel, and editor UI so visitors just see the finished scene.';
+	lab.append(box, span);
+	box.addEventListener('change', () => {
+		const url = document.getElementById('share-url');
+		if (url) url.value = currentShareUrl();
+	});
+	const urlLab = document.createElement('label');
+	urlLab.htmlFor = 'share-url';
+	urlLab.textContent = 'Shareable URL';
+	const url = document.createElement('input');
+	url.type = 'text';
+	url.id = 'share-url';
+	url.readOnly = true;
+	url.value = currentShareUrl();
+	host.append(lab, urlLab, url);
+}
+
 function showShareModal(share) {
 	if (displayOnlyMode) return;
 	pendingShare = share;
-	if (shareModalTitle) shareModalTitle.textContent = share.name ? `Share "${share.name}"` : 'Share Scene';
-	if (shareDisplayOnly) shareDisplayOnly.checked = false;
-	if (shareUrlInput) shareUrlInput.value = currentShareUrl();
-	if (shareCopyBtn) shareCopyBtn.textContent = 'Copy link';
-	if (shareModal) shareModal.classList.add('visible');
-	if (shareUrlInput) {
-		shareUrlInput.focus();
-		shareUrlInput.select();
-	}
+	const title = share.name ? `Share "${share.name}"` : 'Share Scene';
+	shareHandle = openGsModal({
+		id: 'share-modal',
+		cardId: 'share-modal-inner',
+		title,
+		titleId: 'share-modal-title',
+		body: fillShareModalBody,
+		closeOnBackdrop: true,
+		initialFocus: () => document.getElementById('share-url'),
+		xrInput: () => document.getElementById('share-url'),
+		actions: [
+			{ id: 'share-close-btn', label: 'Done', className: 'btn-secondary', close: true },
+			{ id: 'share-copy-btn', label: 'Copy link', className: 'btn-primary', variant: 'primary', close: false, onClick: async (ev, btn) => {
+				const ok = await copyText(currentShareUrl());
+				if (btn) btn.textContent = ok ? 'Copied!' : 'Copy failed';
+				setTimeout(() => { if (btn) btn.textContent = 'Copy link'; }, 1500);
+				return false;
+			} }
+		],
+		onClose: () => { shareHandle = null; }
+	});
+	const url = document.getElementById('share-url');
+	if (url) { url.focus(); url.select(); }
 }
 
 function hideShareModal() {
-	if (shareModal) shareModal.classList.remove('visible');
+	if (shareHandle) { shareHandle.close('hide'); shareHandle = null; }
+	document.getElementById('share-modal')?.classList.remove('visible');
 }
 
+let renameHandle = null;
 function showRenameModal(cs, kind = 'scene') {
 	if (displayOnlyMode || !cs) return;
 	pendingRename = cs;
 	pendingRenameKind = kind === 'theme' ? 'theme' : 'scene';
-	if (renameNameInput) renameNameInput.value = cs.name || '';
-	if (renameModal) renameModal.classList.add('visible');
+	renameHandle = openGsModal({
+		id: 'rename-modal',
+		cardId: 'rename-modal-inner',
+		title: pendingRenameKind === 'theme' ? 'Rename Theme' : 'Rename Scene',
+		body: (host) => {
+			host.replaceChildren();
+			const lab = document.createElement('label');
+			lab.htmlFor = 'rename-name';
+			lab.textContent = pendingRenameKind === 'theme' ? 'Theme Name' : 'Scene Name';
+			const input = document.createElement('input');
+			input.type = 'text';
+			input.id = 'rename-name';
+			input.autocomplete = 'off';
+			input.value = cs.name || '';
+			input.addEventListener('keydown', (e) => {
+				if (e.key === 'Enter') { e.preventDefault(); renameCommunityScene(); }
+			});
+			host.append(lab, input);
+		},
+		closeOnBackdrop: true,
+		initialFocus: () => document.getElementById('rename-name'),
+		xrInput: () => document.getElementById('rename-name'),
+		onEnter: () => { renameCommunityScene(); },
+		actions: [
+			{ id: 'rename-cancel-btn', label: 'Cancel', className: 'btn-secondary', close: true },
+			{ id: 'rename-confirm-btn', label: 'Save', className: 'btn-primary', variant: 'primary', close: false, onClick: () => { renameCommunityScene(); return false; } }
+		],
+		onClose: () => { renameHandle = null; }
+	});
 	setTimeout(() => {
-		if (!renameNameInput) return;
-		renameNameInput.focus();
-		renameNameInput.select();
+		const input = document.getElementById('rename-name');
+		if (!input) return;
+		input.focus();
+		input.select();
 	}, 0);
 }
 
 function hideRenameModal() {
-	if (renameModal) renameModal.classList.remove('visible');
+	if (renameHandle) { renameHandle.close('hide'); renameHandle = null; }
+	document.getElementById('rename-modal')?.classList.remove('visible');
 	pendingRename = null;
 	pendingRenameKind = 'scene';
 }
@@ -4041,7 +4174,7 @@ async function loadCommunitySceneById(sceneId, { activate = true } = {}) {
 async function renameCommunityScene() {
 	const cs = pendingRename;
 	const kind = pendingRenameKind;
-	const name = renameNameInput ? renameNameInput.value.trim() : '';
+	const name = (document.getElementById('rename-name')?.value || '').trim();
 	if (!cs || !cs.id) {
 		hideRenameModal();
 		return;
@@ -4495,38 +4628,6 @@ async function bootSharedScene() {
 	}
 }
 
-if (shareDisplayOnly) {
-	shareDisplayOnly.addEventListener('change', () => {
-		if (shareUrlInput) shareUrlInput.value = currentShareUrl();
-	});
-}
-if (shareCloseBtn) shareCloseBtn.addEventListener('click', hideShareModal);
-if (shareCopyBtn) {
-	shareCopyBtn.addEventListener('click', async () => {
-		const url = currentShareUrl();
-		const ok = await copyText(url);
-		shareCopyBtn.textContent = ok ? 'Copied!' : 'Copy failed';
-		setTimeout(() => { if (shareCopyBtn) shareCopyBtn.textContent = 'Copy link'; }, 1500);
-	});
-}
-if (shareModal) shareModal.addEventListener('click', (e) => { if (e.target === shareModal) hideShareModal(); });
-if (renameCancelBtn) renameCancelBtn.addEventListener('click', hideRenameModal);
-if (renameConfirmBtn) renameConfirmBtn.addEventListener('click', renameCommunityScene);
-if (renameNameInput) {
-	renameNameInput.addEventListener('keydown', (e) => {
-		if (e.key === 'Enter') { e.preventDefault(); renameCommunityScene(); }
-	});
-}
-if (renameModal) renameModal.addEventListener('click', (e) => { if (e.target === renameModal) hideRenameModal(); });
-
-
-exportScreenshotBtn.addEventListener('click', () => {
-	pendingExportThumbnail = captureScreenshot();
-	exportPreview.innerHTML = `<img src="${pendingExportThumbnail}" style="width:80px;height:80px;border-radius:8px;object-fit:cover;">`;
-});
-exportCancelBtn.addEventListener('click', hideExportModal);
-exportConfirmBtn.addEventListener('click', doExport);
-exportDownloadBtn.addEventListener('click', doDownloadExport);
 
 // The Scenes tab's current-scene card: thumbnail, name and how many blocks
 // it has (its own code + what chat added). There is only ever one scene.
@@ -9524,18 +9625,38 @@ function initGsVersionPicker() {
 	let versions = mergeVersionList(null);
 	let loading = false;
 
+	let versionHandle = null;
+	const listHost = listEl;
+	const note = document.getElementById('gs-version-modal-note') || (() => {
+		const p = document.createElement('p');
+		p.id = 'gs-version-modal-note';
+		p.textContent = 'What changed in each version, newest first. Tap a version to open that build.';
+		return p;
+	})();
 	function hide() {
+		if (versionHandle) { versionHandle.close('hide'); versionHandle = null; }
 		modal.classList.remove('visible');
 		modal.setAttribute('aria-hidden', 'true');
 	}
 
 	function show() {
-		modal.classList.add('visible');
-		modal.setAttribute('aria-hidden', 'false');
+		const body = document.createElement('div');
+		body.append(note, listHost);
+		versionHandle = openGsModal({
+			id: 'gs-version-modal',
+			cardId: 'gs-version-modal-inner',
+			title: 'GS versions & changelog',
+			titleId: 'gs-version-title',
+			body,
+			closeOnBackdrop: true,
+			actions: [{ id: 'gs-version-close', label: 'Close', className: 'btn-secondary', close: true }],
+			onClose: () => { versionHandle = null; }
+		});
+		versionHandle.root.setAttribute('aria-hidden', 'false');
 		// Open at the top so the newest changelog entry is what you see first.
-		closeBtn?.focus({ preventScroll: true });
 		const inner = document.getElementById('gs-version-modal-inner');
 		if (inner) inner.scrollTop = 0;
+		document.getElementById('gs-version-close')?.focus({ preventScroll: true });
 	}
 
 	function renderList() {
@@ -9607,13 +9728,6 @@ function initGsVersionPicker() {
 		show();
 		refreshVersions();
 		renderList();
-	});
-	closeBtn?.addEventListener('click', hide);
-	modal.addEventListener('click', (e) => {
-		if (e.target === modal) hide();
-	});
-	window.addEventListener('keydown', (e) => {
-		if (e.key === 'Escape' && modal.classList.contains('visible')) hide();
 	});
 
 	renderList();
@@ -10248,7 +10362,7 @@ function initVrDialogWindow() {
 		}
 	});
 	renderer.xr.addEventListener('sessionstart', refreshDialogMode);
-	renderer.xr.addEventListener('sessionend', refreshDialogMode);
+	renderer.xr.addEventListener('sessionend', () => { closeXrSelect(); refreshDialogMode(); });
 	renderer.xr.addEventListener('sessionstart', GSContext.refreshPublishDialogMode);
 	renderer.xr.addEventListener('sessionend', GSContext.refreshPublishDialogMode);
 }
@@ -10256,6 +10370,14 @@ function initVrDialogWindow() {
 // The page's own alert / confirm / prompt (AI-written scene code, p5 helpers,
 // anything else) open these dialogs too; see installDialogGlobals.
 installDialogGlobals(window);
+window.gsModal = {
+	open: openGsModal,
+	close: closeGsModal,
+	current: currentModal,
+	configure: configureModals,
+	refresh: refreshModalMode,
+	ensureShell: ensureGsModalShell
+};
 
 function dispatchKeyToDomField(el, key) {
 	const write = (text) => {

@@ -35,6 +35,7 @@
 
 import { sanitizeSceneName, SCENE_NAME_MAX, DEFAULT_UPLOAD_NAME } from './sceneName.js';
 import { mountGenrePicker } from './sceneGenre.js';
+import { openGsModal, configureModals, refreshModalMode } from './gsModal.js';
 
 export const CONTEXT_FORMAT = 'gs-creation-context';
 export const CONTEXT_VERSION = 1;
@@ -786,6 +787,7 @@ body.display-only #gs-ctx-history-btn { display: none !important; }
 
 let viewerEl = null;
 let publishEl = null;
+let publishHandle = null;
 let publishMode = null; // 'page' | 'xr' | null
 const publishHooks = {
 	isImmersive: () => false,
@@ -798,31 +800,22 @@ const publishHooks = {
 /** main.js hands in the VR hooks (same window as gsDialog). */
 export function configurePublishDialog(h = {}) {
 	Object.assign(publishHooks, h);
+	const modalHook = {};
+	if (typeof h.isImmersive === 'function') modalHook.isImmersive = h.isImmersive;
+	if (h.onShow) modalHook.onShow = h.onShow;
+	if (h.onHide) modalHook.onHide = h.onHide;
+	if (Object.keys(modalHook).length) configureModals(modalHook);
 	if (publishEl && publishEl.classList.contains('visible')) refreshPublishDialogMode();
 }
 
 /** The publish card (the VR window's source). */
 export function publishCard() {
-	return publishEl?.querySelector('.gs-ctx-inner') || null;
+	return publishEl?.querySelector('.gs-ctx-inner') || publishEl?.querySelector('.gs-modal-card') || null;
 }
 
 /** Re-show the open publish dialog in the right mode (XR session started/ended). */
 export function refreshPublishDialogMode() {
-	if (!publishEl || !publishEl.classList.contains('visible')) return;
-	const want = publishHooks.isImmersive?.() ? 'xr' : 'page';
-	if (publishMode === want) return;
-	const card = publishCard();
-	const input = document.getElementById('gs-ctx-publish-name');
-	if (publishMode === 'xr') publishHooks.onHide?.(card);
-	publishMode = want;
-	publishEl.classList.toggle('gs-ctx-modal-xr', want === 'xr');
-	if (want === 'xr') {
-		if (input && document.activeElement === input) input.blur();
-		publishHooks.onShow?.(card, { input, card });
-	} else {
-		input?.focus({ preventScroll: true });
-		try { input?.select(); } catch { /* ignore */ }
-	}
+	refreshModalMode();
 }
 
 function el(tag, attrs = {}, ...children) {
@@ -880,15 +873,12 @@ export function decorateBubble(bubble, msg) {
 	}
 }
 
-function ensureViewer() {
-	if (viewerEl) return viewerEl;
-	viewerEl = el('div', { class: 'gs-ctx-modal', id: 'gs-ctx-viewer', role: 'dialog', 'aria-labelledby': 'gs-ctx-viewer-title' });
-	viewerEl.addEventListener('click', (e) => { if (e.target === viewerEl) closeViewer(); });
-	document.body.appendChild(viewerEl);
-	return viewerEl;
-}
+let viewerHandle = null;
 
-export function closeViewer() { viewerEl?.classList.remove('visible'); }
+export function closeViewer() {
+	if (viewerHandle) { viewerHandle.close('close'); viewerHandle = null; }
+	viewerEl?.classList.remove('visible');
+}
 
 function sources() {
 	const list = loadedContexts.map((c, i) => ({ id: `loaded:${i}`, key: c.key, label: `"${c.sceneName}" (loaded ${c.source === 'community' ? 'from Community' : 'scene'})`, payload: c.payload }));
@@ -897,13 +887,9 @@ function sources() {
 }
 
 export function openViewer(contextKey = null, { payload: forcedPayload = null, title = null } = {}) {
-	const root = ensureViewer();
-	root.innerHTML = '';
 	const srcs = forcedPayload ? [{ id: 'preview', label: title || 'Preview', payload: forcedPayload }] : sources();
 	let current = srcs.find(s => s.key && s.key === contextKey) || srcs[0];
 	let tab = 'chat';
-	const inner = el('div', { class: 'gs-ctx-inner' });
-	const heading = el('h3', { id: 'gs-ctx-viewer-title' }, title || 'Creation context');
 	const sub = el('div', { class: 'gs-ctx-sub' });
 	const select = el('select', { 'aria-label': 'Which context' });
 	for (const s of srcs) select.appendChild(el('option', { value: s.id }, s.label));
@@ -992,29 +978,31 @@ export function openViewer(contextKey = null, { payload: forcedPayload = null, t
 			}
 		}
 	}
-	inner.append(heading, srcs.length > 1 ? el('div', { class: 'gs-ctx-row' }, select) : null, sub, tabs, body, actions);
-	root.appendChild(inner);
+	const bodyWrap = el('div', {});
+	if (srcs.length > 1) bodyWrap.append(el('div', { class: 'gs-ctx-row' }, select));
+	bodyWrap.append(sub, tabs, body);
+	closeViewer();
+	viewerHandle = openGsModal({
+		id: 'gs-ctx-viewer',
+		className: 'gs-ctx-modal',
+		cardClass: 'gs-ctx-inner',
+		title: title || 'Creation context',
+		titleId: 'gs-ctx-viewer-title',
+		body: bodyWrap,
+		closeOnBackdrop: true,
+		actions: [
+			{ label: 'Download JSON', close: false, onClick: () => { const p = payloadOf(); download(`${p.scene?.name || 'scene'}-creation-context.json`, JSON.stringify(p, null, 2), 'application/json'); return false; } },
+			{ label: 'Download chat (.md)', close: false, onClick: () => { const p = payloadOf(); download(`${p.scene?.name || 'scene'}-chat.md`, payloadToMarkdown(p), 'text/markdown'); return false; } },
+			{ label: 'Close', variant: 'primary', className: 'primary', close: true }
+		],
+		onClose: () => { viewerHandle = null; }
+	});
+	viewerEl = viewerHandle.root;
 	draw();
-	root.classList.add('visible');
-	return root;
+	return viewerEl;
 }
 
 function openPublishDialog(sceneData, pref, secretsInCode, resolve) {
-	if (!publishEl) {
-		publishEl = el('div', { class: 'gs-ctx-modal', id: 'gs-ctx-publish', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'gs-ctx-publish-title' });
-		document.body.appendChild(publishEl);
-		// While the dialog is up every key typed into it stays in it (capture
-		// phase), so WASD / arrows / shortcuts never reach the camera controls.
-		const swallow = (e) => {
-			if (!publishEl.classList.contains('visible')) return;
-			if (publishMode === 'xr' && !publishEl.contains(e.target) && !(publishCard() && publishCard().contains(e.target))) return;
-			e.stopPropagation();
-		};
-		document.addEventListener('keydown', (e) => publishEl._onKey?.(e), true);
-		document.addEventListener('keyup', swallow, true);
-		document.addEventListener('keypress', swallow, true);
-	}
-	publishEl.innerHTML = '';
 	const hasContext = hasSessionContent();
 	let packed = null;
 	let busy = false;
@@ -1037,16 +1025,13 @@ function openPublishDialog(sceneData, pref, secretsInCode, resolve) {
 		enterkeyhint: 'done', placeholder: DEFAULT_UPLOAD_NAME, 'aria-describedby': 'gs-ctx-publish-name-hint'
 	});
 	nameInput.value = initialName;
-	const title = el('h3', { id: 'gs-ctx-publish-title' }, 'Publish to Community');
 	const finish = (result) => {
 		if (done) return;
 		done = true;
-		const card = publishCard();
-		if (publishMode === 'xr') publishHooks.onHide?.(card);
-		if (document.activeElement && publishEl.contains(document.activeElement)) document.activeElement.blur();
+		if (publishHandle && !publishHandle.closed) publishHandle.close('action');
+		publishHandle = null;
+		publishEl = null;
 		publishMode = null;
-		publishEl.classList.remove('visible', 'gs-ctx-modal-xr');
-		publishEl._onKey = null;
 		resolve(result);
 	};
 	const submit = async () => {
@@ -1071,15 +1056,9 @@ function openPublishDialog(sceneData, pref, secretsInCode, resolve) {
 		}
 		finish(sceneData);
 	};
-	publishEl._onKey = (e) => {
-		if (!publishEl.classList.contains('visible')) return;
-		// In VR only keys aimed at the card count (the VR keyboard's Send/Enter).
-		if (publishMode === 'xr' && !publishEl.contains(e.target) && !(publishCard() && publishCard().contains(e.target))) return;
-		e.stopPropagation();
-		if (e.isComposing) return;
-		if (e.key === 'Escape' || e.key === 'Esc') { e.preventDefault(); finish(null); return; }
-		if (e.key === 'Enter' && e.target === nameInput) { e.preventDefault(); submit(); }
-	};
+	nameInput.addEventListener('keydown', (e) => {
+		if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submit(); }
+	});
 	const refresh = async () => {
 		if (!hasContext) return;
 		includeFiles.disabled = !include.checked;
@@ -1135,26 +1114,34 @@ function openPublishDialog(sceneData, pref, secretsInCode, resolve) {
 		list,
 		warn
 	] : [];
-	const inner = el('div', { class: 'gs-ctx-inner', style: 'width:min(520px,94vw)' },
-		title,
-		el('div', { class: 'gs-ctx-sub' }, hasContext
-			? 'Community scenes are public: anyone with the link can open them. The creation context lets you (or anyone who opens the scene) see the original chat and files and keep building from where it left off.'
-			: 'Community scenes are public: anyone with the link can open them.'),
-		nameField,
-		genreField,
-		allowExportField,
-		...contextBits,
-		codeWarn,
-		el('div', { class: 'gs-ctx-actions' },
-			hasContext ? el('button', { type: 'button', id: 'gs-ctx-preview-btn', onclick: () => { if (packed) openViewer(null, { payload: packed.payload, title: 'Preview: creation context to publish' }); } }, 'Preview') : null,
-			el('button', { type: 'button', id: 'gs-ctx-cancel-btn', onclick: () => finish(null) }, 'Cancel'),
-			el('button', { type: 'button', class: 'primary', id: 'gs-ctx-publish-btn', onclick: submit }, 'Publish')
-		)
-	);
-	publishEl.appendChild(inner);
-	publishEl.classList.add('visible');
-	publishMode = null;
-	refreshPublishDialogMode();
+	const intro = el('div', { class: 'gs-ctx-sub' }, hasContext
+		? 'Community scenes are public: anyone with the link can open them. The creation context lets you (or anyone who opens the scene) see the original chat and files and keep building from where it left off.'
+		: 'Community scenes are public: anyone with the link can open them.');
+	const bodyWrap = el('div', {});
+	bodyWrap.append(intro, nameField, genreField, allowExportField, ...contextBits);
+	if (codeWarn) bodyWrap.append(codeWarn);
+	publishHandle = openGsModal({
+		id: 'gs-ctx-publish',
+		className: 'gs-ctx-modal',
+		cardClass: 'gs-ctx-inner',
+		title: 'Publish to Community',
+		titleId: 'gs-ctx-publish-title',
+		width: 'min(520px, 94vw)',
+		body: bodyWrap,
+		closable: true,
+		closeOnBackdrop: false,
+		onEnter: () => { submit(); },
+		xrInput: () => document.getElementById('gs-ctx-publish-name'),
+		initialFocus: () => document.getElementById('gs-ctx-publish-name'),
+		actions: [
+			hasContext ? { id: 'gs-ctx-preview-btn', label: 'Preview', close: false, onClick: () => { if (packed) openViewer(null, { payload: packed.payload, title: 'Preview: creation context to publish' }); return false; } } : null,
+			{ id: 'gs-ctx-cancel-btn', label: 'Cancel', close: false, onClick: () => { finish(null); return false; } },
+			{ id: 'gs-ctx-publish-btn', label: 'Publish', variant: 'primary', className: 'primary', close: false, onClick: () => { submit(); return false; } }
+		].filter(Boolean),
+		onClose: (reason) => { if (!done) finish(null); }
+	});
+	publishEl = publishHandle.root;
+	publishMode = publishHandle.mode;
 	refresh();
 }
 
