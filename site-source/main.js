@@ -43,6 +43,7 @@ import * as gsCamPipeline from './passthroughTexture.js';
 // p5.js sketch import (paste / file / zip / URL -> panel in the scene). Self-contained;
 // it only uses the window.gs* hooks set up next to gsCreateP5Surface below.
 import './p5Import.js';
+import { initModelImport } from './modelImport.js';
 
 // ============================================================================
 // Configuration
@@ -303,6 +304,7 @@ const dchatHdriStatus = document.getElementById('dchat-hdri-status');
 // something calls them.
 const SCENES_BUTTONS = [
 	{ id: 'importFile', label: 'Import .vrscene.json', action: 'scenes:importFile' },
+	{ id: 'importModel', label: 'Import model', action: 'scenes:importModel' },
 	{ id: 'clearScene', label: 'Clear All From Scene', action: 'scenes:clear', variant: 'secondary' }
 ];
 // Share & Export lives on its own menu tab (data-tab="share"). "Export" (save
@@ -370,6 +372,9 @@ function handleMenuAction(action) {
 			break;
 		case 'scenes:importFile':
 			fileInput.click();
+			break;
+		case 'scenes:importModel':
+			window.gsModelImport?.openPicker?.();
 			break;
 		case 'scenes:loadSaved':
 			loadSceneFromServer();
@@ -6215,6 +6220,8 @@ function updateLocomotion(dt, session, claimedSticks = null) {
 	const xrCam = renderer.xr.getCamera();
 	// Holding the origin gizmo: the controllers rotate the scene, not you.
 	if (vrGizmoGrab) return;
+	// Holding an imported model: sticks scale it (or do nothing) instead of moving you.
+	if (window.gsModelImport?.xr?.isGrabbing?.()) return;
 	// Listening for a VR binding (Controls tab): the controllers don't move you.
 	if (gsPadXrBindings.capture.busy === 'xr') return;
 	// Per hand: thumbstick (per-axis deadzone) and buttons. A stick that is
@@ -6379,8 +6386,9 @@ window.gsRenderDistance = {
 	defaults: { near: RENDER_NEAR, far: RENDER_FAR }
 };
 
+let modelTransformDragging = false;
 function cameraControlsSuspended() {
-	return !!(renderer.xr.isPresenting || mobileXRMode);
+	return !!(renderer.xr.isPresenting || mobileXRMode || modelTransformDragging);
 }
 
 const cameraControls = createCameraControls({
@@ -7587,6 +7595,25 @@ window.gsSessionCode = {
 		if (sc && Array.isArray(sc.codeBlocks)) sc.codeBlocks = keep(sc.codeBlocks, (i) => sceneBlockKey(sc, i));
 		if (removed) { notifyCodeEditorExternalChange(); renderDomSceneList(); }
 		return removed;
+	},
+	all() {
+		return [...(activeScene?.codeBlocks || []), ...executedCodeBlocks];
+	},
+	// Update a block's source without re-running it (imported-model transforms).
+	patchWhere(match, replacer) {
+		let n = 0;
+		const patch = (list) => {
+			if (!Array.isArray(list)) return;
+			for (let i = 0; i < list.length; i++) {
+				if (!match(list[i])) continue;
+				const next = typeof replacer === 'function' ? replacer(list[i]) : replacer;
+				if (typeof next === 'string' && next !== list[i]) { list[i] = next; n++; }
+			}
+		};
+		patch(executedCodeBlocks);
+		if (activeScene && Array.isArray(activeScene.codeBlocks)) patch(activeScene.codeBlocks);
+		if (n) notifyCodeEditorExternalChange();
+		return n;
 	}
 };
 
@@ -10227,6 +10254,23 @@ bootSharedScene();
 // Snapshot system objects so we can distinguish user-created objects later
 snapshotSystemObjects();
 
+initModelImport({
+	scene, camera, renderer,
+	notify: (text, kind) => updateStatus(text, kind),
+	registerSystemObject(obj) {
+		if (!obj) return;
+		obj.userData = obj.userData || {};
+		obj.userData.gsNoExport = true;
+		obj.traverse((o) => systemObjectIds.add(o.uuid));
+	},
+	registerSystemOverlay(el) { if (el?.id) systemOverlayIds.add(el.id); },
+	onDragging(on) { modelTransformDragging = !!on; cameraControls.refreshEnabled(); },
+	isImmersive: () => !!(renderer.xr.isPresenting || mobileXRMode === 'ar'),
+	getArGizmoActive: () => !!(arGizmoVisible || arGizmoDragging),
+	isTextEntry,
+	importSceneFile: (file) => loadSceneFile(file)
+});
+
 // Add welcome message
 displayMessages.push({ role: 'assistant', content: WELCOME_MSG });
 renderDomChat();
@@ -10444,9 +10488,21 @@ renderer.setAnimationLoop((time) => {
 					// mode (off → planar → free-roam).
 					const b1 = !!(gp.buttons[1] && gp.buttons[1].pressed);
 					if (b1 && !prev[1]) {
-						if (!beginVrGizmoGrab(hand) && hand === 'right' && !mine(1)) cycleLocomotionMode();
+						const foundCtrl = xrControllerForHand(hand);
+						let grabbedModel = false;
+						if (foundCtrl && !beginVrGizmoGrab(hand) && !gsXrInput._rayOnWindow[hand] && window.gsModelImport?.xr) {
+							foundCtrl.controller.updateMatrixWorld(true);
+							_rayTempMatrix.identity().extractRotation(foundCtrl.controller.matrixWorld);
+							_rayOrigin.setFromMatrixPosition(foundCtrl.controller.matrixWorld);
+							_rayDir.set(0, 0, -1).applyMatrix4(_rayTempMatrix);
+							grabbedModel = !!window.gsModelImport.xr.beginGrab(hand, foundCtrl.controller, _rayOrigin, _rayDir);
+						}
+						if (!grabbedModel && !vrGizmoGrab && hand === 'right' && !mine(1)) cycleLocomotionMode();
 					}
-					if (!b1 && prev[1] && vrGizmoGrab && vrGizmoGrab.hand === hand) endVrGizmoGrab();
+					if (!b1 && prev[1]) {
+						if (vrGizmoGrab && vrGizmoGrab.hand === hand) endVrGizmoGrab();
+						window.gsModelImport?.xr?.endGrab?.(hand);
+					}
 					prev[1] = b1;
 				}
 
@@ -10470,6 +10526,24 @@ renderer.setAnimationLoop((time) => {
 			}
 			if (vrGizmoGrab && !session.inputSources.length) endVrGizmoGrab();
 			updateVrGizmoGrab();
+			if (window.gsModelImport?.xr) {
+				if (!session.inputSources.length && window.gsModelImport.xr.isGrabbing()) {
+					window.gsModelImport.xr.endGrab('left');
+					window.gsModelImport.xr.endGrab('right');
+				}
+				window.gsModelImport.xr.update(
+					(hand) => xrControllerForHand(hand),
+					(hand) => {
+						for (const source of session.inputSources) {
+							if (source.handedness !== hand || !source.gamepad) continue;
+							const axes = source.gamepad.axes;
+							return axes.length >= 4 ? axes[3] : (axes[1] || 0);
+						}
+						return 0;
+					},
+					dt
+				);
+			}
 
 			// Locomotion: left stick moves, right stick turns (a stick a scene
 			// binding took over is left to the scene).
