@@ -218,8 +218,8 @@ for (const [name, err, ua, re] of [
 const xrState = (p) => p.evaluate(() => {
 	const t = document.getElementById('gs-xr-mode'); const btn = document.getElementById('XRButton');
 	const bs = Object.fromEntries([...t.querySelectorAll('button')].map((b) => [b.dataset.xrMode, { disabled: b.disabled, checked: b.getAttribute('aria-checked') }]));
-	const env = Object.fromEntries([...document.querySelectorAll('#dchat-env-mode [data-id]')].map((g) => [g.dataset.id, { disabled: g.getAttribute('aria-disabled') === 'true', label: g.textContent }]));
-	return { hidden: t.hidden, bs, label: btn && btn.textContent, state: btn && btn.dataset.xrState, mode: window.gsXrMode.effective, pref: window.gsXrMode.preferred, env };
+	const envBtns = document.querySelectorAll('#dchat-env-mode [data-id], #dchat-env-mode button');
+	return { hidden: t.hidden, bs, label: btn && btn.textContent, state: btn && btn.dataset.xrState, mode: window.gsXrMode.effective, pref: window.gsXrMode.preferred, envCount: envBtns.length };
 });
 {
 	const { b, p, errors } = await open({ before: mockXr({ 'immersive-vr': true, 'immersive-ar': true }) });
@@ -232,7 +232,7 @@ const xrState = (p) => p.evaluate(() => {
 	await p.click('#gs-xr-mode [data-xr-mode="ar"]'); await sleep(300);
 	s = await xrState(p);
 	check('[xr both] Choosing AR: ENTER AR, AR checked', s.bs.ar.checked === 'true' && s.bs.vr.checked === 'false' && /ENTER AR/.test(s.label) && s.state === 'enter', s);
-	check('[xr both] Menu Env tab mirrors it (AR active)', s.env.ar && !s.env.ar.disabled, s.env);
+	check('[xr both] Env tab has no AR / VR / Exit VR buttons', s.envCount === 0, s);
 	check('[xr both] Choice persisted', (await p.evaluate(() => localStorage.getItem('gs.xrMode'))) === 'ar');
 	await shot(p, '08-xr-toggle-ar');
 	await p.click('#XRButton'); await sleep(500);
@@ -241,11 +241,10 @@ const xrState = (p) => p.evaluate(() => {
 	await p.reload({ waitUntil: 'networkidle2' }); await sleep(1200);
 	s = await xrState(p);
 	check('[xr both] AR choice survives a reload', s.pref === 'ar' && /ENTER AR/.test(s.label), s);
-	// Switch back via the menu's Env buttons.
-	await p.evaluate(() => document.querySelector('#dchat-env-mode [data-id="vr"]').dispatchEvent(new MouseEvent('click', { bubbles: true })));
-	await sleep(300);
+	// Switch back via the dock AR | VR toggle (Env tab no longer has those buttons).
+	await p.click('#gs-xr-mode [data-xr-mode="vr"]'); await sleep(300);
 	s = await xrState(p);
-	check('[xr both] Env tab "VR" switches back: ENTER VR', s.pref === 'vr' && /ENTER VR/.test(s.label), s);
+	check('[xr both] Dock "VR" switches back: ENTER VR', s.pref === 'vr' && /ENTER VR/.test(s.label), s);
 	await p.click('#XRButton'); await sleep(500);
 	const req2 = await p.evaluate(() => window.__xrRequests.map((r) => r.mode));
 	check('[xr both] ENTER VR requests immersive-vr', req2[req2.length - 1] === 'immersive-vr', req2);
@@ -257,10 +256,10 @@ const xrState = (p) => p.evaluate(() => {
 	const s = await xrState(p);
 	check('[xr vr-only] AR option disabled', !s.hidden && s.bs.ar.disabled && !s.bs.vr.disabled, s);
 	check('[xr vr-only] Saved AR falls back to ENTER VR', /ENTER VR/.test(s.label) && s.mode === 'vr', s);
-	check('[xr vr-only] Env tab AR button disabled', s.env.ar && s.env.ar.disabled && /not supported/.test(s.env.ar.label), s.env);
-	await p.evaluate(() => document.querySelector('#dchat-env-mode [data-id="ar"]').dispatchEvent(new MouseEvent('click', { bubbles: true })));
+	check('[xr vr-only] Env tab has no AR / VR / Exit VR buttons', s.envCount === 0, s);
+	await p.click('#gs-xr-mode [data-xr-mode="ar"]');
 	await sleep(200);
-	check('[xr vr-only] Clicking the disabled AR does nothing', (await xrState(p)).mode === 'vr');
+	check('[xr vr-only] Clicking the disabled dock AR does nothing', (await xrState(p)).mode === 'vr');
 	await shot(p, '09-xr-vr-only');
 	check('[xr vr-only] No page errors', errors.length === 0, errors.slice(0, 3));
 	await b.close();
@@ -344,14 +343,14 @@ const rayClick = async (p, sel, win = 'menu') => {
 		let s = await st();
 		check('[ar] immersive-ar session with passthrough: clear alpha 0, no background', s.session === 'immersive-ar' && s.passthrough && s.alpha === 0 && !s.bg && s.ar, s);
 		await shot(p, '12-ar-session');
-		await p.evaluate(() => document.querySelector('#dchat-env-mode [data-id="vr"]').dispatchEvent(new MouseEvent('click', { bubbles: true })));
+		await p.evaluate(() => document.querySelector('#gs-xr-mode [data-xr-mode="vr"]').click());
 		await sleep(800);
 		s = await st();
-		check('[ar] Env "VR (color)" inside an AR session shows the colour environment (sky dome back)', !s.passthrough, s);
-		await p.evaluate(() => document.querySelector('#dchat-env-mode [data-id="ar"]').dispatchEvent(new MouseEvent('click', { bubbles: true })));
+		check('[ar] Dock "VR" inside an AR session shows the colour environment (sky dome back)', !s.passthrough, s);
+		await p.evaluate(() => document.querySelector('#gs-xr-mode [data-xr-mode="ar"]').click());
 		await sleep(800);
 		s = await st();
-		check('[ar] …and "AR (passthrough)" switches back live', s.passthrough && s.alpha === 0, s);
+		check('[ar] …and dock "AR" switches back live', s.passthrough && s.alpha === 0, s);
 		await p.evaluate(() => renderer.xr.getSession().end()); await sleep(1200);
 		s = await st();
 		check('[ar] Ending the session restores the desktop view', !s.session && !s.ar && !s.passthrough, s);

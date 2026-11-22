@@ -7,14 +7,66 @@
  * root), not those CSS layers, so a CSS3DObject of #desktop-chat never
  * shows up in the headset. html2canvas is not a dependency.
  *
- * Chrome also refuses to draw SVG <foreignObject> HTML into a canvas image
- * (the snapshot stays blank). This walker instead samples the element the
- * browser has already laid out — the same node, not a second menu — and
- * redraws backgrounds, borders, text, form values, and simple SVG fills.
- * It is a snapshot of that element, refreshed while the window is shown.
- * Every VR window (main menu, keyboard, Hide/Show UI) is painted by this
- * one function (see vrWindows.js), so they all share the page's CSS.
+ * Preferred path: the WICG HTML-in-Canvas API (`<canvas layoutsubtree
+ * content="drawable">` plus `ctx.drawElementImage` / `ctx.drawElement`).
+ * That draws the same live element with the browser's own HTML/CSS renderer
+ * (no second markup, no hand-drawn UI). Chrome 157+ has this on by default;
+ * Chrome 147–156 needs `chrome://flags/#canvas-draw-element` (or
+ * `--enable-blink-features=CanvasDrawElement`). The element must be a
+ * descendant of the canvas and the browser must have recorded a paint
+ * snapshot (`paint` event); otherwise draw throws or stays blank.
+ *
+ * Fallback: when the native method is missing, the element is not a canvas
+ * child, or there is no paint record (typical inside an immersive session,
+ * where the page may not paint), a walker samples the same laid-out node
+ * and redraws backgrounds, borders, text, form values, and simple SVG
+ * fills. Siblings are painted in CSS stacking order (not DOM order) so
+ * overlays such as the hamburger section list stay on top of tab panels.
+ * Chrome also refuses to draw SVG <foreignObject> HTML into a
+ * canvas image (the snapshot stays blank), which is another reason the
+ * walker exists. Every VR window (main menu, keyboard, Hide/Show UI,
+ * in-app and Community publish dialogs) is painted by this one function
+ * (see vrWindows.js), so they all share the page's HTML and CSS.
  */
+
+/** Last renderer used by paintElementToCanvas: 'native' or 'walker'. */
+let lastHtmlInCanvasRenderer = 'walker';
+
+function nativeDrawFn(ctx) {
+	if (!ctx) return null;
+	if (typeof ctx.drawElementImage === 'function') return ctx.drawElementImage.bind(ctx);
+	if (typeof ctx.drawElement === 'function') return ctx.drawElement.bind(ctx);
+	return null;
+}
+
+/** True when this browser exposes the WICG HTML-in-Canvas draw methods. */
+export function supportsNativeHtmlInCanvas(ctx) {
+	try {
+		const c = ctx || document.createElement('canvas').getContext('2d');
+		return !!nativeDrawFn(c);
+	} catch {
+		return false;
+	}
+}
+
+/** Opt a canvas into laying out drawable descendants (both API spellings). */
+export function enableNativeHtmlInCanvasHost(canvas) {
+	if (!canvas) return;
+	canvas.setAttribute('layoutsubtree', '');
+	canvas.setAttribute('content', 'drawable');
+	canvas.classList.add('gs-html-in-canvas-host');
+}
+
+/** 'native' (WICG drawElementImage/drawElement) or 'walker' (DOM sampler). */
+export function htmlInCanvasRenderer() {
+	return lastHtmlInCanvasRenderer;
+}
+
+function isNativeDrawable(element, canvas) {
+	return !!(canvas && element && canvas.contains(element)
+		&& (canvas.hasAttribute('layoutsubtree') || canvas.getAttribute('content') === 'drawable'));
+}
+
 
 function isTransparent(color) {
 	if (!color) return true;
@@ -24,6 +76,31 @@ function isTransparent(color) {
 
 function clipsOverflow(value) {
 	return value === 'hidden' || value === 'auto' || value === 'scroll' || value === 'clip';
+}
+
+// Positioned siblings with a numeric z-index (the hamburger section list is
+// z-index 40) must paint above in-flow tab panels that come later in the DOM.
+function stackingOrder(style) {
+	if (style && style.position !== 'static' && style.zIndex !== 'auto') {
+		const z = parseInt(style.zIndex, 10);
+		if (!Number.isNaN(z)) return z;
+	}
+	return 0;
+}
+
+function paintChildren(ctx, el, ox, oy, clip) {
+	const kids = el.children;
+	if (kids.length === 0) return;
+	if (kids.length === 1) {
+		paintNode(ctx, kids[0], ox, oy, clip);
+		return;
+	}
+	const ranked = [];
+	for (let i = 0; i < kids.length; i++) {
+		ranked.push({ child: kids[i], i, z: stackingOrder(getComputedStyle(kids[i])) });
+	}
+	ranked.sort((a, b) => a.z - b.z || a.i - b.i);
+	for (const item of ranked) paintNode(ctx, item.child, ox, oy, clip);
 }
 
 function traceRoundRect(ctx, x, y, w, h, r) {
@@ -310,10 +387,22 @@ function drawFormValue(ctx, el, style, ox, oy) {
 	ctx.fillStyle = faded ? fadedColor : (style.color || '#fff');
 	ctx.save();
 	ctx.beginPath();
-	ctx.rect(x, y, rect.width, rect.height);
+	const textW = el instanceof HTMLSelectElement ? Math.max(0, rect.width - 18) : rect.width;
+	ctx.rect(x, y, textW, rect.height);
 	ctx.clip();
 	ctx.fillText(text, x + padL, midY);
 	ctx.restore();
+	if (el instanceof HTMLSelectElement) {
+		const cx = x + rect.width - 10;
+		const cy = midY;
+		ctx.fillStyle = style.color || '#fff';
+		ctx.beginPath();
+		ctx.moveTo(cx - 5, cy - 3);
+		ctx.lineTo(cx + 5, cy - 3);
+		ctx.lineTo(cx, cy + 4);
+		ctx.closePath();
+		ctx.fill();
+	}
 }
 
 // Auto-growing chat textareas (data-gs-wrap): wrap the value the way the
@@ -491,7 +580,7 @@ function paintNode(ctx, el, ox, oy, clip) {
 		}
 	}
 
-	for (const child of el.children) paintNode(ctx, child, ox, oy, childClip);
+	paintChildren(ctx, el, ox, oy, childClip);
 	ctx.restore();
 	// Scroll position indicator for anything that scrolls (the Code tab, chat
 	// log, lists): the page's own scrollbars are not part of the snapshot.
@@ -506,6 +595,30 @@ function paintNode(ctx, el, ox, oy, clip) {
 	}
 }
 
+function fillOpaqueRoot(ctx, element, width, height) {
+	const st = getComputedStyle(element);
+	const m = String(st.backgroundColor).match(/rgba?\(([^)]+)\)/);
+	const p = m ? m[1].split(/[ ,/]+/).filter(Boolean).map(Number) : [22, 22, 32];
+	const radius = Math.min(parseFloat(st.borderTopLeftRadius) || 0, width / 2, height / 2);
+	fillBox(ctx, 0, 0, width, height, radius, `rgb(${p[0]}, ${p[1]}, ${p[2]})`);
+}
+
+function tryPaintNative(element, canvas, ctx, width, height, scale, opts) {
+	const draw = nativeDrawFn(ctx);
+	if (!draw || !isNativeDrawable(element, canvas)) return false;
+	ctx.setTransform(scale, 0, 0, scale, 0, 0);
+	ctx.clearRect(0, 0, width, height);
+	if (opts.opaque) fillOpaqueRoot(ctx, element, width, height);
+	try {
+		draw(element, 0, 0, width, height, { preserveElementGeometry: true });
+	} catch {
+		// Older builds reject the options bag; the 5-arg form is enough.
+		draw(element, 0, 0, width, height);
+	}
+	ctx.setTransform(1, 0, 0, 1, 0, 0);
+	return true;
+}
+
 /**
  * @param {Element} element
  * @param {HTMLCanvasElement} canvas
@@ -513,7 +626,7 @@ function paintNode(ctx, el, ox, oy, clip) {
  *   pixelScale: canvas pixels per CSS pixel (default devicePixelRatio, max 2).
  *   opaque: paint the root background fully opaque, so what is behind the
  *   window in the world never changes the contrast of the menu.
- * @returns {{width: number, height: number, scale: number}}
+ * @returns {{width: number, height: number, scale: number, renderer: string}}
  */
 export function paintElementToCanvas(element, canvas, opts = {}) {
 	const maxSize = opts.maxSize || 1280;
@@ -529,18 +642,21 @@ export function paintElementToCanvas(element, canvas, opts = {}) {
 		canvas.height = ch;
 	}
 	const ctx = canvas.getContext('2d');
+	try {
+		if (tryPaintNative(element, canvas, ctx, width, height, scale, opts)) {
+			lastHtmlInCanvasRenderer = 'native';
+			return { width, height, scale, renderer: 'native' };
+		}
+	} catch {
+		// No paint record yet, or the element is not drawable: use the walker.
+	}
 	ctx.setTransform(scale, 0, 0, scale, 0, 0);
 	ctx.clearRect(0, 0, width, height);
-	if (opts.opaque) {
-		const st = getComputedStyle(element);
-		const m = String(st.backgroundColor).match(/rgba?\(([^)]+)\)/);
-		const p = m ? m[1].split(/[ ,/]+/).filter(Boolean).map(Number) : [22, 22, 32];
-		const radius = Math.min(parseFloat(st.borderTopLeftRadius) || 0, width / 2, height / 2);
-		fillBox(ctx, 0, 0, width, height, radius, `rgb(${p[0]}, ${p[1]}, ${p[2]})`);
-	}
+	if (opts.opaque) fillOpaqueRoot(ctx, element, width, height);
 	paintNode(ctx, element, rect.left, rect.top, {
 		left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom
 	});
 	ctx.setTransform(1, 0, 0, 1, 0, 0);
-	return { width, height, scale };
+	lastHtmlInCanvasRenderer = 'walker';
+	return { width, height, scale, renderer: 'walker' };
 }

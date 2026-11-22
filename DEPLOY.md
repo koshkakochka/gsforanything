@@ -43,7 +43,7 @@ Since 0.973 the Worker source lives in this repo under **`worker/`** (see `worke
 `index.js` (API: chat, backends, community scenes + creation context, p5 editor relay, `/s/*`, `/e/*`, and the `/embed/*` → `/s/*` redirect),
 `prompts.js` (generated from `site-source/server.js`), `wrangler.jsonc` (name `gs`, `SCENES` KV binding,
 assets), `gen-prompts.mjs` and `sync-public.sh`. **No secrets are in the repo**; `CLAUDE_API_KEY`,
-`OPENAI_API_KEY`, `LLM_BACKEND`, `OPENAI_MODEL` are Worker secrets in Cloudflare and survive deploys.
+`OPENAI_API_KEY`, `XAI_API_KEY`, `LLM_BACKEND`, `OPENAI_MODEL` are Worker secrets in Cloudflare and survive deploys.
 
 Wrangler is typically authenticated on the **box**, not always on the PC.
 

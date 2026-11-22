@@ -124,6 +124,9 @@ const painted = await p.evaluate(async () => {
 	probe('Current tab name', 'menu', q('#gs-menu-current-tab'));
 	probe('Selected tab label', 'menu', q('.dchat-tab.active'));
 	probe('Unselected tab label', 'menu', q('.dchat-tab:not(.active)'));
+	// Close the section list before sampling panel widgets: it now paints on
+	// top of tab panels (the previous DOM-order painter left them visible).
+	document.getElementById('gs-menu-hamburger')?.click();
 	probe('Selected sub-tab label', 'menu', q('.dchat-subtab.active'));
 	probe('Unselected sub-tab label', 'menu', q('.dchat-subtab:not(.active)'));
 	probe('Send button label', 'menu', q('#desktop-send-button'));
@@ -132,6 +135,14 @@ const painted = await p.evaluate(async () => {
 	return out;
 });
 for (const r of painted) check(`Painted contrast: ${r.label} ≥ 4.5:1 in the VR texture`, r.ratio >= 4.5, r.ratio);
+
+// Re-open the section list so a ray can hit a tab (they are display:none when closed).
+await p.evaluate(() => {
+	if (!document.getElementById('desktop-chat').classList.contains('gs-tab-menu-open')) {
+		document.getElementById('gs-menu-hamburger')?.click();
+	}
+});
+await frame(300);
 
 // ---- ray: hover + click on the menu (switch to the Controls tab) ----
 const tabSel = '.dchat-tab[data-tab="controls"]';
@@ -237,6 +248,73 @@ check('VR Reset asks with the in-app VR dialog window (no native dialog)', await
 await rayClick('#gs-dialog [data-gs-dialog=ok]', 'dialog');
 check('VR Reset: ray click on "Reset to default" restores the default (no native dialog)', await p.evaluate(() => !window.GSChatPrompt.isCustom() && document.getElementById('dchat-prompt-editor').value === window.GSChatPrompt.defaultPrompt() && !__t.win('dialog').mesh.visible) && dialogs === 0);
 await rayClick('[data-chat-section="scene"]');
+
+// ---- hamburger section list stacks above the Environment tab in XR ----
+await p.evaluate(() => document.querySelector('.dchat-tab[data-tab="env"]')?.click());
+await frame(300);
+// Distinctive underlay: the Select Color bar, which the section list overlaps.
+await p.evaluate(() => {
+	const picker = document.getElementById('dchat-color-picker');
+	const preview = document.getElementById('dchat-color-preview');
+	if (picker) {
+		picker.value = '#ff0000';
+		picker.dispatchEvent(new Event('input', { bubbles: true }));
+	}
+	if (preview) preview.style.background = '#ff0000';
+});
+await frame(300);
+if (await p.evaluate(() => !document.getElementById('desktop-chat').classList.contains('gs-tab-menu-open'))) {
+	await p.evaluate(() => document.getElementById('gs-menu-hamburger')?.click());
+}
+await frame(400);
+const stack = await p.evaluate(() => {
+	const w = __t.win('menu');
+	w.tick(true);
+	const env = document.getElementById('dchat-panel-env');
+	const color = document.getElementById('dchat-color-preview');
+	const sr = w.source.getBoundingClientRect();
+	const k = w.canvas.width / sr.width;
+	const ctx = w.canvas.getContext('2d');
+	const under = (color || env).getBoundingClientRect();
+	const tab = [...document.querySelectorAll('#desktop-chat-tabs .dchat-tab')].find((el) => {
+		const r = el.getBoundingClientRect();
+		const x = r.left + r.width / 2, y = r.top + r.height / 2;
+		return x >= under.left && x <= under.right && y >= under.top && y <= under.bottom && r.width > 4 && r.height > 4;
+	});
+	if (!tab) return { open: document.getElementById('desktop-chat').classList.contains('gs-tab-menu-open'), envActive: env.classList.contains('active'), tab: null };
+	const r = tab.getBoundingClientRect();
+	const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+	const x0 = Math.max(0, Math.round((r.left - sr.left + 2) * k));
+	const y0 = Math.max(0, Math.round((r.top - sr.top + 2) * k));
+	const ww = Math.max(1, Math.round((r.width - 4) * k));
+	const hh = Math.max(1, Math.round((r.height - 4) * k));
+	const data = ctx.getImageData(x0, y0, Math.min(ww, w.canvas.width - x0), Math.min(hh, w.canvas.height - y0)).data;
+	let red = 0, other = 0, n = 0;
+	for (let i = 0; i < data.length; i += 4) {
+		n++;
+		const R = data[i], G = data[i + 1], B = data[i + 2];
+		// The color bar is #ff0000; a tab button is #3a3c4e-ish (low chroma).
+		if (R > 180 && G < 80 && B < 80) red++;
+		else other++;
+	}
+	const hit = w.elementAt(cx, cy);
+	const actionable = w.actionableAt(hit);
+	return {
+		open: document.getElementById('desktop-chat').classList.contains('gs-tab-menu-open'),
+		envActive: env.classList.contains('active'),
+		tab: tab.dataset.tab,
+		n, red, other,
+		fracR: n ? +(red / n).toFixed(3) : 0,
+		hitTabs: !!(hit && hit.closest('#desktop-chat-tabs')),
+		hitEnv: !!(hit && hit.closest('#dchat-panel-env')),
+		actionTab: !!(actionable && actionable.closest('#desktop-chat-tabs'))
+	};
+});
+check('Hamburger list is open over the Environment tab', stack.open && stack.envActive && !!stack.tab, stack);
+check('Painted VR menu shows the section list on top of Environment UI', stack.fracR < 0.15 && stack.other > 0, stack);
+check('Ray hit at the overlap lands on the section list, not the Environment panel', stack.hitTabs && !stack.hitEnv && stack.actionTab, stack);
+await p.evaluate(() => document.getElementById('gs-menu-hamburger')?.click());
+await frame(200);
 
 // ---- ray: HUD Hide/Show UI ----
 await p.evaluate(() => __t.aimAt('right', document.getElementById('gs-vr-hud-toggle'), 'hud'));

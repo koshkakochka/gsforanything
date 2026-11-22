@@ -3,6 +3,7 @@
 import puppeteer from 'puppeteer-core';
 import fs from 'fs';
 const BASE = process.env.BASE || 'https://localhost:3488';
+const SHOT = process.env.SHOT || '/workspace/gs-pr59-shots/render-distance-input.png';
 const IWER = fs.readFileSync(new URL('./node_modules/iwer/build/iwer.min.js', import.meta.url), 'utf8');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const results = []; const ok = (n, c, e = '') => { results.push(`${c ? 'PASS' : 'FAIL'} ${n} ${e}`); console.log(results.at(-1)); };
@@ -16,6 +17,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   await p.setViewport(vp);
   if (vp.isMobile) await p.setUserAgent('Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36');
   await p.evaluateOnNewDocument(IWER + '\n;window.__xrDevice = new IWER.XRDevice(IWER.metaQuest3); window.__xrDevice.installRuntime({ forceInstall: true });');
+  await p.evaluateOnNewDocument(() => { try { localStorage.removeItem('gs.renderDistance'); } catch { /* ignore */ } });
   await p.goto(BASE + '/', { waitUntil: 'networkidle2' }); await sleep(3000);
   await p.evaluate((M) => { for (const [name, x, z] of M) { const m = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4), new THREE.MeshBasicMaterial({ color: 0xff00ff })); m.name = name; m.position.set(x, 1.6, z); m.userData.gsIgnoreBounds = true; scene.add(m); } }, MARKERS);
   // Since sceneFit.js the far plane also reaches all scene content. The markers
@@ -43,6 +45,11 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   const d0 = await view();
   const api = await p.evaluate(() => window.gsRenderDistance && { near: gsRenderDistance.near, far: gsRenderDistance.far, defaults: gsRenderDistance.defaults });
   ok(`${T} shared render distance API: near 0.1, far 100`, api && api.near === 0.1 && api.far === 100 && api.defaults.far === 100, JSON.stringify(api));
+  const field0 = await p.evaluate(() => {
+    const input = document.getElementById('dchat-render-distance-input');
+    return { exists: !!input, value: input && input.value, min: window.gsRenderDistance.min, max: window.gsRenderDistance.max };
+  });
+  ok(`${T} Environment tab has a render-distance field at the default 100 m`, field0.exists && field0.value === '100' && field0.min === 1 && field0.max === 100000, JSON.stringify(field0));
   ok(`${T} Orbit desktop: near same as VR, far = 100 + camera offset from the VR eye (4 m)`, d0.near === 0.1 && Math.abs(d0.far - 104) < 0.05, JSON.stringify(d0));
   ok(`${T} Orbit desktop draws the 50 m and 98 m markers (98 m is visible in VR), not 140 m`, d0.m50 && d0.m98 && !d0.m140, JSON.stringify(d0));
   // 2. zoomed far out
@@ -101,6 +108,91 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 800 }, { name: 'phone'
   const d6 = await view().catch(() => null);
   const far6 = await p.evaluate(() => camera.far);
   ok(`${T} scene fit: objects removed → far back to 100 + offset`, far6 > 100 && far6 < 160, String(far6));
+
+  if (vp.name === 'desktop') {
+    const typed = await p.evaluate(() => {
+      window.gsSelectTab('env');
+      const input = document.getElementById('dchat-render-distance-input');
+      input.focus();
+      input.value = '500';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      input.blur();
+      return {
+        value: input.value,
+        far: gsRenderDistance.far,
+        stored: localStorage.getItem('gs.renderDistance'),
+        scene: gsRenderDistance.forScene(),
+        camFar: camera.far,
+        tab: document.getElementById('dchat-panel-env')?.classList.contains('active') || document.getElementById('dchat-panel-env')?.style.display !== 'none'
+      };
+    });
+    ok(`${T} typing 500 in the Environment field sets the far base, persists, and is saved with the scene`, typed.value === '500' && typed.far === 500 && typed.stored === '500' && typed.scene.renderDistance === 500 && typed.camFar >= 500, JSON.stringify(typed));
+
+    fs.mkdirSync(SHOT.slice(0, SHOT.lastIndexOf('/')), { recursive: true });
+    await p.screenshot({ path: SHOT });
+    ok(`${T} screenshot of the Environment render-distance field`, fs.existsSync(SHOT) && fs.statSync(SHOT).size > 1000, SHOT);
+    console.log('SHOT', SHOT);
+
+    const invalid = await p.evaluate(() => {
+      const input = document.getElementById('dchat-render-distance-input');
+      input.value = 'nope';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const flagged = input.classList.contains('invalid');
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input.blur();
+      return { flagged, value: input.value, far: gsRenderDistance.far, stillInvalid: input.classList.contains('invalid') };
+    });
+    ok(`${T} invalid input is flagged and restored on commit`, invalid.flagged && invalid.value === '500' && invalid.far === 500 && !invalid.stillInvalid, JSON.stringify(invalid));
+
+    const clamped = await p.evaluate(() => {
+      const input = document.getElementById('dchat-render-distance-input');
+      input.value = '999999';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input.blur();
+      return { value: input.value, far: gsRenderDistance.far, max: gsRenderDistance.max };
+    });
+    ok(`${T} values above the max clamp to 100000 m`, clamped.far === 100000 && clamped.value === '100000', JSON.stringify(clamped));
+
+    const loaded = await p.evaluate(() => {
+      gsRenderDistance.set(100);
+      gsRenderDistance.applyFromScene({ renderDistance: 250 });
+      const after = { far: gsRenderDistance.far, scene: gsRenderDistance.forScene(), stored: localStorage.getItem('gs.renderDistance') };
+      gsRenderDistance.applyFromScene({ codeBlocks: [] });
+      after.unchangedWithoutField = gsRenderDistance.far === 250;
+      return after;
+    });
+    ok(`${T} a scene payload applies renderDistance and omits it when already default`, loaded.far === 250 && loaded.scene.renderDistance === 250 && loaded.stored === '250' && loaded.unchangedWithoutField, JSON.stringify(loaded));
+
+    await p.evaluate(() => gsRenderDistance.set(500));
+    await p.click('#XRButton').catch(() => {});
+    for (let i = 0; i < 40 && !(await p.evaluate(() => renderer.xr.isPresenting)); i++) await sleep(250);
+    await sleep(1500);
+    const vUi = await p.evaluate(() => {
+      const xr = renderer.xr.isPresenting;
+      const cam = xr ? renderer.xr.getCamera().cameras[0] : camera;
+      const s = renderer.xr.getSession?.();
+      return {
+        xr,
+        near: cam ? +cam.near.toFixed(3) : null,
+        far: cam ? +cam.far.toFixed(2) : null,
+        userFar: +camera.far.toFixed(2),
+        depthNear: s && s.renderState.depthNear,
+        depthFar: s && s.renderState.depthFar
+      };
+    });
+    const menuField = await p.evaluate(() => {
+      const input = document.getElementById('dchat-render-distance-input');
+      return { value: input && input.value, inMenu: !!(input && document.getElementById('dchat-env')?.contains(input)) };
+    });
+    ok(`${T} Environment value 500 applies in VR (session depthFar 500)`, vUi.xr && vUi.far === 500 && vUi.depthFar === 500 && vUi.depthNear === 0.1, JSON.stringify(vUi));
+    ok(`${T} the same Environment field is in the painted VR menu DOM`, menuField.inMenu && menuField.value === '500', JSON.stringify(menuField));
+    await p.evaluate(() => renderer.xr.getSession().end());
+    for (let i = 0; i < 40 && (await p.evaluate(() => renderer.xr.isPresenting)); i++) await sleep(250);
+    await sleep(400);
+    await p.evaluate(() => gsRenderDistance.set(100));
+  }
+
   ok(`${T} no console/page errors`, errs.length === 0, JSON.stringify(errs.slice(0, 3)));
   await p.close();
 }

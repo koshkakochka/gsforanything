@@ -16,6 +16,8 @@ import * as GSMerge from './communityMerge.js';
 import { normalizeEnvironmentHdri, environmentHdriLoadUrl, environmentHdriSignature, hdriFormatFromName, HDRI_FILE_MAX_BYTES } from './sceneHdri.js';
 import * as ChatPrompt from './chatPrompt.js';
 import { gsAlert, gsConfirm, gsPrompt, configureDialogs, dialogCard, refreshDialogMode, installDialogGlobals } from './gsDialog.js';
+import { openGsModal, closeGsModal, currentModal, configureModals, refreshModalMode, ensureGsModalShell } from './gsModal.js';
+import { closeXrSelect } from './xrSelect.js';
 import { createRendererOrExplain, watchContextLoss } from './webglGuard.js';
 import { EXPORTS_OFF_MESSAGE, OWNER_KEY_HEADER } from './sceneExportPolicy.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
@@ -29,6 +31,10 @@ import { createCustomCameraModes } from './customCameraModes.js';
 import { CONTROLLER_STYLES, GLOBAL_PAD_ROWS, DEFAULT_LOCOMOTION, padValue, xrButtonOf, xrStickOf } from './inputBindings.js';
 import * as gsPadXrBindings from './controllerBindings.js';
 import { sanitizeDescription, DESCRIPTION_MAX_CHARS, DESCRIPTION_PLACEHOLDER } from './sceneDescription.js';
+import {
+	mountGenrePicker, genreForList, sceneMatchesGenreFilter, COMMUNITY_GENRES,
+	UNCATEGORIZED_LABEL, ALL_GENRES_LABEL, sanitizeGenre, applyGenreToRecord
+} from './sceneGenre.js';
 import { THUMB_WIDTH, THUMB_HEIGHT, THUMB_MAX_BYTES } from './sceneThumbnail.js';
 import { createOriginRotation, normalizeOriginRotation, isIdentityOriginRotation } from './originGizmo.js';
 import { createSceneFit, DOME_MARGIN, FAR_MARGIN, isDomeObject } from './sceneFit.js';
@@ -39,6 +45,7 @@ import * as gsCamPipeline from './passthroughTexture.js';
 // p5.js sketch import (paste / file / zip / URL -> panel in the scene). Self-contained;
 // it only uses the window.gs* hooks set up next to gsCreateP5Surface below.
 import './p5Import.js';
+import { initModelImport } from './modelImport.js';
 
 // ============================================================================
 // Configuration
@@ -63,6 +70,17 @@ scene.background = null; // transparent for passthrough
 // the headset. See syncRenderDistance() for how desktop matches it.
 const RENDER_NEAR = 0.1;
 const RENDER_FAR = 100;
+const RENDER_FAR_MIN = 1;
+const RENDER_FAR_MAX = 100000;
+const RENDER_DISTANCE_STORAGE_KEY = 'gs.renderDistance';
+function clampRenderDistance(v) {
+	const t = String(v ?? '').trim().toLowerCase().replace(',', '.');
+	const m = t.match(/^(-?\d*\.?\d+)\s*m?$/);
+	if (!m) return null;
+	const n = parseFloat(m[1]);
+	if (!Number.isFinite(n)) return null;
+	return Math.min(RENDER_FAR_MAX, Math.max(RENDER_FAR_MIN, n));
+}
 const RENDER_EYE_HEIGHT = 1.6; // where the VR view starts in the player rig (local-floor)
 const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, RENDER_NEAR, RENDER_FAR);
 camera.position.set(0, 1.6, 0);
@@ -89,10 +107,13 @@ const MENU_RENDER_ORDER = 10000;
 const MENU_RETICLE_RENDER_ORDER = 10001;
 const menuPriorityRoots = [];
 
+let _menuLayerDirty = true;
+let _menuLayerAt = 0;
 function registerMenuRoot(object, renderOrder = MENU_RENDER_ORDER) {
 	if (!object || menuPriorityRoots.indexOf(object) !== -1) return;
 	object.userData.menuRenderOrder = renderOrder;
 	menuPriorityRoots.push(object);
+	_menuLayerDirty = true;
 }
 
 function applyMenuLayerPriority() {
@@ -108,6 +129,16 @@ function applyMenuLayerPriority() {
 	// UI rays must test layer 1 or panel hits/reticles stop registering.
 	raycaster.layers.enable(MENU_LAYER);
 	_hitRaycaster.layers.enable(MENU_LAYER);
+
+	// Traversing every menu root and rewriting layers/materials every frame is
+	// wasted work once the graph is stable. Re-run when a root is registered,
+	// when scene animations may have parented into the menu, or at 5 Hz as a
+	// safety net for attach() that does not go through registerMenuRoot.
+	const now = performance.now();
+	const animating = window._vrAnimations && window._vrAnimations.length > 0;
+	if (!animating && !_menuLayerDirty && now - _menuLayerAt < 200) return;
+	_menuLayerDirty = false;
+	_menuLayerAt = now;
 
 	for (let i = 0; i < menuPriorityRoots.length; i++) {
 		const root = menuPriorityRoots[i];
@@ -146,9 +177,53 @@ window.gsContextWatch = watchContextLoss(renderer);
 // Drawing-buffer size is kept in sync by applyRendererSize(); pass false so
 // the CSS (position:fixed; inset:0; 100%/100dvh) keeps the canvas covering
 // the visible page instead of being locked to stale inline pixel sizes.
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 3));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.xr.enabled = true;
+
+// XR compositor foveation (Quest): edges render at lower resolution when on.
+// Default on; stored in localStorage like render distance. 1 = max, 0 = off.
+const FOVEATION_STORAGE_KEY = 'gs.foveation';
+const FOVEATION_ON = 1;
+const FOVEATION_OFF = 0;
+function readStoredFoveation() {
+	try {
+		const v = localStorage.getItem(FOVEATION_STORAGE_KEY);
+		if (v == null || v === '') return true;
+		return !/^(0|false|off|no)$/i.test(String(v).trim());
+	} catch { return true; }
+}
+let foveationEnabled = readStoredFoveation();
+function applyFoveation() {
+	if (typeof renderer.xr.setFoveation !== 'function') return false;
+	try {
+		renderer.xr.setFoveation(foveationEnabled ? FOVEATION_ON : FOVEATION_OFF);
+		return true;
+	} catch { return false; }
+}
+function setFoveationEnabled(on, { persist = true } = {}) {
+	foveationEnabled = !!on;
+	applyFoveation();
+	if (persist) {
+		try {
+			if (foveationEnabled) localStorage.removeItem(FOVEATION_STORAGE_KEY);
+			else localStorage.setItem(FOVEATION_STORAGE_KEY, '0');
+		} catch { /* storage blocked */ }
+	}
+	const box = document.getElementById('dchat-foveation');
+	if (box && box.checked !== foveationEnabled) box.checked = foveationEnabled;
+	if (renderer?.xr?.isPresenting) vrWindows?.byName('menu')?.markDirty();
+	return foveationEnabled;
+}
+applyFoveation();
+window.gsFoveation = {
+	get enabled() { return foveationEnabled; },
+	set enabled(v) { setFoveationEnabled(v); },
+	set: (v, opts) => setFoveationEnabled(v, opts),
+	apply: applyFoveation,
+	storageKey: FOVEATION_STORAGE_KEY,
+	defaults: { enabled: true }
+};
 appElement.appendChild(renderer.domElement);
 renderer.setClearColor(0x000000, 0.0);
 renderer.domElement.style.touchAction = 'none';
@@ -293,19 +368,13 @@ const dchatHdriStatus = document.getElementById('dchat-hdri-status');
 // so there is one definition and one rendering path. All clicks (mouse,
 // touch, controller ray) funnel into handleMenuAction() below.
 // ============================================================================
-// AR / VR: which immersive session Enter starts (see "AR / VR mode" below).
-// Inside an AR session they switch live between passthrough and the colour
-// skybox; inside a VR session AR restarts the session as immersive-ar
-// (chooseXrMode). The top-bar AR | VR toggle does the same.
-const ENV_MODE_BUTTONS = [
-	{ id: 'ar', label: 'AR (passthrough)', action: 'env:ar' },
-	{ id: 'vr', label: 'VR (color)', action: 'env:vr' }
-];
-const EXIT_XR_BUTTON = [
-	{ id: 'exitXr', label: 'Exit VR', action: 'env:exit', variant: 'warning' }
-];
+// AR / VR / Exit VR used to be Environment-tab buttons. They now live only
+// in the window top bar (#gs-xr-mode + #XRButton + #gs-exit-vr-btn). The
+// env:ar / env:vr / env:exit actions in handleMenuAction still work if
+// something calls them.
 const SCENES_BUTTONS = [
 	{ id: 'importFile', label: 'Import .vrscene.json', action: 'scenes:importFile' },
+	{ id: 'importModel', label: 'Import model', action: 'scenes:importModel' },
 	{ id: 'clearScene', label: 'Clear All From Scene', action: 'scenes:clear', variant: 'secondary' }
 ];
 // Share & Export lives on its own menu tab (data-tab="share"). "Export" (save
@@ -374,6 +443,9 @@ function handleMenuAction(action) {
 		case 'scenes:importFile':
 			fileInput.click();
 			break;
+		case 'scenes:importModel':
+			window.gsModelImport?.openPicker?.();
+			break;
 		case 'scenes:loadSaved':
 			loadSceneFromServer();
 			break;
@@ -425,6 +497,10 @@ function handleMenuAction(action) {
 			setCommunitySection('themes');
 			renderDomSceneList();
 			break;
+		case 'communitySection:genres':
+			setCommunitySection('genres');
+			renderDomSceneList();
+			break;
 		case 'chatSection:scene':
 			setChatSection('scene');
 			break;
@@ -464,13 +540,15 @@ const WELCOME_MSG = 'VR Code Assistant ready. Ask me to add objects, modify the 
 let isLoading = false;
 let selectedBackend = null; // backend key from /api/backends (e.g. 'claude', 'openai-sol', 'ollama') - set once it resolves
 let backendLabels = {}; // id -> display label from /api/backends
-let backendProviders = {}; // id -> 'claude' | 'openai' | 'ollama' from /api/backends
+let backendProviders = {}; // id -> 'claude' | 'openai' | 'xai' | 'ollama' from /api/backends
 
 /** Provider for a backend key; falls back to the key prefix for older servers. */
 function backendProvider(id) {
 	if (backendProviders[id]) return backendProviders[id];
 	if (id === 'ollama') return 'ollama';
-	return /^openai/.test(id || '') ? 'openai' : 'claude';
+	if (/^openai/.test(id || '')) return 'openai';
+	if (/^grok/.test(id || '')) return 'xai';
+	return 'claude';
 }
 
 /** Human-readable name for the currently selected model/provider. */
@@ -496,6 +574,8 @@ function getActiveModelDisplayName() {
 		'claude-opus-55': 'Claude Opus 5.5',
 		'claude-sonnet-55': 'Claude Sonnet 5.5',
 		'claude-haiku-55': 'Claude Haiku 5.5',
+		grok: 'Grok 4.7',
+		'grok-43': 'Grok 4.3',
 		ollama: 'Ollama'
 	};
 	return fallbacks[selectedBackend] || 'Assistant';
@@ -659,7 +739,8 @@ let sceneFileExtension = 'vrscene';
 let scenePanelSubTab = 'scenes'; // 'scenes' | 'code' | 'community' - see SCENE_PANEL_SUB_TABS
 let communityScenesCache = []; // last-fetched list
 let communityThemesCache = [];
-let communitySection = 'scenes'; // Community tab: 'scenes' | 'themes'
+let communitySection = 'scenes'; // Community tab: 'scenes' | 'genres' | 'themes'
+let communityGenreFilter = { mode: 'all' };
 // In-flight fetches keyed by communityKey so spam-clicks share one apply.
 const communityLoadInflight = new Map();
 // Bumped by every Community click and every scene change; a fetch that lands
@@ -670,8 +751,8 @@ let communityApplyChain = Promise.resolve();
 let chatSection = 'scene'; // Chat tab: 'scene' | 'theme' | 'prompt'
 let displayOnlyMode = false; // share URL opened with editor chrome stripped
 let pendingShare = null; // share modal payload { id, name, editorUrl, viewUrl }
-// Community upload: "Allow others to export this scene" (Community tab and
-// Share tab checkboxes). Starts at Allow on every page load.
+// Community upload: "Allow others to export this scene" (Publish to Community
+// modal and Share tab checkboxes). Starts at Allow on every page load.
 let uploadAllowExport = true;
 let lastUploadedName = ''; // name chosen in the last Community upload (prefills the next one)
 let codeEditorDirty = false; // user has unsaved edits in Code tab
@@ -2184,23 +2265,13 @@ function syncBgColorPreview(hex) {
 	}
 }
 
-// Environment tab: AR/VR toggle (+ Exit VR while in a headset or phone XR)
-// and the background colour controls. Safe to call before the DOM exists.
+// Environment tab: background colour controls (and HDRI, origin, etc.).
+// AR / VR / Exit VR are not on this tab; they live in the window top bar.
+// Safe to call before the DOM exists.
 function renderDomEnv() {
-	if (!dchatEnvModeMount) return;
-	const inXr = !!(renderer && renderer.xr && renderer.xr.isPresenting) ||
-		(typeof mobileXRMode !== 'undefined' && !!mobileXRMode);
-	// In an AR session the buttons show what you see now (passthrough or
-	// skybox); otherwise which mode Enter will start.
-	const inArSession = !!(renderer && renderer.xr && renderer.xr.isPresenting) && xrSessionMode === 'immersive-ar';
-	const activeMode = inArSession ? (isVRMode ? 'vr' : 'ar') : effectiveXrMode();
-	const buttons = [
-		...ENV_MODE_BUTTONS.map(b => (xrModeSupport[b.id] === false && 'xr' in navigator && !(b.id === 'vr' && !xrModeSupport.ar)
-			? { ...b, label: b.id === 'ar' ? 'AR (not supported)' : 'VR (not supported)', variant: 'disabled' }
-			: { ...b, variant: b.id === activeMode ? 'active' : 'inactiveToggle' })),
-		...(inXr ? EXIT_XR_BUTTON : [])
-	];
-	mountButtonsToDOM(dchatEnvModeMount, buttons, { width: 256, height: 40, gap: 6, fontSize: 13, perRow: 2 }, handleMenuAction);
+	const envSection = document.getElementById('dchat-env-mode-section');
+	if (envSection) envSection.hidden = true;
+	if (dchatEnvModeMount) dchatEnvModeMount.replaceChildren();
 	const colorEnabled = envColorControlsEnabled();
 	if (dchatEnvControls) dchatEnvControls.classList.toggle('disabled', !colorEnabled);
 	const note = dchatEnvControls && dchatEnvControls.querySelector('.dchat-disabled-note');
@@ -2971,16 +3042,75 @@ function resetSceneChat() {
 	renderDomChat();
 }
 
+let exportHandle = null;
+function fillExportModalBody(host) {
+	host.replaceChildren();
+	const nameLab = document.createElement('label');
+	nameLab.htmlFor = 'export-name';
+	nameLab.textContent = 'Scene Name';
+	const name = document.createElement('input');
+	name.type = 'text';
+	name.id = 'export-name';
+	name.value = activeScene?.name || 'My Scene';
+	name.autocomplete = 'off';
+	const extLab = document.createElement('label');
+	extLab.htmlFor = 'export-ext';
+	extLab.textContent = 'File Extension';
+	const ext = document.createElement('input');
+	ext.type = 'text';
+	ext.id = 'export-ext';
+	ext.value = sceneFileExtension;
+	ext.autocomplete = 'off';
+	const shotLab = document.createElement('label');
+	shotLab.textContent = 'Screenshot';
+	const area = document.createElement('div');
+	area.id = 'export-preview-area';
+	const preview = document.createElement('div');
+	preview.id = 'export-preview';
+	preview.innerHTML = '<span style="color:rgba(255,255,255,0.4);font-size:12px;text-align:center">No screenshot</span>';
+	const cap = document.createElement('button');
+	cap.type = 'button';
+	cap.id = 'export-screenshot-btn';
+	cap.textContent = '📸 Capture';
+	cap.addEventListener('click', () => {
+		pendingExportThumbnail = captureScreenshot();
+		preview.innerHTML = `<img src="${pendingExportThumbnail}" style="width:80px;height:80px;border-radius:8px;object-fit:cover;">`;
+	});
+	area.append(preview, cap);
+	host.append(nameLab, name, extLab, ext, shotLab, area);
+}
+
 function showExportModal() {
-	exportNameInput.value = activeScene?.name || 'My Scene';
-	exportExtInput.value = sceneFileExtension;
+	if (!sceneExportsAllowed()) {
+		const m = document.getElementById('export-modal');
+		if (m) { m.classList.remove('visible'); m.style.display = 'none'; m.hidden = true; }
+		showExportsBlocked();
+		return;
+	}
 	pendingExportThumbnail = null;
-	exportPreview.innerHTML = '<span style="color:rgba(255,255,255,0.4);font-size:12px;text-align:center">No screenshot</span>';
-	exportModal.style.display = 'flex';
+	const root = document.getElementById('export-modal');
+	if (root) root.style.display = '';
+	exportHandle = openGsModal({
+		id: 'export-modal',
+		cardId: 'export-modal-inner',
+		title: 'Export Scene',
+		body: fillExportModalBody,
+		closeOnBackdrop: true,
+		initialFocus: () => document.getElementById('export-name'),
+		xrInput: () => document.getElementById('export-name'),
+		actions: [
+			{ id: 'export-cancel-btn', label: 'Cancel', close: true },
+			{ id: 'export-download-btn', label: 'Save to Device', close: false, onClick: () => { doDownloadExport(); return false; } },
+			{ id: 'export-confirm-btn', label: 'Export', variant: 'primary', close: false, onClick: () => { doExport(); return false; } }
+		],
+		onClose: () => { exportHandle = null; }
+	});
 }
 
 function hideExportModal() {
-	exportModal.style.display = 'none';
+	if (exportHandle) { exportHandle.close('hide'); exportHandle = null; }
+	const m = document.getElementById('export-modal');
+	if (m) { m.classList.remove('visible'); m.style.display = 'none'; m.hidden = true; }
 }
 
 // Gathers the current exportable scene (the active scene + the code chat
@@ -2998,6 +3128,7 @@ function buildSceneData(name) {
 		...environmentHdriForScene(), // { environmentHdri } when an HDRI is active (URL ones; files on upload)
 		codeBlocks,
 		...originRotationForScene(), // { originRotation } only when rotated
+		...renderDistanceForScene(), // { renderDistance } when not the default 100 m
 		...customControls.forScene(), // { customControls: { schemeId: changed values } } when set
 		...GSMerge.sceneCredits(activeScene) // mergedFrom / credits of a merged scene
 	};
@@ -3005,8 +3136,8 @@ function buildSceneData(name) {
 
 async function doExport() {
 	if (!sceneExportsAllowed()) { hideExportModal(); showExportsBlocked(); return; }
-	const name = exportNameInput.value.trim() || 'Untitled';
-	const ext = exportExtInput.value.trim().replace(/^\./, '') || 'vrscene';
+	const name = (document.getElementById('export-name')?.value || '').trim() || 'Untitled';
+	const ext = (document.getElementById('export-ext')?.value || '').trim().replace(/^\./, '') || 'vrscene';
 	sceneFileExtension = ext;
 
 	// Saved scenes carry their creation context (chat + info log, scrubbed).
@@ -3051,8 +3182,8 @@ function sceneFileStem(name) {
 // "Export" above which only saves to this server's single scene slot).
 async function doDownloadExport() {
 	if (!sceneExportsAllowed()) { hideExportModal(); showExportsBlocked(); return; }
-	const name = exportNameInput.value.trim() || 'Untitled';
-	const ext = exportExtInput.value.trim().replace(/^\./, '') || 'vrscene';
+	const name = (document.getElementById('export-name')?.value || '').trim() || 'Untitled';
+	const ext = (document.getElementById('export-ext')?.value || '').trim().replace(/^\./, '') || 'vrscene';
 	sceneFileExtension = ext;
 
 	const sceneData = await GSContext.withCreationContext(buildSceneData(name));
@@ -3097,6 +3228,7 @@ async function loadSceneData(data, fallbackName, { key, source = 'file', extra =
 	setActiveScene(sc);
 	const hdriApplied = applySceneEnvironmentHdri(data);
 	applySceneOriginRotation(data);
+	applySceneRenderDistance(data);
 	customControls.setPendingSceneValues(data); // its code re-defines the schemes with these values
 	await runLoadedSceneCode(sc);
 	customControls.setPendingSceneValues(null);
@@ -3210,7 +3342,8 @@ function applyDisplayOnlyMode() {
 
 function currentShareUrl() {
 	if (!pendingShare) return '';
-	return shareDisplayOnly && shareDisplayOnly.checked ? pendingShare.viewUrl : pendingShare.editorUrl;
+	const box = document.getElementById('share-display-only');
+	return box && box.checked ? pendingShare.viewUrl : pendingShare.editorUrl;
 }
 
 function sharePayloadFromMeta(meta, urls = {}) {
@@ -3226,39 +3359,110 @@ function sharePayloadFromMeta(meta, urls = {}) {
 	};
 }
 
+let shareHandle = null;
+function fillShareModalBody(host) {
+	host.replaceChildren();
+	const lab = document.createElement('label');
+	lab.className = 'share-modal-check';
+	const box = document.createElement('input');
+	box.type = 'checkbox';
+	box.id = 'share-display-only';
+	const span = document.createElement('span');
+	span.textContent = 'Display only — hide the chatbot, community panel, and editor UI so visitors just see the finished scene.';
+	lab.append(box, span);
+	box.addEventListener('change', () => {
+		const url = document.getElementById('share-url');
+		if (url) url.value = currentShareUrl();
+	});
+	const urlLab = document.createElement('label');
+	urlLab.htmlFor = 'share-url';
+	urlLab.textContent = 'Shareable URL';
+	const url = document.createElement('input');
+	url.type = 'text';
+	url.id = 'share-url';
+	url.readOnly = true;
+	url.value = currentShareUrl();
+	host.append(lab, urlLab, url);
+}
+
 function showShareModal(share) {
 	if (displayOnlyMode) return;
 	pendingShare = share;
-	if (shareModalTitle) shareModalTitle.textContent = share.name ? `Share "${share.name}"` : 'Share Scene';
-	if (shareDisplayOnly) shareDisplayOnly.checked = false;
-	if (shareUrlInput) shareUrlInput.value = currentShareUrl();
-	if (shareCopyBtn) shareCopyBtn.textContent = 'Copy link';
-	if (shareModal) shareModal.classList.add('visible');
-	if (shareUrlInput) {
-		shareUrlInput.focus();
-		shareUrlInput.select();
-	}
+	const title = share.name ? `Share "${share.name}"` : 'Share Scene';
+	shareHandle = openGsModal({
+		id: 'share-modal',
+		cardId: 'share-modal-inner',
+		title,
+		titleId: 'share-modal-title',
+		body: fillShareModalBody,
+		closeOnBackdrop: true,
+		initialFocus: () => document.getElementById('share-url'),
+		xrInput: () => document.getElementById('share-url'),
+		actions: [
+			{ id: 'share-close-btn', label: 'Done', className: 'btn-secondary', close: true },
+			{ id: 'share-copy-btn', label: 'Copy link', className: 'btn-primary', variant: 'primary', close: false, onClick: async (ev, btn) => {
+				const ok = await copyText(currentShareUrl());
+				if (btn) btn.textContent = ok ? 'Copied!' : 'Copy failed';
+				setTimeout(() => { if (btn) btn.textContent = 'Copy link'; }, 1500);
+				return false;
+			} }
+		],
+		onClose: () => { shareHandle = null; }
+	});
+	const url = document.getElementById('share-url');
+	if (url) { url.focus(); url.select(); }
 }
 
 function hideShareModal() {
-	if (shareModal) shareModal.classList.remove('visible');
+	if (shareHandle) { shareHandle.close('hide'); shareHandle = null; }
+	document.getElementById('share-modal')?.classList.remove('visible');
 }
 
+let renameHandle = null;
 function showRenameModal(cs, kind = 'scene') {
 	if (displayOnlyMode || !cs) return;
 	pendingRename = cs;
 	pendingRenameKind = kind === 'theme' ? 'theme' : 'scene';
-	if (renameNameInput) renameNameInput.value = cs.name || '';
-	if (renameModal) renameModal.classList.add('visible');
+	renameHandle = openGsModal({
+		id: 'rename-modal',
+		cardId: 'rename-modal-inner',
+		title: pendingRenameKind === 'theme' ? 'Rename Theme' : 'Rename Scene',
+		body: (host) => {
+			host.replaceChildren();
+			const lab = document.createElement('label');
+			lab.htmlFor = 'rename-name';
+			lab.textContent = pendingRenameKind === 'theme' ? 'Theme Name' : 'Scene Name';
+			const input = document.createElement('input');
+			input.type = 'text';
+			input.id = 'rename-name';
+			input.autocomplete = 'off';
+			input.value = cs.name || '';
+			input.addEventListener('keydown', (e) => {
+				if (e.key === 'Enter') { e.preventDefault(); renameCommunityScene(); }
+			});
+			host.append(lab, input);
+		},
+		closeOnBackdrop: true,
+		initialFocus: () => document.getElementById('rename-name'),
+		xrInput: () => document.getElementById('rename-name'),
+		onEnter: () => { renameCommunityScene(); },
+		actions: [
+			{ id: 'rename-cancel-btn', label: 'Cancel', className: 'btn-secondary', close: true },
+			{ id: 'rename-confirm-btn', label: 'Save', className: 'btn-primary', variant: 'primary', close: false, onClick: () => { renameCommunityScene(); return false; } }
+		],
+		onClose: () => { renameHandle = null; }
+	});
 	setTimeout(() => {
-		if (!renameNameInput) return;
-		renameNameInput.focus();
-		renameNameInput.select();
+		const input = document.getElementById('rename-name');
+		if (!input) return;
+		input.focus();
+		input.select();
 	}, 0);
 }
 
 function hideRenameModal() {
-	if (renameModal) renameModal.classList.remove('visible');
+	if (renameHandle) { renameHandle.close('hide'); renameHandle = null; }
+	document.getElementById('rename-modal')?.classList.remove('visible');
 	pendingRename = null;
 	pendingRenameKind = 'scene';
 }
@@ -3286,7 +3490,7 @@ async function copyText(text) {
 	return ok;
 }
 
-async function uploadCurrentSceneToCommunity({ showShare = true, allowExport = uploadAllowExport } = {}) {
+async function uploadCurrentSceneToCommunity({ showShare = true, allowExport } = {}) {
 	if (displayOnlyMode) return null;
 	// Prefill for the name field: the loaded scene's title, else the name
 	// used for the last upload this session, else the old default.
@@ -3308,6 +3512,10 @@ async function uploadCurrentSceneToCommunity({ showShare = true, allowExport = u
 		updateStatus('Upload cancelled', '');
 		return null;
 	}
+	// Read the live checkbox value after the publish dialog (the default
+	// would have been captured when Upload was clicked, before the user
+	// could toggle it in the modal).
+	if (allowExport === undefined) allowExport = uploadAllowExport;
 	// A custom HDRI file from this computer goes up right after the scene.
 	const hdriFile = hdriFileForUpload();
 	if (hdriFile) sceneData = { ...sceneData, environmentHdri: hdriFile.desc };
@@ -3641,6 +3849,59 @@ function bindCommunityDescription(wrap, cs) {
 	queueMicrotask(() => applyView());
 }
 
+/** Save a Community scene's genre (PATCH). Same permission as descriptions: anyone can tag or retag. */
+async function setCommunitySceneGenre(cs, tagged) {
+	if (!cs?.id) return false;
+	const value = sanitizeGenre(tagged);
+	if (value.error) {
+		updateStatus(`Genre error: ${value.error}`, 'error');
+		return false;
+	}
+	try {
+		const res = await fetch(`/api/community-scenes/${encodeURIComponent(cs.id)}`, {
+			method: 'PATCH',
+			headers: ownerHeaders(cs.id, { 'Content-Type': 'application/json' }),
+			body: JSON.stringify({ genre: value.genre, subGenre: value.subGenre })
+		});
+		const data = await res.json().catch(() => ({}));
+		if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
+		applyGenreToRecord(cs, value);
+		const cached = communityScenesCache.find((s) => s.id === cs.id);
+		if (cached) applyGenreToRecord(cached, value);
+		return true;
+	} catch (err) {
+		updateStatus(`Genre error: ${err.message}`, 'error');
+		return false;
+	}
+}
+
+function bindCommunityGenre(wrap, cs) {
+	const stop = (e) => e.stopPropagation();
+	for (const ev of ['click', 'pointerdown', 'mousedown', 'touchstart']) {
+		wrap.addEventListener(ev, stop);
+	}
+	const current = genreForList(cs);
+	let saving = false;
+	const picker = mountGenrePicker(wrap, {
+		idPrefix: `gs-tile-genre-${cs.id || 'x'}`,
+		allowUncategorized: true,
+		value: current,
+		onChange: async (v) => {
+			if (saving || v.error) return;
+			const prev = genreForList(cs);
+			if (prev.genre === v.genre && prev.subGenre === v.subGenre) return;
+			saving = true;
+			const ok = await setCommunitySceneGenre(cs, v);
+			saving = false;
+			if (!ok) picker.setValue(prev);
+			else {
+				fillCommunitySceneList(dchatCommunityList, communityScenesCache);
+				renderCommunityGenresList();
+			}
+		}
+	});
+}
+
 function communityThumbUrl(cs) {
 	if (cs && cs.hasThumbnail && cs.thumbUrl) return cs.thumbUrl;
 	if (cs && cs.thumbnail && typeof cs.thumbnail === 'object' && cs.thumbnail.url) return cs.thumbnail.url;
@@ -3648,16 +3909,14 @@ function communityThumbUrl(cs) {
 	return '';
 }
 
-function renderCommunitySceneList(scenes) {
-	communityScenesCache = scenes;
-	if (scenePanelSubTab === 'community') renderDomSceneList();
-
-	dchatCommunityList.innerHTML = '';
-	if (scenes.length === 0) {
+function fillCommunitySceneList(container, scenes, { emptyText } = {}) {
+	if (!container) return;
+	container.innerHTML = '';
+	if (!scenes.length) {
 		const empty = document.createElement('div');
 		empty.className = 'dchat-scene-empty';
-		empty.textContent = 'No community scenes yet. Be the first to upload one!';
-		dchatCommunityList.appendChild(empty);
+		empty.textContent = emptyText || 'No community scenes yet. Be the first to upload one!';
+		container.appendChild(empty);
 		return;
 	}
 	for (const cs of scenes) {
@@ -3747,10 +4006,90 @@ function renderCommunitySceneList(scenes) {
 		}
 		GSMerge.decorateCommunityRow(actions, cs); // "Merge" pick button
 		bindCommunityDescription(descWrap, cs);
-		body.append(nameRow, descWrap, actions);
+		const genreWrap = document.createElement('div');
+		genreWrap.className = 'dchat-community-genre-wrap';
+		bindCommunityGenre(genreWrap, cs);
+		body.append(nameRow, descWrap, genreWrap, actions);
 		item.append(thumbWrap, body);
-		dchatCommunityList.appendChild(item);
+		container.appendChild(item);
 	}
+}
+
+function renderCommunityGenresFilters() {
+	const host = document.getElementById('dchat-community-genres-filters');
+	if (!host) return;
+	host.innerHTML = '';
+	const top = document.createElement('div');
+	top.className = 'gs-genre-filter-row';
+	top.setAttribute('role', 'group');
+	top.setAttribute('aria-label', 'Genre');
+	const addBtn = (row, label, active, onClick) => {
+		const b = document.createElement('button');
+		b.type = 'button';
+		b.className = 'gs-genre-filter-btn' + (active ? ' active' : '');
+		b.textContent = label;
+		if (active) b.setAttribute('aria-pressed', 'true');
+		b.addEventListener('click', onClick);
+		row.appendChild(b);
+		return b;
+	};
+	addBtn(top, ALL_GENRES_LABEL, communityGenreFilter.mode === 'all', () => {
+		communityGenreFilter = { mode: 'all' };
+		renderCommunityGenresFilters();
+		renderCommunityGenresList();
+	});
+	for (const g of COMMUNITY_GENRES) {
+		addBtn(top, g.label, communityGenreFilter.mode === 'genre' && communityGenreFilter.genre === g.id, () => {
+			communityGenreFilter = { mode: 'genre', genre: g.id, subGenre: '' };
+			renderCommunityGenresFilters();
+			renderCommunityGenresList();
+		});
+	}
+	addBtn(top, UNCATEGORIZED_LABEL, communityGenreFilter.mode === 'uncategorized', () => {
+		communityGenreFilter = { mode: 'uncategorized' };
+		renderCommunityGenresFilters();
+		renderCommunityGenresList();
+	});
+	host.appendChild(top);
+	if (communityGenreFilter.mode === 'genre') {
+		const g = COMMUNITY_GENRES.find((x) => x.id === communityGenreFilter.genre);
+		if (g) {
+			const sub = document.createElement('div');
+			sub.className = 'gs-genre-filter-row';
+			sub.setAttribute('role', 'group');
+			sub.setAttribute('aria-label', 'Sub-genre');
+			addBtn(sub, ALL_GENRES_LABEL, !communityGenreFilter.subGenre, () => {
+				communityGenreFilter = { mode: 'genre', genre: g.id, subGenre: '' };
+				renderCommunityGenresFilters();
+				renderCommunityGenresList();
+			});
+			for (const s of g.subGenres) {
+				addBtn(sub, s.label, communityGenreFilter.subGenre === s.id, () => {
+					communityGenreFilter = { mode: 'genre', genre: g.id, subGenre: s.id };
+					renderCommunityGenresFilters();
+					renderCommunityGenresList();
+				});
+			}
+			host.appendChild(sub);
+		}
+	}
+}
+
+function renderCommunityGenresList() {
+	const list = document.getElementById('dchat-community-genres-list');
+	const filtered = communityScenesCache.filter((s) => sceneMatchesGenreFilter(s, communityGenreFilter));
+	const empty = communityGenreFilter.mode === 'all'
+		? 'No community scenes yet. Be the first to upload one!'
+		: 'No scenes in this genre yet.';
+	fillCommunitySceneList(list, filtered, { emptyText: empty });
+}
+
+function renderCommunitySceneList(scenes) {
+	communityScenesCache = scenes;
+	if (scenePanelSubTab === 'community') renderDomSceneList();
+	fillCommunitySceneList(dchatCommunityList, scenes);
+	renderCommunityGenresFilters();
+	renderCommunityGenresList();
 }
 
 // Identity of a Community scene: server id, else the blob url for legacy
@@ -3787,18 +4126,6 @@ function mountHtmlActionButtons(container, specs, { accentVariants = ['accent', 
 
 function renderCommunityDesktopButtons() {
 	mountHtmlActionButtons(dchatCommunityButtonsMount, COMMUNITY_BUTTONS);
-	// Upload choice: allow or don't allow others to export the uploaded scene.
-	if (!dchatCommunityButtonsMount) return;
-	const label = document.createElement('label');
-	label.className = 'dchat-upload-allow-export';
-	label.title = 'Unchecked: people can view the scene but not download it as a 3D model or save its code';
-	const box = document.createElement('input');
-	box.type = 'checkbox';
-	box.id = 'dchat-upload-allow-export';
-	box.checked = uploadAllowExport;
-	box.addEventListener('change', () => setUploadAllowExport(box.checked));
-	label.append(box, document.createTextNode(' Allow others to export uploads'));
-	dchatCommunityButtonsMount.appendChild(label);
 }
 
 function enqueueCommunityApply(fn) {
@@ -3904,7 +4231,7 @@ async function loadCommunitySceneById(sceneId, { activate = true } = {}) {
 async function renameCommunityScene() {
 	const cs = pendingRename;
 	const kind = pendingRenameKind;
-	const name = renameNameInput ? renameNameInput.value.trim() : '';
+	const name = (document.getElementById('rename-name')?.value || '').trim();
 	if (!cs || !cs.id) {
 		hideRenameModal();
 		return;
@@ -4111,13 +4438,15 @@ function parseThemeJsonBlocks(text) {
 }
 
 function setCommunitySection(section) {
-	communitySection = section === 'themes' ? 'themes' : 'scenes';
+	communitySection = section === 'themes' ? 'themes' : section === 'genres' ? 'genres' : 'scenes';
 	document.querySelectorAll('#dchat-community-subtabs .dchat-subtab').forEach(btn => {
 		btn.classList.toggle('active', btn.dataset.communitySection === communitySection);
 	});
 	const scenesSec = document.getElementById('dchat-community-section-scenes');
+	const genresSec = document.getElementById('dchat-community-section-genres');
 	const themesSec = document.getElementById('dchat-community-section-themes');
 	if (scenesSec) scenesSec.classList.toggle('active', communitySection === 'scenes');
+	if (genresSec) genresSec.classList.toggle('active', communitySection === 'genres');
 	if (themesSec) themesSec.classList.toggle('active', communitySection === 'themes');
 	if (communitySection === 'themes') refreshCommunityThemes();
 	else refreshCommunityScenes();
@@ -4356,38 +4685,6 @@ async function bootSharedScene() {
 	}
 }
 
-if (shareDisplayOnly) {
-	shareDisplayOnly.addEventListener('change', () => {
-		if (shareUrlInput) shareUrlInput.value = currentShareUrl();
-	});
-}
-if (shareCloseBtn) shareCloseBtn.addEventListener('click', hideShareModal);
-if (shareCopyBtn) {
-	shareCopyBtn.addEventListener('click', async () => {
-		const url = currentShareUrl();
-		const ok = await copyText(url);
-		shareCopyBtn.textContent = ok ? 'Copied!' : 'Copy failed';
-		setTimeout(() => { if (shareCopyBtn) shareCopyBtn.textContent = 'Copy link'; }, 1500);
-	});
-}
-if (shareModal) shareModal.addEventListener('click', (e) => { if (e.target === shareModal) hideShareModal(); });
-if (renameCancelBtn) renameCancelBtn.addEventListener('click', hideRenameModal);
-if (renameConfirmBtn) renameConfirmBtn.addEventListener('click', renameCommunityScene);
-if (renameNameInput) {
-	renameNameInput.addEventListener('keydown', (e) => {
-		if (e.key === 'Enter') { e.preventDefault(); renameCommunityScene(); }
-	});
-}
-if (renameModal) renameModal.addEventListener('click', (e) => { if (e.target === renameModal) hideRenameModal(); });
-
-
-exportScreenshotBtn.addEventListener('click', () => {
-	pendingExportThumbnail = captureScreenshot();
-	exportPreview.innerHTML = `<img src="${pendingExportThumbnail}" style="width:80px;height:80px;border-radius:8px;object-fit:cover;">`;
-});
-exportCancelBtn.addEventListener('click', hideExportModal);
-exportConfirmBtn.addEventListener('click', doExport);
-exportDownloadBtn.addEventListener('click', doDownloadExport);
 
 // The Scenes tab's current-scene card: thumbnail, name and how many blocks
 // it has (its own code + what chat added). There is only ever one scene.
@@ -5638,7 +5935,7 @@ function initChatFileDrop() {
 // Shapes attached files into whatever the selected backend expects. Text
 // files fold directly into the plain-text message (works identically for
 // every backend); images need a backend-specific content shape, since
-// Anthropic, OpenAI, and Ollama each represent an inline image differently.
+// Anthropic, OpenAI / xAI, and Ollama each represent an inline image differently.
 function buildUserContent(userMessage, attachments, backend) {
 	let text = userMessage;
 	for (const att of attachments) text += contextTextForAttachment(att);
@@ -5653,7 +5950,8 @@ function buildUserContent(userMessage, attachments, backend) {
 		return { content: text || '(see attached image)', images: images.map(a => a.base64) };
 	}
 
-	if (provider === 'openai') {
+	// xAI's Chat Completions API is OpenAI-compatible, including image_url parts.
+	if (provider === 'openai' || provider === 'xai') {
 		const parts = [{ type: 'text', text: text || '(see attached image)' }];
 		for (const att of images) {
 			parts.push({ type: 'image_url', image_url: { url: `data:${att.mediaType};base64,${att.base64}` } });
@@ -6093,6 +6391,8 @@ function updateLocomotion(dt, session, claimedSticks = null) {
 	const xrCam = renderer.xr.getCamera();
 	// Holding the origin gizmo: the controllers rotate the scene, not you.
 	if (vrGizmoGrab) return;
+	// Holding an imported model: sticks scale it (or do nothing) instead of moving you.
+	if (window.gsModelImport?.xr?.isGrabbing?.()) return;
 	// Listening for a VR binding (Controls tab): the controllers don't move you.
 	if (gsPadXrBindings.capture.busy === 'xr') return;
 	// Per hand: thumbstick (per-axis deadzone) and buttons. A stick that is
@@ -6184,6 +6484,11 @@ let renderFarBase = RENDER_FAR;
 let renderFarApplied = RENDER_FAR;
 let renderNearBase = RENDER_NEAR;
 let renderNearApplied = RENDER_NEAR;
+try {
+	const savedFar = localStorage.getItem(RENDER_DISTANCE_STORAGE_KEY);
+	const n = savedFar != null ? clampRenderDistance(savedFar) : null;
+	if (n != null) renderFarBase = n;
+} catch { /* storage blocked */ }
 const RENDER_NEAR_MAX = 0.5;
 const RENDER_DEPTH_RATIO = 100000;
 const _fitViewer = new THREE.Vector3();
@@ -6215,8 +6520,50 @@ function desktopRenderFarOffset() {
 	camera.getWorldPosition(_renderCamPos);
 	return _renderCamPos.distanceTo(_renderEye);
 }
+function setRenderDistance(v, { persist = true } = {}) {
+	const n = clampRenderDistance(v);
+	if (n == null) return renderFarBase;
+	// Don't treat the current applied far as a scene-code change when the
+	// Environment tab (or a loaded scene) sets a new base.
+	renderFarApplied = camera.far;
+	renderFarBase = n;
+	syncRenderDistance();
+	if (persist) {
+		try {
+			if (n === RENDER_FAR) localStorage.removeItem(RENDER_DISTANCE_STORAGE_KEY);
+			else localStorage.setItem(RENDER_DISTANCE_STORAGE_KEY, String(n));
+		} catch { /* storage blocked */ }
+	}
+	syncRenderDistanceInput();
+	if (renderer?.xr?.isPresenting) vrWindows?.byName('menu')?.markDirty();
+	return n;
+}
+
+function syncRenderDistanceInput() {
+	const input = document.getElementById('dchat-render-distance-input');
+	if (!input || document.activeElement === input) return;
+	const v = renderFarBase;
+	const shown = Number.isInteger(v) ? String(v) : String(Math.round(v * 1000) / 1000);
+	if (input.value !== shown) input.value = shown;
+	input.classList.remove('invalid');
+	input.setAttribute('aria-valuenow', String(v));
+}
+
+function applySceneRenderDistance(data) {
+	if (!data || data.renderDistance == null || data.renderDistance === '') return;
+	const n = clampRenderDistance(data.renderDistance);
+	if (n != null) setRenderDistance(n);
+}
+
+function renderDistanceForScene() {
+	return renderFarBase !== RENDER_FAR ? { renderDistance: renderFarBase } : {};
+}
+
 function syncRenderDistance() {
-	if (camera.far !== renderFarApplied) renderFarBase = camera.far; // changed by scene code
+	if (camera.far !== renderFarApplied) {
+		renderFarBase = camera.far; // changed by scene code
+		syncRenderDistanceInput();
+	}
 	if (camera.near !== renderNearApplied) renderNearBase = camera.near;
 	const far = Math.max(renderFarBase + desktopRenderFarOffset(), sceneFitFar());
 	const near = Math.max(renderNearBase, Math.min(RENDER_NEAR_MAX, far / RENDER_DEPTH_RATIO));
@@ -6250,15 +6597,56 @@ window.gsRenderDistance = {
 	get near() { return camera.near; },
 	/** Far distance from the viewer in VR (and the desktop base). */
 	get far() { return renderFarBase; },
+	set far(v) { setRenderDistance(v); },
+	set: (v, opts) => setRenderDistance(v, opts),
 	/** Far plane the windowed camera uses right now (base + offset from the VR eye). */
 	get desktopFar() { return renderFarBase + desktopRenderFarOffset(); },
 	/** Far distance that reaches all scene content and domes from the viewer (sceneFit.js). */
 	get sceneFar() { return sceneFitFar(); },
-	defaults: { near: RENDER_NEAR, far: RENDER_FAR }
+	defaults: { near: RENDER_NEAR, far: RENDER_FAR },
+	min: RENDER_FAR_MIN,
+	max: RENDER_FAR_MAX,
+	forScene: renderDistanceForScene,
+	applyFromScene: applySceneRenderDistance
 };
 
+let modelTransformDragging = false;
+{
+	const input = document.getElementById('dchat-render-distance-input');
+	if (input) {
+		const commit = () => {
+			const n = clampRenderDistance(input.value);
+			if (n == null) {
+				input.classList.add('invalid');
+				syncRenderDistanceInput();
+				return;
+			}
+			input.classList.remove('invalid');
+			setRenderDistance(n);
+		};
+		input.addEventListener('input', () => {
+			const n = clampRenderDistance(input.value);
+			input.classList.toggle('invalid', n == null && input.value.trim() !== '');
+		});
+		input.addEventListener('change', commit);
+		input.addEventListener('blur', commit);
+		input.addEventListener('keydown', (e) => {
+			e.stopPropagation();
+			if (e.key === 'Enter') { e.preventDefault(); commit(); input.blur(); }
+			else if (e.key === 'Escape') { e.preventDefault(); syncRenderDistanceInput(); input.blur(); }
+		});
+		input.addEventListener('focus', () => { input.select(); gsKeyBindings?.keepSelection?.(input); });
+		syncRenderDistanceInput();
+	}
+	const foveationBox = document.getElementById('dchat-foveation');
+	if (foveationBox) {
+		foveationBox.checked = foveationEnabled;
+		foveationBox.addEventListener('change', () => setFoveationEnabled(foveationBox.checked));
+	}
+}
+
 function cameraControlsSuspended() {
-	return !!(renderer.xr.isPresenting || mobileXRMode);
+	return !!(renderer.xr.isPresenting || mobileXRMode || modelTransformDragging);
 }
 
 const cameraControls = createCameraControls({
@@ -6999,7 +7387,7 @@ function originRotationForScene() {
 
 /** Signature for "has this scene changed since it was shared?" */
 function shareSignature(codeBlocks) {
-	return JSON.stringify([codeBlocks, originRotationActive() ? originRotation.rotation : null]);
+	return JSON.stringify([codeBlocks, originRotationActive() ? originRotation.rotation : null, renderFarBase !== RENDER_FAR ? renderFarBase : null]);
 }
 
 window.gsOrigin = {
@@ -7465,6 +7853,25 @@ window.gsSessionCode = {
 		if (sc && Array.isArray(sc.codeBlocks)) sc.codeBlocks = keep(sc.codeBlocks, (i) => sceneBlockKey(sc, i));
 		if (removed) { notifyCodeEditorExternalChange(); renderDomSceneList(); }
 		return removed;
+	},
+	all() {
+		return [...(activeScene?.codeBlocks || []), ...executedCodeBlocks];
+	},
+	// Update a block's source without re-running it (imported-model transforms).
+	patchWhere(match, replacer) {
+		let n = 0;
+		const patch = (list) => {
+			if (!Array.isArray(list)) return;
+			for (let i = 0; i < list.length; i++) {
+				if (!match(list[i])) continue;
+				const next = typeof replacer === 'function' ? replacer(list[i]) : replacer;
+				if (typeof next === 'string' && next !== list[i]) { list[i] = next; n++; }
+			}
+		};
+		patch(executedCodeBlocks);
+		if (activeScene && Array.isArray(activeScene.codeBlocks)) patch(activeScene.codeBlocks);
+		if (n) notifyCodeEditorExternalChange();
+		return n;
 	}
 };
 
@@ -9280,18 +9687,38 @@ function initGsVersionPicker() {
 	let versions = mergeVersionList(null);
 	let loading = false;
 
+	let versionHandle = null;
+	const listHost = listEl;
+	const note = document.getElementById('gs-version-modal-note') || (() => {
+		const p = document.createElement('p');
+		p.id = 'gs-version-modal-note';
+		p.textContent = 'What changed in each version, newest first. Tap a version to open that build.';
+		return p;
+	})();
 	function hide() {
+		if (versionHandle) { versionHandle.close('hide'); versionHandle = null; }
 		modal.classList.remove('visible');
 		modal.setAttribute('aria-hidden', 'true');
 	}
 
 	function show() {
-		modal.classList.add('visible');
-		modal.setAttribute('aria-hidden', 'false');
+		const body = document.createElement('div');
+		body.append(note, listHost);
+		versionHandle = openGsModal({
+			id: 'gs-version-modal',
+			cardId: 'gs-version-modal-inner',
+			title: 'GS versions & changelog',
+			titleId: 'gs-version-title',
+			body,
+			closeOnBackdrop: true,
+			actions: [{ id: 'gs-version-close', label: 'Close', className: 'btn-secondary', close: true }],
+			onClose: () => { versionHandle = null; }
+		});
+		versionHandle.root.setAttribute('aria-hidden', 'false');
 		// Open at the top so the newest changelog entry is what you see first.
-		closeBtn?.focus({ preventScroll: true });
 		const inner = document.getElementById('gs-version-modal-inner');
 		if (inner) inner.scrollTop = 0;
+		document.getElementById('gs-version-close')?.focus({ preventScroll: true });
 	}
 
 	function renderList() {
@@ -9364,13 +9791,6 @@ function initGsVersionPicker() {
 		refreshVersions();
 		renderList();
 	});
-	closeBtn?.addEventListener('click', hide);
-	modal.addEventListener('click', (e) => {
-		if (e.target === modal) hide();
-	});
-	window.addEventListener('keydown', (e) => {
-		if (e.key === 'Escape' && modal.classList.contains('visible')) hide();
-	});
 
 	renderList();
 	refreshVersions();
@@ -9425,11 +9845,8 @@ if (dchatCodeEditor && dchatCodeHighlight) {
 	codeHighlightApi = mountCodeHighlight(dchatCodeEditor, dchatCodeHighlight);
 }
 
-// Environment tab: VR mode (shared button spec, see ENV_MODE_BUTTONS/
-// handleMenuAction) and the "Select Color" bar (native color input overlaid
-// on the active-color preview). The toggle buttons themselves are
-// (re)mounted by renderDomEnv() since their active/inactive styling depends
-// on isVRMode.
+// Environment tab: the "Select Color" bar (native color input overlaid
+// on the active-color preview). AR / VR / Exit VR are in the top bar, not here.
 dchatColorPicker.addEventListener('input', () => {
 	const hex = dchatColorPicker.value;
 	const c = new THREE.Color(hex);
@@ -9496,7 +9913,7 @@ function setImmersiveUiMode(immersive) {
 // devicePixelRatio changes. Size comes from the live layout (canvas client
 // box, visualViewport, innerWidth/innerHeight) rather than cached values.
 // Skip while WebXR is presenting — three.js owns the buffer then.
-const MAX_PIXEL_RATIO = 3;
+const MAX_PIXEL_RATIO = 2;
 var _rendererSize = { w: window.innerWidth, h: window.innerHeight };
 var _rendererResizeRaf = 0;
 
@@ -9592,6 +10009,9 @@ if (typeof ResizeObserver === 'function') {
 applyRendererSize();
 
 renderer.xr.addEventListener('sessionstart', () => {
+	// Apply the saved foveation choice on the live XR layer (a browser may
+	// reset the layer to its default when the session starts).
+	applyFoveation();
 	// 'local-floor' reference space: origin at the real floor, eye level
 	// is around y=1.6, so the menu sits just below eye level for comfort.
 	layoutVrWindows();
@@ -9987,6 +10407,8 @@ function initVrDialogWindow() {
 	// at the name field opens the VR keyboard, whose Send key publishes.
 	GSContext.configurePublishDialog({
 		isImmersive: () => xrSessionActive(),
+		getAllowExport: () => uploadAllowExport,
+		setAllowExport: (v) => setUploadAllowExport(v),
 		onShow: (card, d) => {
 			if (!card) return;
 			vrDialogWindow.setSource(card);
@@ -10005,7 +10427,7 @@ function initVrDialogWindow() {
 		}
 	});
 	renderer.xr.addEventListener('sessionstart', refreshDialogMode);
-	renderer.xr.addEventListener('sessionend', refreshDialogMode);
+	renderer.xr.addEventListener('sessionend', () => { closeXrSelect(); refreshDialogMode(); });
 	renderer.xr.addEventListener('sessionstart', GSContext.refreshPublishDialogMode);
 	renderer.xr.addEventListener('sessionend', GSContext.refreshPublishDialogMode);
 }
@@ -10013,6 +10435,14 @@ function initVrDialogWindow() {
 // The page's own alert / confirm / prompt (AI-written scene code, p5 helpers,
 // anything else) open these dialogs too; see installDialogGlobals.
 installDialogGlobals(window);
+window.gsModal = {
+	open: openGsModal,
+	close: closeGsModal,
+	current: currentModal,
+	configure: configureModals,
+	refresh: refreshModalMode,
+	ensureShell: ensureGsModalShell
+};
 
 function dispatchKeyToDomField(el, key) {
 	const write = (text) => {
@@ -10105,6 +10535,23 @@ bootSharedScene();
 
 // Snapshot system objects so we can distinguish user-created objects later
 snapshotSystemObjects();
+
+initModelImport({
+	scene, camera, renderer,
+	notify: (text, kind) => updateStatus(text, kind),
+	registerSystemObject(obj) {
+		if (!obj) return;
+		obj.userData = obj.userData || {};
+		obj.userData.gsNoExport = true;
+		obj.traverse((o) => systemObjectIds.add(o.uuid));
+	},
+	registerSystemOverlay(el) { if (el?.id) systemOverlayIds.add(el.id); },
+	onDragging(on) { modelTransformDragging = !!on; cameraControls.refreshEnabled(); },
+	isImmersive: () => !!(renderer.xr.isPresenting || mobileXRMode === 'ar'),
+	getArGizmoActive: () => !!(arGizmoVisible || arGizmoDragging),
+	isTextEntry,
+	importSceneFile: (file) => loadSceneFile(file)
+});
 
 // Add welcome message
 displayMessages.push({ role: 'assistant', content: WELCOME_MSG });
@@ -10215,10 +10662,40 @@ window.gsVrInput = {
 	playerQuaternion() { return player ? player.quaternion.clone() : null; }
 };
 
+const _gsPerfSamples = [];
+window.gsPerf = {
+	frames: 0,
+	cpuMs: 0,
+	reset() { this.frames = 0; this.cpuMs = 0; _gsPerfSamples.length = 0; },
+	_end(t0) {
+		const ms = performance.now() - t0;
+		this.frames++;
+		this.cpuMs += ms;
+		_gsPerfSamples.push(ms);
+		if (_gsPerfSamples.length > 180) _gsPerfSamples.shift();
+	},
+	stats() {
+		const a = _gsPerfSamples;
+		if (!a.length) return { frames: this.frames, avg: 0, p50: 0, p95: 0, max: 0 };
+		const s = a.slice().sort((x, y) => x - y);
+		const n = s.length;
+		return { frames: this.frames, avg: this.cpuMs / this.frames, p50: s[n >> 1], p95: s[Math.min(n - 1, Math.floor(n * 0.95))], max: s[n - 1] };
+	}
+};
+
 renderer.setAnimationLoop((time) => {
+	const _gsPerfT0 = performance.now();
 	// Frame delta (seconds), clamped so a paused/backgrounded tab doesn't jump.
 	const dt = _locoPrevTime ? Math.min(0.1, (time - _locoPrevTime) / 1000) : 0;
 	_locoPrevTime = time;
+
+	// A hidden desktop tab still gets rAF, but nothing is shown. Keep VAD
+	// running for always-on mic; skip the rest of the frame (and the draw).
+	if (document.visibilityState === 'hidden' && !renderer.xr.isPresenting) {
+		pumpVad();
+		window.gsPerf._end(_gsPerfT0);
+		return;
+	}
 
 	// Voice-activity detection for always-on mic. Driven here (not via
 	// window.requestAnimationFrame, which is paused during immersive sessions) so
@@ -10323,9 +10800,21 @@ renderer.setAnimationLoop((time) => {
 					// mode (off → planar → free-roam).
 					const b1 = !!(gp.buttons[1] && gp.buttons[1].pressed);
 					if (b1 && !prev[1]) {
-						if (!beginVrGizmoGrab(hand) && hand === 'right' && !mine(1)) cycleLocomotionMode();
+						const foundCtrl = xrControllerForHand(hand);
+						let grabbedModel = false;
+						if (foundCtrl && !beginVrGizmoGrab(hand) && !gsXrInput._rayOnWindow[hand] && window.gsModelImport?.xr) {
+							foundCtrl.controller.updateMatrixWorld(true);
+							_rayTempMatrix.identity().extractRotation(foundCtrl.controller.matrixWorld);
+							_rayOrigin.setFromMatrixPosition(foundCtrl.controller.matrixWorld);
+							_rayDir.set(0, 0, -1).applyMatrix4(_rayTempMatrix);
+							grabbedModel = !!window.gsModelImport.xr.beginGrab(hand, foundCtrl.controller, _rayOrigin, _rayDir);
+						}
+						if (!grabbedModel && !vrGizmoGrab && hand === 'right' && !mine(1)) cycleLocomotionMode();
 					}
-					if (!b1 && prev[1] && vrGizmoGrab && vrGizmoGrab.hand === hand) endVrGizmoGrab();
+					if (!b1 && prev[1]) {
+						if (vrGizmoGrab && vrGizmoGrab.hand === hand) endVrGizmoGrab();
+						window.gsModelImport?.xr?.endGrab?.(hand);
+					}
 					prev[1] = b1;
 				}
 
@@ -10349,6 +10838,24 @@ renderer.setAnimationLoop((time) => {
 			}
 			if (vrGizmoGrab && !session.inputSources.length) endVrGizmoGrab();
 			updateVrGizmoGrab();
+			if (window.gsModelImport?.xr) {
+				if (!session.inputSources.length && window.gsModelImport.xr.isGrabbing()) {
+					window.gsModelImport.xr.endGrab('left');
+					window.gsModelImport.xr.endGrab('right');
+				}
+				window.gsModelImport.xr.update(
+					(hand) => xrControllerForHand(hand),
+					(hand) => {
+						for (const source of session.inputSources) {
+							if (source.handedness !== hand || !source.gamepad) continue;
+							const axes = source.gamepad.axes;
+							return axes.length >= 4 ? axes[3] : (axes[1] || 0);
+						}
+						return 0;
+					},
+					dt
+				);
+			}
 
 			// Locomotion: left stick moves, right stick turns (a stick a scene
 			// binding took over is left to the scene).
@@ -10423,4 +10930,5 @@ renderer.setAnimationLoop((time) => {
 	} else {
 		renderer.render(scene, camera);
 	}
+	window.gsPerf._end(_gsPerfT0);
 });

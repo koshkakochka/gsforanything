@@ -123,7 +123,7 @@ const phone = (w, h, dpr = 2) => ({ width: w, height: h, isMobile: true, hasTouc
 	await waitFrames(p, 4);
 	m = await p.evaluate(measure);
 	check('deviceScaleFactor 3: canvas still covers the viewport', m.covers, report(m));
-	check('deviceScaleFactor 3: pixel ratio updates and buffer matches client × ratio', m.bufOk && Math.abs(m.px - 3) < 0.01, report(m));
+	check('deviceScaleFactor 3: pixel ratio is capped at 2 and the buffer matches client × ratio', m.bufOk && Math.abs(m.px - 2) < 0.01, report(m));
 	await p.screenshot({ path: `${SHOT_DIR}/after-phone-390x844-dpr3.png` });
 
 	// Hide UI: the canvas must still fill the page.

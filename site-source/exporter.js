@@ -39,6 +39,9 @@
  * points and sprites are skipped. Skinned meshes are written in bind pose and
  * InstancedMesh instances as separate meshes.
  */
+
+import { openGsModal } from './gsModal.js';
+
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
@@ -922,7 +925,9 @@ const MOTION_NOTE = ' Code-driven motion (per-frame scripts) is not saved in any
 
 const DIALOG_CSS = `
 #gs-model-export { display:none; position:fixed; inset:0; z-index:3200; background:rgba(0,0,0,0.55); align-items:center; justify-content:center; pointer-events:auto; }
-#gs-model-export.visible { display:flex; }
+#gs-model-export.visible, #gs-model-export.gs-modal-root.visible { display:flex; }
+#gs-model-export.gs-modal-xr { background:none; pointer-events:none; inset:auto; width:0; height:0; padding:0; }
+#gs-model-export.gs-modal-xr #gs-model-export-inner { pointer-events:auto; }
 #gs-model-export-inner { background:rgba(30,30,40,0.98); color:#fff; border-radius:16px; padding:22px; width:min(440px, 92vw); max-height:86vh; overflow:auto; box-sizing:border-box; box-shadow:0 8px 40px rgba(0,0,0,0.5); font:14px -apple-system,BlinkMacSystemFont,sans-serif; }
 #gs-model-export-inner h3 { margin:0 0 12px; font-size:18px; }
 #gs-model-export-inner label.gs-mx-label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:0.6px; color:rgba(255,255,255,0.5); font-weight:700; margin:12px 0 6px; }
@@ -1016,15 +1021,13 @@ export function initSceneExport(opts) {
 		}
 	}
 
-	function ensureModal() {
-		if (modal) return;
+	let modelExportHandle = null;
+	let fieldsEl = null;
+	function ensureFields() {
+		if (fieldsEl) return;
 		addCss();
-		modal = document.createElement('div');
-		modal.id = 'gs-model-export';
-		modal.setAttribute('aria-hidden', 'true');
-		modal.innerHTML = `
-			<div id="gs-model-export-inner" role="dialog" aria-labelledby="gs-mx-title">
-				<h3 id="gs-mx-title">Export 3D model</h3>
+		fieldsEl = document.createElement('div');
+		fieldsEl.innerHTML = `
 				<label class="gs-mx-label">Format</label>
 				<div class="gs-mx-formats" role="radiogroup" aria-label="Format">
 					${EXPORT_FORMATS.map((f) => `<button type="button" data-format="${f.id}" role="radio">${f.label}</button>`).join('')}
@@ -1032,24 +1035,13 @@ export function initSceneExport(opts) {
 				<label class="gs-mx-label" for="gs-mx-name">File name</label>
 				<div class="gs-mx-name"><input type="text" id="gs-mx-name" autocomplete="off" /><span class="gs-mx-ext"></span></div>
 				<div class="gs-mx-note"></div>
-				<div class="gs-mx-status" role="status"></div>
-				<div class="gs-mx-buttons">
-					<button type="button" data-mx="cancel">Cancel</button>
-					<button type="button" data-mx="export" class="primary">Export</button>
-				</div>
-			</div>`;
-		document.body.appendChild(modal);
-		nameInput = modal.querySelector('#gs-mx-name');
-		extEl = modal.querySelector('.gs-mx-ext');
-		noteEl = modal.querySelector('.gs-mx-note');
-		statusEl = modal.querySelector('.gs-mx-status');
-		exportBtn = modal.querySelector('[data-mx="export"]');
-		modal.querySelectorAll('[data-format]').forEach((b) => b.addEventListener('click', () => setFormat(b.dataset.format)));
-		modal.querySelector('[data-mx="cancel"]').addEventListener('click', close);
-		modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+				<div class="gs-mx-status" role="status"></div>`;
+		nameInput = fieldsEl.querySelector('#gs-mx-name');
+		extEl = fieldsEl.querySelector('.gs-mx-ext');
+		noteEl = fieldsEl.querySelector('.gs-mx-note');
+		statusEl = fieldsEl.querySelector('.gs-mx-status');
+		fieldsEl.querySelectorAll('[data-format]').forEach((b) => b.addEventListener('click', () => setFormat(b.dataset.format)));
 		nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doExport(); });
-		window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modal.classList.contains('visible')) close(); });
-		exportBtn.addEventListener('click', doExport);
 	}
 
 	function setFormat(fmt) {
@@ -1080,23 +1072,35 @@ export function initSceneExport(opts) {
 	}
 
 	function open(fmt = format) {
-		// In a headset the DOM dialog is not visible: export straight away
-		// with the scene name (Quest saves it to the browser's downloads).
 		if (!canExport()) { onBlocked(); return Promise.resolve(null); }
-		if (isImmersive()) return run(fmt).catch(() => null);
-		ensureModal();
+		ensureFields();
+		modelExportHandle = openGsModal({
+			id: 'gs-model-export',
+			cardId: 'gs-model-export-inner',
+			title: 'Export 3D model',
+			titleId: 'gs-mx-title',
+			body: fieldsEl,
+			closeOnBackdrop: true,
+			initialFocus: () => nameInput,
+			xrInput: () => nameInput,
+			actions: [
+				{ label: 'Cancel', attrs: { 'data-mx': 'cancel' }, close: true },
+				{ label: 'Export', attrs: { 'data-mx': 'export' }, variant: 'primary', className: 'primary', close: false, onClick: () => { doExport(); return false; } }
+			],
+			onClose: () => { modelExportHandle = null; }
+		});
+		modal = modelExportHandle.root;
+		exportBtn = modal.querySelector('[data-mx="export"]');
 		setFormat(fmt);
 		nameInput.value = safeFileName(getSceneName());
 		statusEl.textContent = '';
 		statusEl.className = 'gs-mx-status';
-		modal.classList.add('visible');
 		modal.setAttribute('aria-hidden', 'false');
-		nameInput.focus({ preventScroll: true });
-		nameInput.select();
 		return Promise.resolve(null);
 	}
 
 	function close() {
+		if (modelExportHandle) { modelExportHandle.close('hide'); modelExportHandle = null; }
 		if (!modal) return;
 		modal.classList.remove('visible');
 		modal.setAttribute('aria-hidden', 'true');

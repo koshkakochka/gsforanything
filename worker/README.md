@@ -7,7 +7,7 @@ the `server.js` API on Cloudflare:
 
 | Route | What |
 | --- | --- |
-| `POST /api/chat`, `/api/fix-code`, `/api/theme-chat` | LLM proxy (Claude / OpenAI), prompts from `prompts.js` |
+| `POST /api/chat`, `/api/fix-code`, `/api/theme-chat` | LLM proxy (Claude / OpenAI / xAI Grok), prompts from `prompts.js` |
 | `GET /api/backends` | available models (depends on which secrets are set) |
 | `/api/community-scenes` (+ `/:id`, `/:id/context`, `/:id/hdri`) | Community scenes in KV `SCENES`; creation context stored under `scene:<id>:context`; a custom environment HDRI file (one-shot `PUT` right after the upload, max 20 MB) under `scene:<id>:hdri` |
 | `/api/community-themes`, `/api/save-scene`, `/api/load-scene`, `/api/prompts` | themes, private saves (KV), prompts |
@@ -21,7 +21,7 @@ Files:
 - `wrangler.jsonc`: Worker name, assets (`./public`, `run_worker_first` for `/api/*`, `/s/*`, `/e/*`), `SCENES` KV binding.
 - `sync-public.sh`: rebuilds `public/` (gitignored) from `../site-source` (client files only).
 
-No secrets live here. `CLAUDE_API_KEY`, `OPENAI_API_KEY`, `LLM_BACKEND` and
+No secrets live here. `CLAUDE_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, `LLM_BACKEND` and
 `OPENAI_MODEL` are Worker secrets (`wrangler secret put …`) and persist across
 deploys. The KV namespace id is not a secret.
 

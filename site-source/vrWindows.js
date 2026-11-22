@@ -1,9 +1,10 @@
 /**
  * VR windows: the one way GS shows UI inside an immersive session.
  *
- * Each window is a live DOM element (laid out off-screen by the browser,
- * styled by the same CSS as the desktop menu) painted into a canvas texture
- * by htmlInCanvas.js and shown on a flat mesh. The controller ray is mapped
+ * Each window is a live DOM element (the same node the desktop UI uses,
+ * styled by the same CSS) painted into a canvas texture by htmlInCanvas.js
+ * and shown on a flat mesh. htmlInCanvas prefers the WICG HTML-in-Canvas
+ * API (drawElementImage) and falls back to its DOM walker. The controller ray is mapped
  * back onto that element, so point, hover, click, drag-scroll, thumbstick
  * scroll and text-field targeting behave the same on every window. Text
  * fields are never DOM-focused in XR (that summons the Quest system keyboard,
@@ -21,10 +22,13 @@
  *    at ~15/s, with a slow idle refresh. Nothing repaints every frame.
  */
 
+import { supportsNativeHtmlInCanvas, enableNativeHtmlInCanvasHost } from './htmlInCanvas.js';
+import { activateSelectInXr, closeXrSelect, isXrSelectElement } from './xrSelect.js';
+
 export const VR_WINDOW_DISTANCE = 1.5;           // metres, world windows
 export const VR_PX_TO_M = 1.12 / 640;            // 640 CSS px wide -> 1.12 m at 1.5 m
 export const HTML_PAINT_MIN_MS = 66;             // cap repaints at ~15/s while content changes
-export const HTML_PAINT_IDLE_MS = 2000;          // safety refresh for CSS-only changes
+export const HTML_PAINT_IDLE_MS = 8000;          // occasional safety refresh for CSS-only changes
 const SCROLL_DRAG_PX = 8;
 const HOVER_MIN_MS = 50;
 // Synthetic pointer event at a window point (ray drags on data-gs-ray-drag widgets).
@@ -46,7 +50,7 @@ export function scrollBoxTo(el, top, left) {
 	el.dispatchEvent(new Event('scroll'));
 	return true;
 }
-const ACTIONABLE = 'button, a, label, select, input, textarea, summary, [data-action], [role="button"], [role="radio"], [role="tab"], .menu-btn';
+const ACTIONABLE = 'button, a, label, select, input, textarea, summary, [data-action], [role="button"], [role="radio"], [role="tab"], [role="option"], [role="listbox"], .menu-btn, .gs-xr-select-option';
 const SOURCE_CLASS = 'html-in-canvas-source';
 
 export function isHtmlTextField(el) {
@@ -144,8 +148,57 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			if (was) win.setVisible(true);
 		};
 
+		// When the WICG HTML-in-Canvas API is present, wrap the source in the
+		// paint canvas so drawElementImage can snapshot the same node. The
+		// canvas stays in the viewport (behind the WebGL view) so the browser
+		// can record a paint. Do not wrap during an immersive session: Quest
+		// (and some other WebXR browsers) may expose drawElementImage but not
+		// reliably lay out canvas descendants, so getBoundingClientRect used
+		// for ray hit-testing goes empty and controller/hand clicks no-op.
+		// The walker + off-screen .html-in-canvas-source path is the proven
+		// XR mapping. Desktop layout is restored on hide.
+		const immersiveXr = () => !!(
+			document.body.classList.contains('gs-xr-presenting')
+			|| document.body.classList.contains('gs-cardboard-active')
+		);
+		const wrapNative = (el) => {
+			if (!supportsNativeHtmlInCanvas() || !el) return;
+			if (immersiveXr()) return;
+			if (el.parentElement === canvas) return;
+			enableNativeHtmlInCanvasHost(canvas);
+			win._homeParent = el.parentNode;
+			win._homeNext = el.nextSibling;
+			if (win._homeParent) win._homeParent.insertBefore(canvas, el);
+			else document.body.appendChild(canvas);
+			el.setAttribute('drawable', '');
+			canvas.appendChild(el);
+			if (!win._onNativePaint) {
+				win._onNativePaint = () => markDirty();
+				canvas.addEventListener('paint', win._onNativePaint);
+			}
+		};
+		const unwrapNative = (el) => {
+			if (!el) return;
+			el.removeAttribute('drawable');
+			if (win._homeParent) {
+				if (canvas.parentNode === win._homeParent) {
+					win._homeParent.insertBefore(el, canvas);
+					canvas.remove();
+				} else {
+					win._homeParent.insertBefore(el, win._homeNext);
+					if (canvas.parentNode) canvas.remove();
+				}
+			} else if (el.parentElement === canvas) {
+				document.body.appendChild(el);
+				if (canvas.parentNode) canvas.remove();
+			}
+			win._homeParent = win._homeNext = null;
+		};
+
 		win.setVisible = (on) => {
 			on = !!on;
+			if (on && !immersiveXr()) wrapNative(source);
+			else unwrapNative(source);
 			source.classList.toggle(SOURCE_CLASS, on);
 			if (on && !win._observer) {
 				win._observer = new MutationObserver(markDirty);
@@ -249,10 +302,16 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 
 		win.tick = (force = false, now = performance.now()) => {
 			if (!mesh.visible) return false;
+			if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+				if (win._live) win.updateLive();
+				return false;
+			}
 			if (win._live) win.updateLive();
 			if (!force) {
 				const since = now - win._paintAt;
 				if (win._dirty ? since < HTML_PAINT_MIN_MS : since < HTML_PAINT_IDLE_MS) return false;
+				// A minimized / display:none source has no box to paint.
+				if (source && (source.clientWidth < 2 || source.clientHeight < 2)) return false;
 			}
 			win._paintAt = now;
 			win._dirty = false;
@@ -389,15 +448,27 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			if (!p) return null;
 			const el = win.elementAt(p.x, p.y);
 			if (!el || blocked(el)) return null;
+			if (isXrSelectElement(el)) {
+				const opt = el.closest('.gs-xr-select-option, [role="option"]');
+				if (opt && opt.getAttribute('aria-disabled') !== 'true') opt.click();
+				else closeXrSelect();
+				if (onActivate) onActivate(win, el, null);
+				win.tick(true);
+				return el;
+			}
 			const label = el.closest('label');
 			let field = el.closest('input, textarea, select');
 			if (!field && label) field = label.control || label.querySelector('input, textarea, select');
 			if (field && !source.contains(field)) field = null;
 			if (field && field.disabled) return null;
 			if (field instanceof HTMLSelectElement && field.options.length > 0) {
-				field.selectedIndex = (field.selectedIndex + 1) % field.options.length;
-				field.dispatchEvent(new Event('input', { bubbles: true }));
-				field.dispatchEvent(new Event('change', { bubbles: true }));
+				// Native <select> menus are not in the painted texture. Open a
+				// DOM listbox inside this window source so the walker / ray can hit it.
+				activateSelectInXr(field, source);
+			} else if (isXrSelectElement(el)) {
+				const opt = el.closest('.gs-xr-select-option, [role="option"]');
+				if (opt && !opt.disabled) opt.click();
+				else if (el.closest('#gs-xr-select-popup-backdrop') || el.id === 'gs-xr-select-popup-backdrop') closeXrSelect();
 			} else if (field instanceof HTMLInputElement && field.type === 'range') {
 				const r = field.getBoundingClientRect();
 				const t = r.width > 0 ? Math.min(1, Math.max(0, (p.x - r.left) / r.width)) : 0;

@@ -140,8 +140,8 @@ const dumpMenuCanvas = (p, file) => p.evaluate(() => {
 	s = await st(p);
 	check('[ar→vr] Ray-click VR in AR: colour sky live, same session', s.presenting && s.session === 'immersive-ar' && s.sid === sid2 && !s.passthrough, s);
 	check('[ar→vr] Toggle shows VR; pref saved as vr', s.bs.vr.checked === 'true' && s.pref === 'vr', s);
-	const envVr = await p.evaluate(() => { const g = document.querySelector('#dchat-env-mode [data-id="vr"]'); return g && /active/.test(g.getAttribute('class') || '') || g?.getAttribute('aria-pressed') === 'true' || g?.dataset.variant === 'active'; });
-	console.log('INFO Env tab VR button active marker:', envVr);
+	const envGone = await p.evaluate(() => !document.querySelector('#dchat-env-mode [data-id], #dchat-env-mode button') && !!document.getElementById('dchat-env-mode-section')?.hidden);
+	check('[ar→vr] Env tab has no AR / VR / Exit VR buttons', envGone);
 	await sleep(600);
 	await dumpMenuCanvas(p, `${SHOT_DIR}/03-ar-session-vr-sky-menu-canvas.png`);
 
@@ -196,25 +196,24 @@ const dumpMenuCanvas = (p, file) => p.evaluate(() => {
 	await sleep(500);
 	const dlg = await p.evaluate(() => { const c = document.getElementById('gs-dialog'); return c ? c.textContent : ''; });
 	s = await st(p);
-	check('[vr-only] Choosing AR (Env tab / API) shows an in-app message and stays in VR', /isn.t supported/.test(dlg) && s.presenting && s.session === 'immersive-vr', { dlg, s });
+	check('[vr-only] Choosing AR (API) shows an in-app message and stays in VR', /isn.t supported/.test(dlg) && s.presenting && s.session === 'immersive-vr', { dlg, s });
 	await sleep(400);
 	await p.screenshot({ path: `${SHOT_DIR}/05-vr-only-message-page.png` });
 	check('[vr-only] No page errors / native dialogs', errors.length === 0, errors.slice(0, 3));
 	await b.close();
 }
 
-// ───────────── 4. The Env tab's AR / VR buttons do the same in a session ─────────────
+// ───────────── 4. Environment tab no longer has AR / VR / Exit VR ─────────────
 {
 	const { b, p, errors } = await open();
 	await enterXr(p, 'vr');
-	await p.evaluate(() => document.querySelector('#dchat-env-mode [data-id="ar"]').dispatchEvent(new MouseEvent('click', { bubbles: true })));
-	await waitPresenting(p, true, 8000);
-	let s = await st(p);
-	check('[env] Env tab "AR (passthrough)" in a VR session switches to an immersive-ar session', s.session === 'immersive-ar' && s.passthrough && s.bs.ar.checked === 'true', s);
-	await p.evaluate(() => document.querySelector('#dchat-env-mode [data-id="vr"]').dispatchEvent(new MouseEvent('click', { bubbles: true })));
-	await sleep(600);
-	s = await st(p);
-	check('[env] Env tab "VR (color)" in AR: colour sky, top-bar toggle follows (VR)', s.session === 'immersive-ar' && !s.passthrough && s.bs.vr.checked === 'true', s);
+	const env = await p.evaluate(() => ({
+		sectionHidden: !!document.getElementById('dchat-env-mode-section')?.hidden,
+		btns: document.querySelectorAll('#dchat-env-mode [data-id], #dchat-env-mode button, #dchat-panel-env [data-action^="env:"]').length,
+		dock: !!document.getElementById('gs-xr-mode') && !!document.getElementById('gs-exit-vr-btn')
+	}));
+	check('[env] Env tab has no AR / VR / Exit VR buttons', env.sectionHidden && env.btns === 0, env);
+	check('[env] Dock still has the AR | VR toggle and Exit VR', env.dock, env);
 	check('[env] No page errors / native dialogs', errors.length === 0, errors.slice(0, 3));
 	await b.close();
 }

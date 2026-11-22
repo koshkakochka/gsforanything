@@ -171,7 +171,8 @@
 		} else {
 			svgButton('Menu button (Scenes)', scenesMount || q('[id$="-buttons"] svg')?.parentElement);
 		}
-		const envMount = q('#dchat-env-mode'); if (envMount) svgButton('Menu toggle (Environment)', envMount);
+		const envMount = q('#dchat-env-mode');
+		if (envMount && envMount.querySelector('button, [data-id], svg')) svgButton('Menu toggle (Environment)', envMount);
 		// --- ray hover / focus ring ---
 		if (opts.hoverProbe !== false) {
 			const target = btn || input;

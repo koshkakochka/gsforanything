@@ -1,0 +1,10 @@
+{
+  "name": "gs-xr-select-modal-test",
+  "private": true,
+  "type": "module",
+  "description": "XR custom <select> popups and the shared gsModal template (desktop + IWER Quest 3).",
+  "dependencies": {
+    "iwer": "^2.6.0",
+    "puppeteer-core": "24.43.1"
+  }
+}

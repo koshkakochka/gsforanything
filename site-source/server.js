@@ -13,6 +13,7 @@ import { allowExportFromBody, exportAllowed, isSceneOwner, legacyEmbedRedirectPa
 import { listThumbFields, parseThumbnailPayload, publicThumbnailField, THUMB_PREFIX, thumbPathname, thumbStub } from './sceneThumbnail.js';
 import { descriptionForList, sanitizeDescription, descriptionPayloadTooLarge, createRateLimiter, clientIpFromHeaders } from './sceneDescription.js';
 import { sanitizeSceneName } from './sceneName.js';
+import { sanitizeGenre, genreListFields, applyGenreToRecord } from './sceneGenre.js';
 
 const descriptionPatchLimit = createRateLimiter();
 function requestClientIp(req) {
@@ -32,7 +33,7 @@ const PORT = process.env.PORT || 3000;
 // it. The server therefore always listens over HTTPS (self-signed cert,
 // generated on first run).
 
-// Which model backend to use by default: 'claude', 'openai', or 'ollama'.
+// Which model backend to use by default: 'claude', 'openai', 'grok', or 'ollama'.
 // The client can override this per-request (see the model dropdown in the
 // chat UI) - this is just the fallback when a request doesn't specify one.
 const LLM_BACKEND = (process.env.LLM_BACKEND || 'openai').toLowerCase();
@@ -48,6 +49,7 @@ const OPENAI_SOL_MODEL = 'gpt-6.1-sol';
 // should just gray out that option, not crash the whole server.
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const XAI_API_KEY = process.env.XAI_API_KEY;
 
 // Ollama is NOT proxied through this server. The server has no network path
 // to a user's own machine when this app is deployed on Vercel - "localhost"
@@ -73,20 +75,32 @@ const BACKENDS = {
 	'openai-luna': { provider: 'openai', model: 'gpt-6-luna', label: 'GPT6 Luna' },
 	// OPENAI_MODEL env override applies to this key only.
 	openai: { provider: 'openai', model: OPENAI_MODEL, label: 'GPT6 Astra' },
+	// xAI Chat Completions (OpenAI-compatible, https://api.x.ai/v1). grok-4.7 is
+	// the current flagship; grok-4.3 is the cheaper/faster public option
+	// (retired grok-*-fast slugs redirect there). grok-4.7 Fast is not on the public API.
+	grok: { provider: 'xai', model: 'grok-4.7', label: 'Grok 4.7' },
+	'grok-43': { provider: 'xai', model: 'grok-4.3', label: 'Grok 4.3' },
 	ollama: { provider: 'ollama', label: 'Ollama (runs in your browser, local)', local: true },
 };
+
+function providerHasKey(provider) {
+	if (provider === 'ollama') return true;
+	if (provider === 'openai') return !!OPENAI_API_KEY;
+	if (provider === 'xai') return !!XAI_API_KEY;
+	return !!CLAUDE_API_KEY;
+}
 
 function getAvailableBackends() {
 	const out = {};
 	for (const [id, b] of Object.entries(BACKENDS)) {
-		const available = b.provider === 'ollama' ? true : b.provider === 'openai' ? !!OPENAI_API_KEY : !!CLAUDE_API_KEY;
+		const available = providerHasKey(b.provider);
 		out[id] = { label: b.label, provider: b.provider, available, ...(b.local ? { local: true } : {}) };
 	}
 	return out;
 }
 
-if (!CLAUDE_API_KEY && !OPENAI_API_KEY) {
-	console.error('\x1b[31mWarning: neither CLAUDE_API_KEY nor OPENAI_API_KEY is set.\x1b[0m');
+if (!CLAUDE_API_KEY && !OPENAI_API_KEY && !XAI_API_KEY) {
+	console.error('\x1b[31mWarning: none of CLAUDE_API_KEY, OPENAI_API_KEY, or XAI_API_KEY is set.\x1b[0m');
 	console.error('Set at least one before running the server, e.g.:');
 	console.error('  Windows:  set CLAUDE_API_KEY=your-key-here');
 	console.error('  Mac/Linux: export CLAUDE_API_KEY=your-key-here');
@@ -427,10 +441,12 @@ function callClaudeAPI(systemPrompt, messages, maxTokens = 16384, model = 'claud
 	});
 }
 
-// Shared function: call the OpenAI API and normalize the response into the
-// same { content: [{ text }] } shape the client expects from Claude.
-function callOpenAIAPI(systemPrompt, messages, maxTokens = 16384, model = OPENAI_MODEL) {
+// Shared function: call an OpenAI-compatible Chat Completions API (OpenAI or
+// xAI at api.x.ai) and normalize the response into the same
+// { content: [{ text }] } shape the client expects from Claude.
+function callOpenAICompatibleAPI(apiKey, systemPrompt, messages, maxTokens, model, hostname) {
 	return new Promise((resolve, reject) => {
+		const label = hostname === 'api.x.ai' ? 'xAI' : 'OpenAI';
 		const postBody = JSON.stringify({
 			model,
 			max_completion_tokens: maxTokens,
@@ -441,12 +457,12 @@ function callOpenAIAPI(systemPrompt, messages, maxTokens = 16384, model = OPENAI
 		});
 
 		const apiReq = https.request({
-			hostname: 'api.openai.com',
+			hostname,
 			path: '/v1/chat/completions',
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
-				'Authorization': `Bearer ${OPENAI_API_KEY}`,
+				'Authorization': `Bearer ${apiKey}`,
 				'Content-Length': Buffer.byteLength(postBody)
 			}
 		}, (apiRes) => {
@@ -462,7 +478,7 @@ function callOpenAIAPI(systemPrompt, messages, maxTokens = 16384, model = OPENAI
 						resolve({ error: false, data: { content: [{ text }] } });
 					}
 				} catch (e) {
-					reject(new Error(`Invalid JSON response from OpenAI: ${body.slice(0, 200)}`));
+					reject(new Error(`Invalid JSON response from ${label}: ${body.slice(0, 200)}`));
 				}
 			});
 		});
@@ -471,6 +487,14 @@ function callOpenAIAPI(systemPrompt, messages, maxTokens = 16384, model = OPENAI
 		apiReq.write(postBody);
 		apiReq.end();
 	});
+}
+
+function callOpenAIAPI(systemPrompt, messages, maxTokens = 16384, model = OPENAI_MODEL) {
+	return callOpenAICompatibleAPI(OPENAI_API_KEY, systemPrompt, messages, maxTokens, model, 'api.openai.com');
+}
+
+function callXaiAPI(systemPrompt, messages, maxTokens = 16384, model = 'grok-4.7') {
+	return callOpenAICompatibleAPI(XAI_API_KEY, systemPrompt, messages, maxTokens, model, 'api.x.ai');
 }
 
 // Dispatches to whichever backend was requested (falls back to LLM_BACKEND
@@ -491,6 +515,11 @@ function callLLM(systemPrompt, messages, maxTokens = 16384, backend) {
 	if (entry.provider === 'openai') {
 		if (!OPENAI_API_KEY) return Promise.resolve({ error: true, status: 400, data: { error: { message: 'OPENAI_API_KEY is not configured on the server.' } } });
 		return callOpenAIAPI(systemPrompt, messages, maxTokens, entry.model);
+	}
+
+	if (entry.provider === 'xai') {
+		if (!XAI_API_KEY) return Promise.resolve({ error: true, status: 400, data: { error: { message: 'XAI_API_KEY is not configured on the server.' } } });
+		return callXaiAPI(systemPrompt, messages, maxTokens, entry.model);
 	}
 
 	if (!CLAUDE_API_KEY) return Promise.resolve({ error: true, status: 400, data: { error: { message: 'CLAUDE_API_KEY is not configured on the server.' } } });
@@ -949,7 +978,7 @@ async function updateSceneMeta(id, patch) {
 	const index = await readSceneMetaIndex();
 	const prev = index[id] && typeof index[id] === 'object' ? index[id] : {};
 	const next = { ...prev, ...patch };
-	if (!next.description && !next.hasThumbnail) delete index[id];
+	if (!next.description && !next.hasThumbnail && !next.genre) delete index[id];
 	else index[id] = next;
 	await blobPut(SCENE_META_PATH, JSON.stringify(index), 'application/json');
 	return index;
@@ -988,7 +1017,7 @@ app.post('/api/community-scenes', async (req, res) => {
 		const id = newSceneId();
 		const name = sanitizeSceneName(sceneData.name);
 		const now = new Date().toISOString();
-		const { creationContext, allowExport: allowExportRaw, ownerKey: _k, ownerKeyHash: _h, isOwner: _o, thumbnail: thumbRaw, description: descRaw, ...sceneFields } = sceneData;
+		const { creationContext, allowExport: allowExportRaw, ownerKey: _k, ownerKeyHash: _h, isOwner: _o, thumbnail: thumbRaw, description: descRaw, genre: genreRaw, subGenre: subGenreRaw, ...sceneFields } = sceneData;
 		const allowExport = allowExportFromBody(allowExportRaw);
 		const ownerKey = newOwnerKey();
 		const record = {
@@ -1008,6 +1037,9 @@ app.post('/api/community-scenes', async (req, res) => {
 		const description = sanitizeDescription(descRaw);
 		if (description) record.description = description;
 		else delete record.description;
+		const tagged = sanitizeGenre({ genre: genreRaw, subGenre: subGenreRaw });
+		if (tagged.error) return res.status(400).json({ error: tagged.error });
+		applyGenreToRecord(record, tagged);
 		const parsedThumb = parseThumbnailPayload(thumbRaw);
 		let hasThumbnail = false;
 		if (parsedThumb && parsedThumb.bytes) {
@@ -1015,7 +1047,7 @@ app.post('/api/community-scenes', async (req, res) => {
 			record.thumbnail = thumbStub(id, { contentType: parsedThumb.contentType, size: parsedThumb.bytes.byteLength });
 			hasThumbnail = true;
 		}
-		await updateSceneMeta(id, { description: description || '', hasThumbnail });
+		await updateSceneMeta(id, { description: description || '', hasThumbnail, ...genreListFields(record) });
 		if (creationContext != null) {
 			if (!validCreationContext(creationContext)) {
 				return res.status(400).json({ error: 'Invalid creationContext' });
@@ -1033,7 +1065,7 @@ app.post('/api/community-scenes', async (req, res) => {
 			ok: true,
 			url: blob.url,
 			pathname: blob.pathname || pathname,
-			scene: { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: record.updatedAt, size: blob.size, allowExport, description: description || '', ...listThumbFields(id, hasThumbnail) },
+			scene: { id, name, uploadedAt: now, createdAt: record.createdAt, updatedAt: record.updatedAt, size: blob.size, allowExport, description: description || '', ...genreListFields(record), ...listThumbFields(id, hasThumbnail) },
 			allowExport,
 			// Returned once; the uploader's browser keeps it to prove ownership.
 			ownerKey,
@@ -1068,6 +1100,7 @@ app.get('/api/community-scenes', async (req, res) => {
 				size: s.size,
 				allowExport: s.allowExport !== false,
 				description: descriptionForList(meta.description),
+				...genreListFields(meta),
 				...listThumbFields(s.id, hasThumb),
 				...listItemTimestamps(s),
 				...urls(s.id)
@@ -1093,6 +1126,7 @@ app.get('/api/community-scenes/:id', async (req, res) => {
 		if (thumb) pub.thumbnail = thumb;
 		else delete pub.thumbnail;
 		if (pub.description == null) pub.description = descriptionForList(record.description);
+		Object.assign(pub, genreListFields(record));
 		const hasThumb = !!(record.thumbnail && record.thumbnail.stored === 'separate') || !!thumb;
 		res.json({ ...pub, ...listThumbFields(meta.id, hasThumb), ...sceneUrls(req, meta.id) });
 	} catch (error) {
@@ -1230,7 +1264,7 @@ app.patch('/api/community-scenes/:id', async (req, res) => {
 		const id = req.params.id;
 		const meta = await findCommunityBlob(id);
 		if (!meta) return res.status(404).json({ error: 'Scene not found' });
-		if (req.body == null || (req.body.name == null && req.body.allowExport == null && req.body.description == null)) {
+		if (req.body == null || (req.body.name == null && req.body.allowExport == null && req.body.description == null && req.body.genre == null && req.body.subGenre == null)) {
 			return res.status(400).json({ error: 'Missing name' });
 		}
 		const record = await readCommunitySceneRecord(meta);
@@ -1258,6 +1292,17 @@ app.patch('/api/community-scenes/:id', async (req, res) => {
 			if (description) record.description = description;
 			else delete record.description;
 		}
+		if (req.body.genre != null || req.body.subGenre != null) {
+			const genreIn = req.body.genre != null ? req.body.genre : record.genre;
+			const subIn = req.body.subGenre != null ? req.body.subGenre : record.subGenre;
+			if (!String(genreIn || '').trim()) {
+				applyGenreToRecord(record, { genre: '', subGenre: '' });
+			} else {
+				const tagged = sanitizeGenre({ genre: genreIn, subGenre: subIn });
+				if (tagged.error) return res.status(400).json({ error: tagged.error });
+				applyGenreToRecord(record, tagged);
+			}
+		}
 		record.updatedAt = new Date().toISOString();
 		const allowExport = exportAllowed(record);
 		const newPathname = communityPathname(id, name, allowExport);
@@ -1266,14 +1311,15 @@ app.patch('/api/community-scenes/:id', async (req, res) => {
 			await blobDelete(meta.url);
 		}
 		const hasThumb = !!(record.thumbnail && record.thumbnail.stored === 'separate');
-		await updateSceneMeta(id, { description: descriptionForList(record.description), hasThumbnail: hasThumb });
+		await updateSceneMeta(id, { description: descriptionForList(record.description), hasThumbnail: hasThumb, ...genreListFields(record) });
 		res.json({
 			ok: true,
 			url: blob.url,
 			pathname: blob.pathname || newPathname,
-			scene: { id, name, uploadedAt: record.updatedAt, createdAt: record.createdAt || null, updatedAt: record.updatedAt, size: blob.size, allowExport, description: descriptionForList(record.description), ...listThumbFields(id, hasThumb) },
+			scene: { id, name, uploadedAt: record.updatedAt, createdAt: record.createdAt || null, updatedAt: record.updatedAt, size: blob.size, allowExport, description: descriptionForList(record.description), ...genreListFields(record), ...listThumbFields(id, hasThumb) },
 			allowExport,
 			description: descriptionForList(record.description),
+			...genreListFields(record),
 			...sceneUrls(req, id)
 		});
 	} catch (error) {

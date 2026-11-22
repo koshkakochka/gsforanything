@@ -54,7 +54,7 @@
 		   the end of the list from chaining into a page pan. */
 		#desktop-chat-messages,
 		#dchat-theme-chat-messages,
-		#dchat-community-list,
+		#dchat-community-list, #dchat-community-genres-list,
 		#dchat-themes-list {
 			touch-action: pan-y;
 			overscroll-behavior: contain;
@@ -409,6 +409,30 @@
 			visibility: visible !important;
 			pointer-events: none !important;
 			z-index: 0 !important;
+		}
+		/* Native HTML-in-Canvas host: keep the canvas in the viewport so the
+		   browser can snapshot it (off-screen / opacity:0 yields no paint
+		   record), but behind the WebGL view so it is not seen. Children use
+		   the same .html-in-canvas-source sizing, without the off-screen
+		   translation the walker uses when it is not a canvas child. */
+		canvas.gs-html-in-canvas-host {
+			position: fixed !important;
+			left: 0 !important;
+			top: 0 !important;
+			z-index: -1 !important;
+			margin: 0 !important;
+			border: none !important;
+			pointer-events: none !important;
+			background: transparent !important;
+		}
+		canvas.gs-html-in-canvas-host > .html-in-canvas-source {
+			position: relative !important;
+			left: auto !important;
+			top: auto !important;
+			right: auto !important;
+			bottom: auto !important;
+			transform: none !important;
+			z-index: auto !important;
 		}
 		/* Main menu: one fixed size in VR (not the desktop window size), so the
 		   in-world window is always 1.05 x 1.23 m with the same text size. */
@@ -945,6 +969,22 @@
 		html.gs-phone #dchat-origin-gizmo { width: 200px; height: 200px; }
 		html.gs-phone .dchat-origin-fields input[type="number"] { width: 88px; }
 
+		/* Environment tab: render settings (distance + foveation) */
+		.dchat-render-distance-row { display: flex; align-items: center; gap: 8px; }
+		.dchat-foveation-label {
+			display: flex; align-items: center; gap: 8px; margin-top: 12px;
+			font-size: 13px; color: rgba(255, 255, 255, 0.85); cursor: pointer; user-select: none;
+		}
+		.dchat-foveation-label input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; margin: 0; accent-color: #818cf8; }
+		#desktop-chat #dchat-render-distance-input {
+			width: 96px; box-sizing: border-box; padding: 7px 8px; border-radius: 8px;
+			border: 1px solid var(--dchat-field-border, rgba(255,255,255,0.5));
+			background: var(--dchat-input-bg); color: var(--dchat-text);
+			font: 600 13px/1.3 ui-monospace, Menlo, monospace; text-align: right;
+		}
+		#desktop-chat #dchat-render-distance-input.invalid { border-color: #f87171; }
+		.dchat-render-distance-unit { font-size: 13px; color: rgba(255, 255, 255, 0.8); }
+
 		.dchat-section-label {
 			font-size: 11px;
 			text-transform: uppercase;
@@ -953,9 +993,8 @@
 			font-weight: 700;
 		}
 
-		/* #dchat-env-mode is populated at runtime by menuSystem.js (mountButtonsToDOM)
-		   with a live SVG - see ENV_MODE_BUTTONS in main.js. Its buttons carry
-		   their own colors via the shared button-variant system. */
+		/* #dchat-env-mode-section (AR / VR / Exit VR) is kept in the DOM but
+		   hidden: those controls live in the window top bar, not this tab. */
 
 		.dchat-color-row { display: flex; align-items: stretch; }
 
@@ -1512,10 +1551,12 @@
 			color: var(--dchat-text-muted, rgba(255,255,255,0.45));
 		}
 		#dchat-community-section-scenes > #dchat-community-buttons,
-		#dchat-community-section-scenes > .dchat-community-loadhint {
+		#dchat-community-section-scenes > .dchat-community-loadhint,
+		#dchat-community-section-genres > #dchat-community-genres-filters,
+		#dchat-community-section-genres > .dchat-community-loadhint {
 			flex: 0 0 auto;
 		}
-		#dchat-community-list {
+		#dchat-community-list, #dchat-community-genres-list {
 			flex: 1 1 auto;
 			min-height: 120px;
 			overflow-y: auto;
@@ -1527,13 +1568,13 @@
 			grid-auto-rows: min-content;
 			margin-top: 10px;
 		}
-		#dchat-community-list::-webkit-scrollbar { width: 8px; }
-		#dchat-community-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
-		#dchat-community-list > .dchat-scene-empty {
+		#dchat-community-list::-webkit-scrollbar, #dchat-community-genres-list::-webkit-scrollbar { width: 8px; }
+		#dchat-community-list::-webkit-scrollbar-thumb, #dchat-community-genres-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+		#dchat-community-list > .dchat-scene-empty, #dchat-community-genres-list > .dchat-scene-empty {
 			grid-column: 1 / -1;
 		}
 		@media (max-width: 600px) {
-			#dchat-community-list { grid-template-columns: 1fr; }
+			#dchat-community-list, #dchat-community-genres-list { grid-template-columns: 1fr; }
 		}
 
 		#dchat-current-scene {
@@ -1873,6 +1914,7 @@
 			background: rgba(0, 0, 0, 0.6);
 			pointer-events: auto;
 		}
+		#export-modal.visible { display: flex; }
 
 		#export-modal-inner {
 			background: rgba(25, 25, 40, 0.97);
@@ -2025,6 +2067,32 @@
 			pointer-events: auto;
 		}
 		#share-modal.visible, #rename-modal.visible { display: flex; }
+		#export-modal.gs-modal-xr,
+		#share-modal.gs-modal-xr,
+		#rename-modal.gs-modal-xr,
+		#gs-version-modal.gs-modal-xr {
+			background: none;
+			pointer-events: none;
+			inset: auto;
+			top: auto; left: auto; right: auto; bottom: auto;
+			width: 0;
+			height: 0;
+			padding: 0;
+		}
+		#export-modal.gs-modal-xr #export-modal-inner,
+		#share-modal.gs-modal-xr #share-modal-inner,
+		#rename-modal.gs-modal-xr #rename-modal-inner,
+		#gs-version-modal.gs-modal-xr #gs-version-modal-inner {
+			pointer-events: auto;
+		}
+		#export-modal-inner .gs-modal-title,
+		#share-modal-inner .gs-modal-title,
+		#rename-modal-inner .gs-modal-title,
+		#gs-version-modal-inner .gs-modal-title {
+			margin: 0 0 16px;
+			font-size: 18px;
+		}
+
 		#share-modal-inner, #rename-modal-inner {
 			background: rgba(30, 30, 40, 0.98);
 			border-radius: 16px;
@@ -2198,7 +2266,7 @@
 		}
 		/* Community scene tiles: large thumbnail, title, description, actions.
 		   Scoped so Scenes and Community Themes keep the single-row item layout. */
-		#dchat-community-list > .dchat-community-scene {
+		#dchat-community-list > .dchat-community-scene, #dchat-community-genres-list > .dchat-community-scene {
 			display: flex;
 			flex-direction: column;
 			align-items: stretch;
@@ -2214,14 +2282,14 @@
 			box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset;
 			transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 		}
-		#dchat-community-list > .dchat-community-scene:hover,
-		#dchat-community-list > .dchat-community-scene:focus-within {
+		#dchat-community-list > .dchat-community-scene:hover, #dchat-community-genres-list > .dchat-community-scene:hover,
+		#dchat-community-list > .dchat-community-scene:focus-within, #dchat-community-genres-list > .dchat-community-scene:focus-within {
 			transform: translateY(-2px);
 			border-color: var(--dchat-selected-border, #c7d2fe);
 			box-shadow: 0 10px 28px rgba(0,0,0,0.4), 0 0 0 1px rgba(199,210,254,0.3);
 			background: rgba(255, 255, 255, 0.08);
 		}
-		#dchat-community-list > .dchat-community-scene.active {
+		#dchat-community-list > .dchat-community-scene.active, #dchat-community-genres-list > .dchat-community-scene.active {
 			border-color: var(--dchat-selected-border, #c7d2fe);
 			background: rgba(99, 102, 241, 0.18);
 			box-shadow: 0 0 0 1px rgba(199,210,254,0.35), 0 8px 22px rgba(0,0,0,0.28);
@@ -2274,7 +2342,7 @@
 			flex-direction: column;
 			gap: 3px;
 		}
-		#dchat-community-list .dchat-community-scene .dchat-scene-name {
+		#dchat-community-list .dchat-community-scene .dchat-scene-name, #dchat-community-genres-list .dchat-community-scene .dchat-scene-name {
 			white-space: normal;
 			font-size: 14px;
 			font-weight: 700;
@@ -2289,6 +2357,63 @@
 			flex-direction: column;
 			gap: 6px;
 			min-width: 0;
+		}
+		.dchat-community-genre-wrap {
+			display: flex;
+			flex-direction: column;
+			gap: 6px;
+			min-width: 0;
+		}
+		.dchat-community-genre-wrap .gs-genre-picker {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 8px 12px;
+		}
+		.dchat-community-genre-wrap .gs-genre-field {
+			display: flex;
+			flex-direction: column;
+			gap: 3px;
+			flex: 1 1 140px;
+			font-size: 12px;
+		}
+		.dchat-community-genre-wrap .gs-genre-label { font-weight: 600; color: rgba(255,255,255,0.82); }
+		.dchat-community-genre-wrap .gs-genre-select {
+			box-sizing: border-box;
+			width: 100%;
+			min-height: 36px;
+			padding: 6px 8px;
+			border-radius: 8px;
+			border: 1px solid rgba(255,255,255,0.22);
+			background: #2c2e3e;
+			color: #fff;
+			font: 400 12.5px/1.3 inherit;
+		}
+		#dchat-community-genres-filters {
+			display: flex;
+			flex-direction: column;
+			gap: 8px;
+			padding: 0 0 10px;
+			flex-shrink: 0;
+		}
+		#dchat-community-genres-filters .gs-genre-filter-row {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 6px;
+		}
+		#dchat-community-genres-filters .gs-genre-filter-btn {
+			border: 1px solid #6d7088;
+			background: #3a3c4e;
+			color: #fff;
+			font-size: 12px;
+			font-weight: 600;
+			padding: 6px 10px;
+			border-radius: 8px;
+			cursor: pointer;
+			min-height: 32px;
+		}
+		#dchat-community-genres-filters .gs-genre-filter-btn.active {
+			background: linear-gradient(135deg, var(--dchat-accent-2, #4f46e5), var(--dchat-accent, #6d28d9));
+			border-color: var(--dchat-selected-border, #c7d2fe);
 		}
 		.dchat-community-desc {
 			display: block;
@@ -2368,7 +2493,7 @@
 			min-width: 0;
 		}
 
-		/* Nested sub-tabs (Chat Scene|Theme, Community Scenes|Themes) */
+		/* Nested sub-tabs (Chat Scene|Theme, Community Scenes|Themes|Genres) */
 		#dchat-chat-subtabs,
 		#dchat-community-subtabs {
 			display: flex;
@@ -3302,7 +3427,7 @@
 					</div>
 					<div id="dchat-dim-note" class="dchat-env-note"></div>
 				</div>
-				<div>
+				<div id="dchat-env-mode-section" hidden>
 					<div class="dchat-section-label" style="margin-bottom:6px">Environment</div>
 					<div id="dchat-env-mode"></div>
 				</div>
@@ -3354,6 +3479,27 @@
 						Reset returns to the start view (4 m back at eye height; Map and Orbit look at the scene origin).
 					</div>
 					<button id="dchat-reset-camera" class="dchat-btn secondary" style="width:100%">Reset Camera View</button>
+				</div>
+				<div id="dchat-render-distance">
+					<div class="dchat-section-label" style="margin-bottom:8px">Render settings</div>
+					<div style="margin-bottom:8px">
+						<label for="dchat-render-distance-input" style="display:block;font-size:13px;color:rgba(255,255,255,0.85);margin-bottom:6px">Render distance</label>
+						<div class="dchat-env-note" style="margin-bottom:8px">
+							<span id="dchat-render-distance-help">How far the view draws, in metres (default 100). In a headset this is the distance from your eyes. The far plane still extends if the scene is larger.</span>
+						</div>
+						<div class="dchat-render-distance-row">
+							<input type="text" id="dchat-render-distance-input" inputmode="decimal" autocomplete="off" spellcheck="false"
+								aria-label="Render distance in metres" aria-describedby="dchat-render-distance-help" value="100" />
+							<span class="dchat-render-distance-unit">m</span>
+						</div>
+					</div>
+					<label class="dchat-foveation-label" for="dchat-foveation">
+						<input type="checkbox" id="dchat-foveation" checked aria-describedby="dchat-foveation-help" />
+						Foveated rendering
+					</label>
+					<div class="dchat-env-note" id="dchat-foveation-help" style="margin-top:6px">
+						In a headset, draw the edges at a lower resolution so the centre stays sharp and the frame rate stays higher. Turn off for full-resolution edges.
+					</div>
 				</div>
 				<div id="dchat-origin">
 					<div class="dchat-section-label" style="margin-bottom:6px">Origin rotation</div>
@@ -3409,6 +3555,7 @@
 			<div id="dchat-community" style="display:flex;flex-direction:column;flex:1;min-height:0">
 				<div id="dchat-community-subtabs">
 					<button type="button" class="dchat-subtab active" data-community-section="scenes">Scenes</button>
+					<button type="button" class="dchat-subtab" data-community-section="genres">Genres</button>
 					<button type="button" class="dchat-subtab" data-community-section="themes">Themes</button>
 				</div>
 
@@ -3416,6 +3563,12 @@
 					<div id="dchat-community-buttons"></div>
 					<p class="dchat-community-loadhint">Loading a scene replaces the current one, chat history included.</p>
 					<div id="dchat-community-list"></div>
+				</div>
+
+				<div id="dchat-community-section-genres" class="dchat-community-section">
+					<div id="dchat-community-genres-filters" role="navigation" aria-label="Browse by genre"></div>
+					<p class="dchat-community-loadhint">Pick a genre, then a sub-genre, to filter Community scenes. Uncategorized scenes have no genre yet — anyone can tag a tile.</p>
+					<div id="dchat-community-genres-list"></div>
 				</div>
 
 				<div id="dchat-community-section-themes" class="dchat-community-section">
@@ -3638,7 +3791,9 @@
 	{
 		"imports": {
 			"three": "./vendor_modules/three/build/three.module.js",
-			"three/examples/jsm/": "./vendor_modules/three/examples/jsm/"
+			"three/examples/jsm/": "./vendor_modules/three/examples/jsm/",
+			"three/addons/": "./vendor_modules/three/examples/jsm/",
+			"@sparkjsdev/spark": "./vendor_modules/spark/spark.module.js"
 		}
 	}
 	</script>

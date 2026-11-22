@@ -23,10 +23,10 @@ DEV_CUSTOM_HOST="dev.gsforanything.com"
 PROD_HOSTS=(
   gsforanything.com
   www.gsforanything.com
-  gs.krossruiz.workers.dev
   vrclaudeinterface.vercel.app
 )
-# Canonical smoke hosts (3 Cloudflare production URLs + the Vercel backup).
+# Canonical smoke hosts (Cloudflare production custom domains + the Vercel backup).
+# *.workers.dev is not a production route (workers_dev is false).
 # Smoke scenes differ per platform because scene ids are not shared across
 # stores. smoke-gs.py --scene checks /s/ID, /api/community-scenes/ID and that
 # the retired /embed/ID redirects (302) to /s/ID.

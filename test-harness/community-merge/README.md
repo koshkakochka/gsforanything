@@ -1,6 +1,6 @@
 # Community scene merge – headless tests
 
-Tests for `site-source/communityMerge.js` (🔀 Merge scenes in the Community tab).
+Tests for `site-source/communityMerge.js` (Merge buttons on Community tiles; the top-level Merge scenes button is removed).
 
 * `unit.mjs` – pure functions: literal tokenizer, asset classification, request building
   (no base64 in the prompt), `@gs-keep` / token expansion, unknown-token errors.
@@ -10,7 +10,7 @@ Tests for `site-source/communityMerge.js` (🔀 Merge scenes in the Community ta
 * `test.mjs` – puppeteer-core + headless Chrome (swiftshader), desktop and phone viewports.
   `/api/chat`, `/api/fix-code` and `/api/backends` are intercepted with a simulated AI, so no
   real tokens are used. It seeds two Community scenes (A with a creation-context envelope, B with
-  a p5 sketch PNG and a data-URL texture), picks them via row buttons and the search picker,
+  a p5 sketch PNG and a data-URL texture), picks them via the Merge button on each tile and the search picker,
   checks the outgoing payload (asset placeholders, no base64), byte-exact substitution, keep markers,
   auto-fix on tokenized code, new-scene load, originals untouched, parents and prompt in the
   creation context, credits on publish, reopen, error paths and no console errors.

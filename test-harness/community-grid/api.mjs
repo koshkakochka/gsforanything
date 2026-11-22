@@ -128,6 +128,29 @@ async function runHost(H, fetchFn) {
   // name-only PATCH still works (existing, no owner required)
   const renamed = await patch(described.id, { name: 'renamed-thumb' });
   ok(`${H} rename still works`, renamed.status === 200 && (renamed.scene?.name === 'renamed-thumb'), JSON.stringify(renamed).slice(0, 200));
+
+  // --- genres ---
+  ok(`${H} list: existing scene is uncategorized`, blankList && (blankList.genre || '') === '' && (blankList.subGenre || '') === '', JSON.stringify(blankList && { genre: blankList.genre, subGenre: blankList.subGenre }));
+  const taggedUp = await post({ version: 1, name: 'genre-scene', codeBlocks: ['1'], genre: 'Games', subGenre: 'Action' });
+  ok(`${H} upload with genre+sub stores ids`, taggedUp.ok && taggedUp.scene?.genre === 'games' && taggedUp.scene?.subGenre === 'action', JSON.stringify(taggedUp.scene || taggedUp).slice(0, 240));
+  const taggedList = (await list()).scenes.find((s) => s.id === taggedUp.id);
+  ok(`${H} list includes genre fields`, taggedList && taggedList.genre === 'games' && taggedList.subGenre === 'action', JSON.stringify(taggedList));
+  const taggedGet = await get(taggedUp.id);
+  ok(`${H} GET record includes genre`, taggedGet.genre === 'games' && taggedGet.subGenre === 'action', JSON.stringify({ genre: taggedGet.genre, subGenre: taggedGet.subGenre }));
+  const badGenre = await post({ version: 1, name: 'bad-genre', codeBlocks: ['1'], genre: 'not-a-genre', subGenre: 'action' });
+  ok(`${H} invalid genre on upload is 400`, badGenre.status === 400, JSON.stringify(badGenre).slice(0, 200));
+  const badSub = await post({ version: 1, name: 'bad-sub', codeBlocks: ['1'], genre: 'games', subGenre: 'shader-demos' });
+  ok(`${H} invalid sub-genre on upload is 400`, badSub.status === 400, JSON.stringify(badSub).slice(0, 200));
+  const patched = await patch(blank.id, { genre: 'interactive-experiences', subGenre: 'educational' });
+  ok(`${H} PATCH genre (no owner key) works`, patched.status === 200 && patched.scene?.genre === 'interactive-experiences' && patched.subGenre === 'educational', JSON.stringify(patched).slice(0, 240));
+  const recTagged = await get(blank.id);
+  ok(`${H} GET after PATCH has new genre`, recTagged.genre === 'interactive-experiences' && recTagged.subGenre === 'educational');
+  const badPatch = await patch(blank.id, { genre: 'games', subGenre: 'nope' });
+  ok(`${H} invalid sub-genre PATCH is 400`, badPatch.status === 400, JSON.stringify(badPatch).slice(0, 200));
+  const stillTagged = await get(blank.id);
+  ok(`${H} 400 PATCH did not change genre`, stillTagged.genre === 'interactive-experiences');
+  const clearedGenre = await patch(blank.id, { genre: '', subGenre: '' });
+  ok(`${H} PATCH empty genre clears to uncategorized`, clearedGenre.status === 200 && (clearedGenre.scene?.genre || '') === '', JSON.stringify(clearedGenre.scene || clearedGenre).slice(0, 200));
 }
 
 // In-process Worker (mock KV — never production).
