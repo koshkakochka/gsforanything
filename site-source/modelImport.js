@@ -60,6 +60,10 @@ let dragging = false;
 let sparkMod = null;
 let sparkRenderer = null;
 let sparkRendererPromise = null;
+// Sort at most ~30 Hz: a 1M-splat sort every XR frame is a large CPU cost,
+// and 33 ms is well under noticeable popping while turning on a Quest 3.
+export const SPARK_MIN_SORT_MS = 33;
+
 const xrGrabs = { left: null, right: null }; // { id, hand, startObjPos, startObjQuat, startObjScale, startCtrlPos, startCtrlQuat, invStartCtrlQuat, offset }
 let twoHand = null; // { id, startDist, startScale, startMid, startQuat }
 const _raycaster = new THREE.Raycaster();
@@ -334,7 +338,8 @@ async function ensureSpark() {
 			const scene = hooks.scene || window.scene;
 			const renderer = hooks.renderer || window.renderer;
 			if (!sparkRenderer && scene && renderer && mod.SparkRenderer) {
-				sparkRenderer = new mod.SparkRenderer({ renderer });
+				sparkRenderer = new mod.SparkRenderer({ renderer, minSortIntervalMs: SPARK_MIN_SORT_MS });
+				sparkRenderer.minSortIntervalMs = SPARK_MIN_SORT_MS;
 				sparkRenderer.name = 'gsSparkRenderer';
 				sparkRenderer.userData.gsNoExport = true;
 				scene.add(sparkRenderer);
@@ -1304,6 +1309,10 @@ function api() {
 		applyTransform,
 		persist: (id) => persistHandle(models.get(id)),
 		isDragging: () => dragging,
+		spark: {
+			get renderer() { return sparkRenderer; },
+			minSortIntervalMs: SPARK_MIN_SORT_MS
+		},
 		xr: {
 			beginGrab: xrBeginGrab,
 			endGrab: xrEndGrab,
