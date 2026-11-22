@@ -183,6 +183,12 @@ const splatInfo = await p.evaluate(() => {
 });
 check('PLY Gaussian splat imported', !!(splatInfo && splatInfo.splat && splatInfo.numSplats >= 8), splatInfo);
 check('imported splat is a selectable model', !!(splatInfo && splatInfo.id && splatInfo.transform), splatInfo);
+const sortMs = await p.evaluate(() => {
+	const spark = window.scene?.getObjectByName('gsSparkRenderer');
+	return { hooked: window.gsModelImport?.spark?.minSortIntervalMs, live: spark && spark.minSortIntervalMs };
+});
+check('Spark splat sort is capped at ~33 ms (not every frame)', sortMs.hooked === 33 && sortMs.live === 33, sortMs);
+
 
 // Frame the splat and take the one screenshot for this change.
 await p.evaluate(async () => {
