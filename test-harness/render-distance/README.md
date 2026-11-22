@@ -13,6 +13,9 @@ Checks:
 - marker boxes at 50 m, 98 m and 140 m from the VR eye: 98 m is drawn everywhere, 140 m nowhere
 - scene code `camera.far = 1000` applies to VR and desktop, and going back to 100 works
 - the markers opt out of the scene fit (`userData.gsIgnoreBounds`) for the checks above; then they count: the far plane reaches the 140 m marker on desktop and in VR (session `depthFar` > 140), and goes back to 100 + offset when they are removed (see `test-harness/dome-fit`)
+- the Environment tab has a Render distance text field (default 100 m, range 1–100000)
+- typing a value applies on Enter/blur, stays in sync, is stored in localStorage and on the scene, and updates VR `depthFar`
+- invalid input is rejected; values above the max are clamped
 - no console errors
 
 ```bash

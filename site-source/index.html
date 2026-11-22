@@ -969,6 +969,17 @@
 		html.gs-phone #dchat-origin-gizmo { width: 200px; height: 200px; }
 		html.gs-phone .dchat-origin-fields input[type="number"] { width: 88px; }
 
+		/* Environment tab: render distance (metres) */
+		.dchat-render-distance-row { display: flex; align-items: center; gap: 8px; }
+		#desktop-chat #dchat-render-distance-input {
+			width: 96px; box-sizing: border-box; padding: 7px 8px; border-radius: 8px;
+			border: 1px solid var(--dchat-field-border, rgba(255,255,255,0.5));
+			background: var(--dchat-input-bg); color: var(--dchat-text);
+			font: 600 13px/1.3 ui-monospace, Menlo, monospace; text-align: right;
+		}
+		#desktop-chat #dchat-render-distance-input.invalid { border-color: #f87171; }
+		.dchat-render-distance-unit { font-size: 13px; color: rgba(255, 255, 255, 0.8); }
+
 		.dchat-section-label {
 			font-size: 11px;
 			text-transform: uppercase;
@@ -3436,6 +3447,19 @@
 						Reset returns to the start view (4 m back at eye height; Map and Orbit look at the scene origin).
 					</div>
 					<button id="dchat-reset-camera" class="dchat-btn secondary" style="width:100%">Reset Camera View</button>
+				</div>
+				<div id="dchat-render-distance">
+					<div class="dchat-section-label" style="margin-bottom:8px">
+						<label for="dchat-render-distance-input">Render distance</label>
+					</div>
+					<div class="dchat-env-note" style="margin-bottom:8px">
+						<span id="dchat-render-distance-help">How far the view draws, in metres (default 100). In a headset this is the distance from your eyes. The far plane still extends if the scene is larger.</span>
+					</div>
+					<div class="dchat-render-distance-row">
+						<input type="text" id="dchat-render-distance-input" inputmode="decimal" autocomplete="off" spellcheck="false"
+							aria-label="Render distance in metres" aria-describedby="dchat-render-distance-help" value="100" />
+						<span class="dchat-render-distance-unit">m</span>
+					</div>
 				</div>
 				<div id="dchat-origin">
 					<div class="dchat-section-label" style="margin-bottom:6px">Origin rotation</div>

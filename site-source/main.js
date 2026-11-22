@@ -68,6 +68,17 @@ scene.background = null; // transparent for passthrough
 // the headset. See syncRenderDistance() for how desktop matches it.
 const RENDER_NEAR = 0.1;
 const RENDER_FAR = 100;
+const RENDER_FAR_MIN = 1;
+const RENDER_FAR_MAX = 100000;
+const RENDER_DISTANCE_STORAGE_KEY = 'gs.renderDistance';
+function clampRenderDistance(v) {
+	const t = String(v ?? '').trim().toLowerCase().replace(',', '.');
+	const m = t.match(/^(-?\d*\.?\d+)\s*m?$/);
+	if (!m) return null;
+	const n = parseFloat(m[1]);
+	if (!Number.isFinite(n)) return null;
+	return Math.min(RENDER_FAR_MAX, Math.max(RENDER_FAR_MIN, n));
+}
 const RENDER_EYE_HEIGHT = 1.6; // where the VR view starts in the player rig (local-floor)
 const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, RENDER_NEAR, RENDER_FAR);
 camera.position.set(0, 1.6, 0);
@@ -2999,6 +3010,7 @@ function buildSceneData(name) {
 		...environmentHdriForScene(), // { environmentHdri } when an HDRI is active (URL ones; files on upload)
 		codeBlocks,
 		...originRotationForScene(), // { originRotation } only when rotated
+		...renderDistanceForScene(), // { renderDistance } when not the default 100 m
 		...customControls.forScene(), // { customControls: { schemeId: changed values } } when set
 		...GSMerge.sceneCredits(activeScene) // mergedFrom / credits of a merged scene
 	};
@@ -3098,6 +3110,7 @@ async function loadSceneData(data, fallbackName, { key, source = 'file', extra =
 	setActiveScene(sc);
 	const hdriApplied = applySceneEnvironmentHdri(data);
 	applySceneOriginRotation(data);
+	applySceneRenderDistance(data);
 	customControls.setPendingSceneValues(data); // its code re-defines the schemes with these values
 	await runLoadedSceneCode(sc);
 	customControls.setPendingSceneValues(null);
@@ -6313,6 +6326,11 @@ let renderFarBase = RENDER_FAR;
 let renderFarApplied = RENDER_FAR;
 let renderNearBase = RENDER_NEAR;
 let renderNearApplied = RENDER_NEAR;
+try {
+	const savedFar = localStorage.getItem(RENDER_DISTANCE_STORAGE_KEY);
+	const n = savedFar != null ? clampRenderDistance(savedFar) : null;
+	if (n != null) renderFarBase = n;
+} catch { /* storage blocked */ }
 const RENDER_NEAR_MAX = 0.5;
 const RENDER_DEPTH_RATIO = 100000;
 const _fitViewer = new THREE.Vector3();
@@ -6344,8 +6362,50 @@ function desktopRenderFarOffset() {
 	camera.getWorldPosition(_renderCamPos);
 	return _renderCamPos.distanceTo(_renderEye);
 }
+function setRenderDistance(v, { persist = true } = {}) {
+	const n = clampRenderDistance(v);
+	if (n == null) return renderFarBase;
+	// Don't treat the current applied far as a scene-code change when the
+	// Environment tab (or a loaded scene) sets a new base.
+	renderFarApplied = camera.far;
+	renderFarBase = n;
+	syncRenderDistance();
+	if (persist) {
+		try {
+			if (n === RENDER_FAR) localStorage.removeItem(RENDER_DISTANCE_STORAGE_KEY);
+			else localStorage.setItem(RENDER_DISTANCE_STORAGE_KEY, String(n));
+		} catch { /* storage blocked */ }
+	}
+	syncRenderDistanceInput();
+	if (renderer?.xr?.isPresenting) vrWindows?.byName('menu')?.markDirty();
+	return n;
+}
+
+function syncRenderDistanceInput() {
+	const input = document.getElementById('dchat-render-distance-input');
+	if (!input || document.activeElement === input) return;
+	const v = renderFarBase;
+	const shown = Number.isInteger(v) ? String(v) : String(Math.round(v * 1000) / 1000);
+	if (input.value !== shown) input.value = shown;
+	input.classList.remove('invalid');
+	input.setAttribute('aria-valuenow', String(v));
+}
+
+function applySceneRenderDistance(data) {
+	if (!data || data.renderDistance == null || data.renderDistance === '') return;
+	const n = clampRenderDistance(data.renderDistance);
+	if (n != null) setRenderDistance(n);
+}
+
+function renderDistanceForScene() {
+	return renderFarBase !== RENDER_FAR ? { renderDistance: renderFarBase } : {};
+}
+
 function syncRenderDistance() {
-	if (camera.far !== renderFarApplied) renderFarBase = camera.far; // changed by scene code
+	if (camera.far !== renderFarApplied) {
+		renderFarBase = camera.far; // changed by scene code
+		syncRenderDistanceInput();
+	}
 	if (camera.near !== renderNearApplied) renderNearBase = camera.near;
 	const far = Math.max(renderFarBase + desktopRenderFarOffset(), sceneFitFar());
 	const near = Math.max(renderNearBase, Math.min(RENDER_NEAR_MAX, far / RENDER_DEPTH_RATIO));
@@ -6379,14 +6439,49 @@ window.gsRenderDistance = {
 	get near() { return camera.near; },
 	/** Far distance from the viewer in VR (and the desktop base). */
 	get far() { return renderFarBase; },
+	set far(v) { setRenderDistance(v); },
+	set: (v, opts) => setRenderDistance(v, opts),
 	/** Far plane the windowed camera uses right now (base + offset from the VR eye). */
 	get desktopFar() { return renderFarBase + desktopRenderFarOffset(); },
 	/** Far distance that reaches all scene content and domes from the viewer (sceneFit.js). */
 	get sceneFar() { return sceneFitFar(); },
-	defaults: { near: RENDER_NEAR, far: RENDER_FAR }
+	defaults: { near: RENDER_NEAR, far: RENDER_FAR },
+	min: RENDER_FAR_MIN,
+	max: RENDER_FAR_MAX,
+	forScene: renderDistanceForScene,
+	applyFromScene: applySceneRenderDistance
 };
 
 let modelTransformDragging = false;
+{
+	const input = document.getElementById('dchat-render-distance-input');
+	if (input) {
+		const commit = () => {
+			const n = clampRenderDistance(input.value);
+			if (n == null) {
+				input.classList.add('invalid');
+				syncRenderDistanceInput();
+				return;
+			}
+			input.classList.remove('invalid');
+			setRenderDistance(n);
+		};
+		input.addEventListener('input', () => {
+			const n = clampRenderDistance(input.value);
+			input.classList.toggle('invalid', n == null && input.value.trim() !== '');
+		});
+		input.addEventListener('change', commit);
+		input.addEventListener('blur', commit);
+		input.addEventListener('keydown', (e) => {
+			e.stopPropagation();
+			if (e.key === 'Enter') { e.preventDefault(); commit(); input.blur(); }
+			else if (e.key === 'Escape') { e.preventDefault(); syncRenderDistanceInput(); input.blur(); }
+		});
+		input.addEventListener('focus', () => { input.select(); gsKeyBindings?.keepSelection?.(input); });
+		syncRenderDistanceInput();
+	}
+}
+
 function cameraControlsSuspended() {
 	return !!(renderer.xr.isPresenting || mobileXRMode || modelTransformDragging);
 }
@@ -7129,7 +7224,7 @@ function originRotationForScene() {
 
 /** Signature for "has this scene changed since it was shared?" */
 function shareSignature(codeBlocks) {
-	return JSON.stringify([codeBlocks, originRotationActive() ? originRotation.rotation : null]);
+	return JSON.stringify([codeBlocks, originRotationActive() ? originRotation.rotation : null, renderFarBase !== RENDER_FAR ? renderFarBase : null]);
 }
 
 window.gsOrigin = {
