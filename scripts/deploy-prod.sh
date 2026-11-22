@@ -43,7 +43,7 @@ fi
 
 if [[ "$CONFIRM" -ne 1 ]]; then
   echo "error: refusing to deploy production without --confirm" >&2
-  echo "This deploys Worker $PROD_WORKER_NAME to gsforanything.com, www.gsforanything.com, and gs.krossruiz.workers.dev." >&2
+  echo "This deploys Worker $PROD_WORKER_NAME to gsforanything.com and www.gsforanything.com." >&2
   echo "Usage: scripts/deploy-prod.sh --confirm" >&2
   exit 2
 fi
@@ -88,7 +88,7 @@ fi
 
 echo "Smoke-checking Cloudflare production hosts + scene ${PROD_CF_SCENE} (share page, API, /embed redirect)…"
 python3 "$SCRIPT_DIR/smoke-gs.py" \
-  gsforanything.com www.gsforanything.com gs.krossruiz.workers.dev \
+  gsforanything.com www.gsforanything.com \
   --scene "$PROD_CF_SCENE"
 
 echo "Smoke-checking Vercel backup + scene ${PROD_VERCEL_SCENE} (share page, API, /embed redirect)…"
