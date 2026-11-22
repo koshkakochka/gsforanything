@@ -28,6 +28,7 @@
 // window.gsGetWorldContentParent, window.camera / scene / renderer, GS_DEPS.
 // ============================================================================
 
+import { openGsModal } from './gsModal.js';
 import { unzipSync, strFromU8 } from 'three/examples/jsm/libs/fflate.module.js';
 
 const TEXT_EXT = /\.(m?js|cjs|html?|css|json|txt|csv|tsv|xml|svg|glsl|vert|frag|vs|fs|md|obj|mtl|geojson|ya?ml)$/i;
@@ -1064,7 +1065,7 @@ async function importProject(project, how) {
 // ---------------------------------------------------------------------------
 const CSS = `
 #gs-p5i-modal{position:fixed;inset:0;z-index:100000;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);font-family:var(--dchat-font,system-ui,sans-serif)}
-#gs-p5i-modal.open{display:flex}
+#gs-p5i-modal.open,#gs-p5i-modal.visible,#gs-p5i-modal.gs-modal-root.visible{display:flex}#gs-p5i-modal.gs-modal-xr{background:none;pointer-events:none;inset:auto;width:0;height:0;padding:0}#gs-p5i-modal.gs-modal-xr #gs-p5i-box{pointer-events:auto}
 #gs-p5i-box{width:min(560px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;box-sizing:border-box;padding:16px;border-radius:14px;background:#1d1e2a;color:#fff;border:1px solid rgba(255,255,255,.18);box-shadow:0 12px 40px rgba(0,0,0,.5)}
 #gs-p5i-box h3{margin:0 0 4px;font-size:16px}
 #gs-p5i-box .gs-p5i-sub{font-size:12px;color:rgba(255,255,255,.6);margin-bottom:10px;line-height:1.4}
@@ -1134,9 +1135,11 @@ function renderList() {
 	}
 }
 
+let p5Body = null;
+let p5Handle = null;
 function buildModal() {
-	if (modal) return modal;
-	document.head.appendChild(el('style', { id: 'gs-p5i-style', text: CSS }));
+	if (p5Body) return p5Body;
+	if (!document.getElementById('gs-p5i-style')) document.head.appendChild(el('style', { id: 'gs-p5i-style', text: CSS }));
 	const tabBtn = (id, label) => el('button', { type: 'button', class: 'dchat-btn secondary', 'data-p5i-tab': id, role: 'tab', text: label, onclick: () => selectTab(id) });
 	const pastePane = el('div', { class: 'gs-p5i-pane', 'data-p5i-pane': 'paste' }, [
 		el('input', { type: 'text', id: 'gs-p5i-name', placeholder: 'Name (optional)', autocomplete: 'off' }),
@@ -1159,25 +1162,14 @@ function buildModal() {
 		el('input', { type: 'url', id: 'gs-p5i-url', placeholder: 'https://editor.p5js.org/user/sketches/abc123', autocomplete: 'off' }),
 		el('div', { class: 'gs-p5i-hint', text: 'A p5 editor sketch link, an OpenProcessing sketch, a GitHub file (github.com/…/blob/…) or folder, a raw .js file, or an index.html page.' })
 	]);
-	const box = el('div', { id: 'gs-p5i-box', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'gs-p5i-title' }, [
-		el('h3', { id: 'gs-p5i-title', text: 'Import p5.js sketch' }),
+	p5Body = el('div', {}, [
 		el('div', { class: 'gs-p5i-sub', text: 'The sketch runs on a panel in front of you (also in VR) and is saved with the scene as a code block.' }),
 		el('div', { id: 'gs-p5i-tabs', role: 'tablist' }, [tabBtn('paste', 'Paste'), tabBtn('file', 'File'), tabBtn('url', 'URL')]),
 		pastePane, filePane, urlPane,
 		el('div', { id: 'gs-p5i-status', role: 'status', 'aria-live': 'polite' }),
-		el('div', { id: 'gs-p5i-list' }),
-		el('div', { id: 'gs-p5i-actions' }, [
-			el('button', { type: 'button', class: 'dchat-btn secondary', id: 'gs-p5i-close', text: 'Close', onclick: closeModal }),
-			el('button', { type: 'button', class: 'dchat-btn accent', id: 'gs-p5i-go', text: 'Import', onclick: () => doImport(activeTab) })
-		])
+		el('div', { id: 'gs-p5i-list' })
 	]);
-	modal = el('div', { id: 'gs-p5i-modal' }, [box]);
-	modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
-	modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); e.stopPropagation(); });
-	modal.addEventListener('keyup', (e) => e.stopPropagation());
-	document.body.appendChild(modal);
-	selectTab(activeTab);
-	return modal;
+	return p5Body;
 }
 
 function selectTab(id) {
@@ -1189,13 +1181,32 @@ function selectTab(id) {
 
 function openModal(tab) {
 	buildModal();
+	p5Handle = openGsModal({
+		id: 'gs-p5i-modal',
+		cardId: 'gs-p5i-box',
+		title: 'Import p5.js sketch',
+		titleId: 'gs-p5i-title',
+		body: p5Body,
+		closeOnBackdrop: true,
+		initialFocus: () => document.querySelector('#gs-p5i-modal .gs-p5i-pane.active textarea, #gs-p5i-modal .gs-p5i-pane.active input'),
+		xrInput: () => document.querySelector('#gs-p5i-modal .gs-p5i-pane.active textarea, #gs-p5i-modal .gs-p5i-pane.active input'),
+		actions: [
+			{ id: 'gs-p5i-close', label: 'Close', className: 'dchat-btn secondary', close: true },
+			{ id: 'gs-p5i-go', label: 'Import', className: 'dchat-btn accent', variant: 'primary', close: false, onClick: () => { doImport(activeTab); return false; } }
+		],
+		onClose: () => { p5Handle = null; modal?.classList.remove('open'); }
+	});
+	modal = p5Handle.root;
+	modal.classList.add('open');
 	if (tab) selectTab(tab);
+	else selectTab(activeTab);
 	setStatus('');
 	renderList();
-	modal.classList.add('open');
-	setTimeout(() => modal.querySelector('.gs-p5i-pane.active textarea, .gs-p5i-pane.active input')?.focus(), 0);
 }
-function closeModal() { modal?.classList.remove('open'); }
+function closeModal() {
+	if (p5Handle) { p5Handle.close('hide'); p5Handle = null; }
+	modal?.classList.remove('open');
+}
 
 let importing = false;
 async function doImport(kind) {

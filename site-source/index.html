@@ -1909,6 +1909,7 @@
 			background: rgba(0, 0, 0, 0.6);
 			pointer-events: auto;
 		}
+		#export-modal.visible { display: flex; }
 
 		#export-modal-inner {
 			background: rgba(25, 25, 40, 0.97);
@@ -2061,6 +2062,32 @@
 			pointer-events: auto;
 		}
 		#share-modal.visible, #rename-modal.visible { display: flex; }
+		#export-modal.gs-modal-xr,
+		#share-modal.gs-modal-xr,
+		#rename-modal.gs-modal-xr,
+		#gs-version-modal.gs-modal-xr {
+			background: none;
+			pointer-events: none;
+			inset: auto;
+			top: auto; left: auto; right: auto; bottom: auto;
+			width: 0;
+			height: 0;
+			padding: 0;
+		}
+		#export-modal.gs-modal-xr #export-modal-inner,
+		#share-modal.gs-modal-xr #share-modal-inner,
+		#rename-modal.gs-modal-xr #rename-modal-inner,
+		#gs-version-modal.gs-modal-xr #gs-version-modal-inner {
+			pointer-events: auto;
+		}
+		#export-modal-inner .gs-modal-title,
+		#share-modal-inner .gs-modal-title,
+		#rename-modal-inner .gs-modal-title,
+		#gs-version-modal-inner .gs-modal-title {
+			margin: 0 0 16px;
+			font-size: 18px;
+		}
+
 		#share-modal-inner, #rename-modal-inner {
 			background: rgba(30, 30, 40, 0.98);
 			border-radius: 16px;

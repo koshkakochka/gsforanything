@@ -23,6 +23,7 @@
  */
 
 import { supportsNativeHtmlInCanvas, enableNativeHtmlInCanvasHost } from './htmlInCanvas.js';
+import { activateSelectInXr, closeXrSelect, isXrSelectElement } from './xrSelect.js';
 
 export const VR_WINDOW_DISTANCE = 1.5;           // metres, world windows
 export const VR_PX_TO_M = 1.12 / 640;            // 640 CSS px wide -> 1.12 m at 1.5 m
@@ -49,7 +50,7 @@ export function scrollBoxTo(el, top, left) {
 	el.dispatchEvent(new Event('scroll'));
 	return true;
 }
-const ACTIONABLE = 'button, a, label, select, input, textarea, summary, [data-action], [role="button"], [role="radio"], [role="tab"], .menu-btn';
+const ACTIONABLE = 'button, a, label, select, input, textarea, summary, [data-action], [role="button"], [role="radio"], [role="tab"], [role="option"], [role="listbox"], .menu-btn, .gs-xr-select-option';
 const SOURCE_CLASS = 'html-in-canvas-source';
 
 export function isHtmlTextField(el) {
@@ -441,15 +442,27 @@ export function createVrWindowManager({ THREE, paint, onTextFieldFocus, onActiva
 			if (!p) return null;
 			const el = win.elementAt(p.x, p.y);
 			if (!el || blocked(el)) return null;
+			if (isXrSelectElement(el)) {
+				const opt = el.closest('.gs-xr-select-option, [role="option"]');
+				if (opt && opt.getAttribute('aria-disabled') !== 'true') opt.click();
+				else closeXrSelect();
+				if (onActivate) onActivate(win, el, null);
+				win.tick(true);
+				return el;
+			}
 			const label = el.closest('label');
 			let field = el.closest('input, textarea, select');
 			if (!field && label) field = label.control || label.querySelector('input, textarea, select');
 			if (field && !source.contains(field)) field = null;
 			if (field && field.disabled) return null;
 			if (field instanceof HTMLSelectElement && field.options.length > 0) {
-				field.selectedIndex = (field.selectedIndex + 1) % field.options.length;
-				field.dispatchEvent(new Event('input', { bubbles: true }));
-				field.dispatchEvent(new Event('change', { bubbles: true }));
+				// Native <select> menus are not in the painted texture. Open a
+				// DOM listbox inside this window source so the walker / ray can hit it.
+				activateSelectInXr(field, source);
+			} else if (isXrSelectElement(el)) {
+				const opt = el.closest('.gs-xr-select-option, [role="option"]');
+				if (opt && !opt.disabled) opt.click();
+				else if (el.closest('#gs-xr-select-popup-backdrop') || el.id === 'gs-xr-select-popup-backdrop') closeXrSelect();
 			} else if (field instanceof HTMLInputElement && field.type === 'range') {
 				const r = field.getBoundingClientRect();
 				const t = r.width > 0 ? Math.min(1, Math.max(0, (p.x - r.left) / r.width)) : 0;

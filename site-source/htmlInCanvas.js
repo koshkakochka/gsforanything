@@ -387,10 +387,22 @@ function drawFormValue(ctx, el, style, ox, oy) {
 	ctx.fillStyle = faded ? fadedColor : (style.color || '#fff');
 	ctx.save();
 	ctx.beginPath();
-	ctx.rect(x, y, rect.width, rect.height);
+	const textW = el instanceof HTMLSelectElement ? Math.max(0, rect.width - 18) : rect.width;
+	ctx.rect(x, y, textW, rect.height);
 	ctx.clip();
 	ctx.fillText(text, x + padL, midY);
 	ctx.restore();
+	if (el instanceof HTMLSelectElement) {
+		const cx = x + rect.width - 10;
+		const cy = midY;
+		ctx.fillStyle = style.color || '#fff';
+		ctx.beginPath();
+		ctx.moveTo(cx - 5, cy - 3);
+		ctx.lineTo(cx + 5, cy - 3);
+		ctx.lineTo(cx, cy + 4);
+		ctx.closePath();
+		ctx.fill();
+	}
 }
 
 // Auto-growing chat textareas (data-gs-wrap): wrap the value the way the
