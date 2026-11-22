@@ -73,6 +73,41 @@ function pointCloudPly() {
 	].join('\n');
 }
 
+function splatPlyBinary({ n = 5 } = {}) {
+	const props = ['x','y','z','nx','ny','nz','f_dc_0','f_dc_1','f_dc_2','opacity','scale_0','scale_1','scale_2','rot_0','rot_1','rot_2','rot_3'];
+	const header = Buffer.from(
+		`ply\nformat binary_little_endian 1.0\nelement vertex ${n}\n` +
+		props.map((pr) => `property float ${pr}\n`).join('') +
+		'end_header\n'
+	);
+	const dc = (c) => (c - 0.5) / SH_C0;
+	const opacity = Math.log(0.92 / (1 - 0.92));
+	const scale = Math.log(0.07);
+	const body = Buffer.alloc(n * 68);
+	for (let i = 0; i < n; i++) {
+		const t = n === 1 ? 0 : i / (n - 1);
+		const o = i * 68;
+		body.writeFloatLE((t - 0.5) * 0.6, o + 0);
+		body.writeFloatLE(1.2, o + 4);
+		body.writeFloatLE(-2 + (i % 2) * 0.02, o + 8);
+		body.writeFloatLE(0, o + 12);
+		body.writeFloatLE(1, o + 16);
+		body.writeFloatLE(0, o + 20);
+		body.writeFloatLE(dc(0.95), o + 24);
+		body.writeFloatLE(dc(0.55), o + 28);
+		body.writeFloatLE(dc(0.15), o + 32);
+		body.writeFloatLE(opacity, o + 36);
+		body.writeFloatLE(scale, o + 40);
+		body.writeFloatLE(scale, o + 44);
+		body.writeFloatLE(scale, o + 48);
+		body.writeFloatLE(1, o + 52);
+		body.writeFloatLE(0, o + 56);
+		body.writeFloatLE(0, o + 60);
+		body.writeFloatLE(0, o + 64);
+	}
+	return Buffer.concat([header, body]);
+}
+
 function writeTmp(name, data) {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gs-ply-'));
 	const fp = path.join(dir, name);
@@ -295,6 +330,72 @@ const selected = await p.evaluate(() => {
 	return { id: window.gsModelImport.selectedId, toolbar: !!(bar && bar.classList.contains('visible')) };
 });
 check('selecting a model shows Move/Rotate/Scale toolbar', selected.toolbar && !!selected.id, selected);
+
+// --- Small imports still persist; large ones stay in-session ---
+const capInfo = await p.evaluate(() => ({
+	cap: window.gsModelImport.MAX_PERSIST_BYTES,
+	noticeApi: typeof window.gsModelImport.lastNotice === 'string'
+}));
+check('persist cap is KV-safe (12 MiB raw)', capInfo.cap === 12 * 1024 * 1024, capInfo);
+
+const smallPersist = await p.evaluate(() => {
+	const h = window.gsImportModel.list().find((x) => x.splat && !x.sessionOnly);
+	const codes = window.gsSessionCode.all();
+	const block = codes.find((c) => h && c.includes('gsImportModel(') && c.includes(h.id));
+	return { id: h?.id, embedded: !!(block && block.includes('base64')), sessionOnly: !!h?.sessionOnly };
+});
+check('small splat is still embedded in the scene code', smallPersist.embedded && !smallPersist.sessionOnly, smallPersist);
+
+const OVER_CAP_N = Math.ceil((12 * 1024 * 1024 + 2048) / 68);
+const overCapPath = writeTmp('overcap-splat.ply', splatPlyBinary({ n: OVER_CAP_N }));
+check('over-cap fixture is just over 12 MiB', fs.statSync(overCapPath).size > 12 * 1024 * 1024, fs.statSync(overCapPath).size);
+const beforeOver = await p.evaluate(() => window.gsImportModel.list().map((h) => h.id));
+await (await p.$('#gs-model-file')).uploadFile(overCapPath);
+await p.waitForFunction((before) => (window.gsImportModel.list() || []).some((h) => h.splat && !before.includes(h.id)), { timeout: 180000 }, beforeOver);
+const over = await p.evaluate((before) => {
+	const h = window.gsImportModel.list().find((x) => x.splat && !before.includes(x.id));
+	const codes = window.gsSessionCode.all();
+	const block = h ? codes.find((c) => c.includes('gsImportModel(') && c.includes(h.id)) : null;
+	const progressStyle = !!document.getElementById('gs-model-import-progress-style');
+	return {
+		ok: !!(h && h.splat),
+		sessionOnly: !!h?.sessionOnly,
+		embedded: !!(block && block.includes('base64')),
+		notice: window.gsModelImport.lastNotice || '',
+		numSplats: h?.numSplats,
+		id: h?.id,
+		progressStyle
+	};
+}, beforeOver);
+check('over-cap splat imports in-session', over.ok && over.numSplats >= 8, over);
+check('over-cap splat is not embedded in session code', over.sessionOnly && !over.embedded, over);
+check('over-cap import shows a session-only notice', /session only|too large to save|KV/i.test(over.notice), over);
+check('large-file progress indicator is mounted', over.progressStyle, over);
+
+const LARGE = '/workspace/samples/gs-large-splat.ply';
+const largeStat = fs.existsSync(LARGE) ? fs.statSync(LARGE) : null;
+check('large synthetic splat sample exists and is ≥ 60 MiB', !!(largeStat && largeStat.size >= 60 * 1024 * 1024), largeStat && largeStat.size);
+if (largeStat && largeStat.size >= 60 * 1024 * 1024) {
+	const beforeLarge = await p.evaluate(() => window.gsImportModel.list().map((h) => h.id));
+	await (await p.$('#gs-model-file')).uploadFile(LARGE);
+	await p.waitForFunction((before) => (window.gsImportModel.list() || []).some((h) => h.splat && !before.includes(h.id)), { timeout: 300000 }, beforeLarge);
+	const large = await p.evaluate((before) => {
+		const h = window.gsImportModel.list().find((x) => x.splat && !before.includes(x.id));
+		const codes = window.gsSessionCode.all();
+		const block = h ? codes.find((c) => c.includes('gsImportModel(') && c.includes(h.id)) : null;
+		return {
+			ok: !!(h && h.splat),
+			sessionOnly: !!h?.sessionOnly,
+			embedded: !!(block && block.includes('base64')),
+			notice: window.gsModelImport.lastNotice || '',
+			numSplats: h?.numSplats,
+			id: h?.id
+		};
+	}, beforeLarge);
+	check('~65 MiB / 1M-splat PLY imports in-session', large.ok && large.numSplats >= 100000, large);
+	check('~65 MiB splat is not embedded in session code', large.sessionOnly && !large.embedded, large);
+	check('~65 MiB import shows a session-only notice', /session only|too large to save|KV/i.test(large.notice), large);
+}
 
 const fatal = p._errors.filter((e) => !/Failed to load|WebGL|context/i.test(e));
 check('no unexpected page errors', fatal.length === 0, fatal.slice(0, 5));

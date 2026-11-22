@@ -8,11 +8,14 @@
 // .splat, .ksplat when Spark can read them). A plain point-cloud .ply
 // (positions, no splat properties) falls back to THREE.Points.
 //
-// Persistence: each import becomes a session code block
+// Persistence: each import that fits under MAX_PERSIST_BYTES becomes a
+// session code block
 //   await gsImportModel({ id, name, format, data, files, transform })
 // so it is saved / uploaded with the scene, appears in the Code tab, and
 // re-runs when the scene loads. Moving the model updates `transform` in
-// that block without re-importing.
+// that block without re-importing. Larger files (over the Cloudflare KV
+// 25 MB value limit once base64-wrapped) load in-session only, with a
+// non-blocking notice, and are not embedded in the scene code.
 //
 // Desktop: click a model to attach three.js TransformControls; W / E / R
 // (or the on-screen Move / Rotate / Scale buttons) switch mode; Esc
@@ -32,7 +35,13 @@ import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { unzipSync, strFromU8 } from 'three/examples/jsm/libs/fflate.module.js';
 
-const MAX_EMBED_BYTES = 50 * 1024 * 1024;
+// Cloudflare KV values cap at 25 MB. Base64 inflates ~4/3 plus JSON/code
+// wrapping, so only embed raw payloads that stay comfortably under that.
+const MAX_PERSIST_BYTES = 12 * 1024 * 1024;
+const PROGRESS_MIN_BYTES = 4 * 1024 * 1024;
+const SESSION_ONLY_NOTICE = 'This model is too large to save in the scene (Cloudflare KV limit is 25 MB). It will stay in this session only — re-import it after a reload.';
+let lastNotice = '';
+let lastError = null;
 const DEFAULT_POS = [0, 1.2, -2];
 const DEFAULT_TARGET_SIZE = 1.4;
 const MODEL_ACCEPT = '.ply,.glb,.gltf,.fbx,.obj,.mtl,.zip,.spz,.splat,.ksplat,model/gltf-binary,model/gltf+json,application/zip';
@@ -68,8 +77,86 @@ const _deltaQuat = new THREE.Quaternion();
 const _ptrDown = { x: 0, y: 0, t: 0, active: false };
 
 function notify(text, kind = '') {
+	lastNotice = String(text || '');
 	if (typeof hooks.notify === 'function') hooks.notify(text, kind);
 	else if (typeof window.updateStatus === 'function') window.updateStatus(text, kind);
+	else console.log('[gs model import]', text);
+}
+
+function ensureProgressEl() {
+	let el = document.getElementById('gs-model-import-progress');
+	if (el) return el;
+	if (!document.getElementById('gs-model-import-progress-style')) {
+		const style = document.createElement('style');
+		style.id = 'gs-model-import-progress-style';
+		style.textContent = [
+			'#gs-model-import-progress{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:10050;min-width:280px;max-width:min(520px,92vw);padding:10px 14px;border-radius:10px;background:rgba(12,16,22,0.92);color:#e8eef6;font:13px/1.4 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,0.35);}',
+			'#gs-model-import-progress[hidden]{display:none !important;}',
+			'#gs-model-import-progress .gs-mip-label{margin-bottom:6px;}',
+			'#gs-model-import-progress .gs-mip-bar{height:6px;border-radius:3px;background:rgba(255,255,255,0.15);overflow:hidden;}',
+			'#gs-model-import-progress .gs-mip-fill{height:100%;width:0;background:#5eead4;transition:width 0.12s linear;}'
+		].join('');
+		document.head.appendChild(style);
+	}
+	el = document.createElement('div');
+	el.id = 'gs-model-import-progress';
+	el.setAttribute('role', 'status');
+	el.hidden = true;
+	el.innerHTML = '<div class="gs-mip-label"></div><div class="gs-mip-bar"><div class="gs-mip-fill"></div></div>';
+	document.body.appendChild(el);
+	return el;
+}
+
+function showImportProgress(label, loaded, total) {
+	const el = ensureProgressEl();
+	el.hidden = false;
+	const pct = total > 0 ? Math.min(100, Math.round((100 * loaded) / total)) : null;
+	el.querySelector('.gs-mip-label').textContent = pct == null ? label : `${label} ${pct}%`;
+	el.querySelector('.gs-mip-fill').style.width = pct == null ? '20%' : `${pct}%`;
+}
+
+function hideImportProgress() {
+	const el = document.getElementById('gs-model-import-progress');
+	if (el) el.hidden = true;
+}
+
+async function readFileBytes(file, onProgress) {
+	const size = file.size || 0;
+	if (typeof file.stream === 'function' && size >= PROGRESS_MIN_BYTES) {
+		const u8 = new Uint8Array(size);
+		const reader = file.stream().getReader();
+		let offset = 0;
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			u8.set(value, offset);
+			offset += value.byteLength;
+			onProgress?.('Reading file', offset, size);
+		}
+		return u8.subarray(0, offset);
+	}
+	onProgress?.('Reading file', 0, size);
+	const buf = await file.arrayBuffer();
+	onProgress?.('Reading file', buf.byteLength, size || buf.byteLength);
+	return new Uint8Array(buf);
+}
+
+function rawSizeOf(recs) {
+	return Object.values(recs || {}).reduce((s, r) => s + (r.size || r.bytes?.byteLength || 0), 0);
+}
+
+function persistableRecord(rec) {
+	if (!rec) return rec;
+	if (typeof rec === 'string') return rec;
+	if (rec.base64) return { name: rec.name, mime: rec.mime || 'application/octet-stream', base64: rec.base64 };
+	const bytes = rec.bytes instanceof Uint8Array ? rec.bytes : new Uint8Array(rec.bytes || []);
+	return { name: rec.name, mime: rec.mime || 'application/octet-stream', base64: bytesToBase64(bytes) };
+}
+
+function persistableFiles(recs) {
+	const out = {};
+	for (const [k, rec] of Object.entries(recs || {})) out[k] = persistableRecord(rec);
+	return out;
 }
 
 function worldParent() {
@@ -108,8 +195,13 @@ async function fileToRecord(file) {
 }
 
 function recordToBytes(rec) {
-	if (!rec || !rec.base64) return new Uint8Array(0);
-	return base64ToBytes(rec.base64);
+	if (!rec) return new Uint8Array(0);
+	if (rec instanceof Uint8Array) return rec;
+	if (rec instanceof ArrayBuffer) return new Uint8Array(rec);
+	if (rec.bytes instanceof Uint8Array) return rec.bytes;
+	if (rec.bytes instanceof ArrayBuffer) return new Uint8Array(rec.bytes);
+	if (rec.base64) return base64ToBytes(rec.base64);
+	return new Uint8Array(0);
 }
 
 function newId() {
@@ -254,15 +346,7 @@ async function ensureSpark() {
 	return sparkRendererPromise;
 }
 
-async function loadSplat(bytes, fileName, fileType) {
-	const spark = await ensureSpark();
-	const opts = { fileBytes: bytes };
-	const ext = extOf(fileName);
-	const type = fileType || ext;
-	if (type) opts.fileType = type;
-	if (fileName) opts.pathOrUrl = fileName;
-	const mesh = new spark.SplatMesh(opts);
-	await mesh.initialized;
+async function finalizeSplatMesh(mesh) {
 	if (!mesh.numSplats) throw new Error('This splat file has no Gaussians');
 	mesh.name = 'gs-splat';
 	if (sparkRenderer && typeof sparkRenderer.update === 'function') {
@@ -273,6 +357,42 @@ async function loadSplat(bytes, fileName, fileType) {
 		}
 	}
 	return mesh;
+}
+
+async function loadSplat(bytes, fileName, fileType, onProgress, blob) {
+	const spark = await ensureSpark();
+	const opts = {};
+	const ext = extOf(fileName);
+	const type = fileType || ext;
+	if (type) opts.fileType = type;
+	if (fileName) opts.fileName = fileName;
+	if (onProgress) {
+		opts.onProgress = (ev) => {
+			const loaded = ev?.loaded ?? 0;
+			const total = ev?.total ?? 0;
+			onProgress('Loading splat', loaded, total);
+		};
+	}
+	const fileBytes = bytes instanceof Uint8Array ? bytes : (bytes ? new Uint8Array(bytes) : null);
+	// Prefer a Blob / object URL so Spark can stream and decode without an extra copy.
+	// After an ASCII transcode we must pass the converted fileBytes instead.
+	if (blob && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+		const objectUrl = URL.createObjectURL(blob);
+		try {
+			const mesh = new spark.SplatMesh({ ...opts, url: objectUrl });
+			await mesh.initialized;
+			mesh.userData.gsSplatObjectUrl = objectUrl;
+			return await finalizeSplatMesh(mesh);
+		} catch (err) {
+			try { URL.revokeObjectURL(objectUrl); } catch { /* ignore */ }
+			if (!fileBytes || !fileBytes.byteLength) throw err;
+			console.warn('[gs import] Spark blob URL failed, retrying with fileBytes', err);
+		}
+	}
+	if (!fileBytes || !fileBytes.byteLength) throw new Error('No splat data to load');
+	const mesh = new spark.SplatMesh({ ...opts, fileBytes });
+	await mesh.initialized;
+	return finalizeSplatMesh(mesh);
 }
 
 async function loadFromZip(bytes, zipName) {
@@ -371,7 +491,7 @@ function asciiSplatPlyToBinary(bytes, info) {
 	return out;
 }
 
-async function loadPly(bytes, fileName) {
+async function loadPly(bytes, fileName, onProgress, blob) {
 	const info = readPlyHeader(bytes);
 	if (!info.ok) throw new Error(info.reason);
 	if (info.isSplat || info.isCompressed) {
@@ -380,7 +500,8 @@ async function loadPly(bytes, fileName) {
 			if (info.format === 'ascii' && info.isSplat && !info.isCompressed) {
 				splatBytes = asciiSplatPlyToBinary(bytes, info);
 			}
-			const object = await loadSplat(splatBytes, fileName, 'ply');
+			const useBlob = blob && !(info.format === 'ascii' && info.isSplat && !info.isCompressed);
+			const object = await loadSplat(splatBytes, fileName, 'ply', onProgress, useBlob ? blob : null);
 			return { object, format: 'ply-splat', plyInfo: info, splat: true };
 		} catch (err) {
 			const msg = err && err.message ? err.message : String(err);
@@ -392,9 +513,10 @@ async function loadPly(bytes, fileName) {
 	return { object, format: 'ply-points', plyInfo: info, splat: false };
 }
 
-async function loadByFormat(format, recs, primaryName) {
+async function loadByFormat(format, recs, primaryName, extra = {}) {
+	const { onProgress, blob } = extra;
 	const primary = recs.data || recs[primaryName] || recs[Object.keys(recs)[0]];
-	const bytes = primary && primary.base64 ? recordToBytes(primary) : (primary instanceof Uint8Array ? primary : null);
+	const bytes = recordToBytes(primary);
 	const name = primaryName || primary?.name || 'model';
 	const fmt = (format || extOf(name)).toLowerCase();
 
@@ -414,11 +536,11 @@ async function loadByFormat(format, recs, primaryName) {
 		return { object: await loadObjWithSidecar(files, objName), format: 'obj', label: objName };
 	}
 	if (fmt === 'ply' || fmt === 'ply-splat' || fmt === 'ply-points') {
-		const loaded = await loadPly(bytes, name);
+		const loaded = await loadPly(bytes, name, onProgress, blob);
 		return { ...loaded, label: name };
 	}
 	if (fmt === 'spz' || fmt === 'splat' || fmt === 'ksplat') {
-		return { object: await loadSplat(bytes, name, fmt), format: fmt, label: name, splat: true };
+		return { object: await loadSplat(bytes, name, fmt, onProgress, blob), format: fmt, label: name, splat: true };
 	}
 	throw new Error(`Unsupported model format: ${fmt}`);
 }
@@ -538,6 +660,10 @@ function persistHandle(handle) {
 function disposeObject(obj) {
 	if (!obj) return;
 	obj.traverse((o) => {
+		if (o.userData?.gsSplatObjectUrl) {
+			try { URL.revokeObjectURL(o.userData.gsSplatObjectUrl); } catch { /* ignore */ }
+			o.userData.gsSplatObjectUrl = null;
+		}
 		if (o.geometry && typeof o.geometry.dispose === 'function') o.geometry.dispose();
 		const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
 		for (const m of mats) {
@@ -630,9 +756,23 @@ function formatFromFile(file, kind) {
 	return ext;
 }
 
-async function recordsFromGroup(group) {
+async function recordsFromGroup(group, onProgress) {
 	const recs = {};
-	for (const f of group.files) recs[f.name] = await fileToRecord(f);
+	let read = 0;
+	const total = group.files.reduce((s, f) => s + (f.size || 0), 0);
+	for (const f of group.files) {
+		const bytes = await readFileBytes(f, (_phase, loaded) => {
+			onProgress?.('Reading file', read + loaded, total);
+		});
+		recs[f.name] = {
+			name: f.name,
+			mime: f.type || 'application/octet-stream',
+			bytes,
+			size: bytes.byteLength,
+			file: f
+		};
+		read += bytes.byteLength;
+	}
 	const primary = group.files[0];
 	return { recs, primary, format: formatFromFile(primary, group.kind) };
 }
@@ -649,14 +789,15 @@ async function gsImportModel(opts = {}) {
 	const recs = {};
 	if (opts.data) recs.data = opts.data;
 	if (opts.files) Object.assign(recs, opts.files);
-	if (!recs.data && opts.files) {
-		// keep files map only
-	} else if (opts.data) {
-		recs.data = opts.data;
-	}
-	if (!opts.data && !opts.files) throw new Error('gsImportModel: no data given');
+	if (opts.bytes && !recs.data) recs.data = { name, bytes: opts.bytes instanceof Uint8Array ? opts.bytes : new Uint8Array(opts.bytes) };
+	if (!opts.data && !opts.files && !opts.bytes) throw new Error('gsImportModel: no data given');
 
-	const loaded = await loadByFormat(format, opts.files ? { ...opts.files, data: opts.data } : recs, name);
+	const loaded = await loadByFormat(
+		format,
+		opts.files ? { ...opts.files, data: recs.data } : recs,
+		name,
+		{ onProgress: opts.onProgress, blob: opts.blob || opts.data?.file }
+	);
 	const inner = loaded.object;
 	inner.name = inner.name || name;
 
@@ -677,11 +818,14 @@ async function gsImportModel(opts = {}) {
 		splat: !!loaded.splat,
 		pointCloud: (loaded.format || format) === 'ply-points',
 		plyInfo: loaded.plyInfo || null,
+		sessionOnly: !!opts.sessionOnly,
 		transform: currentTransform(root)
 	};
 	models.set(id, handle);
 
-	if (handle.pointCloud) {
+	if (handle.sessionOnly) {
+		notify(`${name} loaded in this session only. ${SESSION_ONLY_NOTICE}`, '');
+	} else if (handle.pointCloud) {
 		notify(`Imported ${name} as a point cloud (this .ply has no Gaussian splat properties).`, '');
 	} else {
 		const extra = handle.splat && handle.inner.numSplats ? ` · ${handle.inner.numSplats} splats` : '';
@@ -697,6 +841,7 @@ gsImportModel.list = () => [...models.values()].map((h) => ({
 	splat: h.splat,
 	pointCloud: h.pointCloud,
 	numSplats: h.inner?.numSplats || 0,
+	sessionOnly: !!h.sessionOnly,
 	transform: currentTransform(h.root),
 	position: h.root.position.toArray(),
 	quaternion: h.root.quaternion.toArray(),
@@ -916,12 +1061,28 @@ function mountDrop() {
 	});
 }
 
+function embeddedRawBytes(data, files) {
+	let n = 0;
+	const add = (rec) => {
+		if (!rec) return;
+		if (typeof rec === 'string') n += rec.length;
+		else if (rec.bytes) n += rec.bytes.byteLength || rec.bytes.length || 0;
+		else if (rec.size) n += rec.size;
+		else if (rec.base64) n += Math.floor(rec.base64.length * 0.75);
+	};
+	add(data);
+	if (files) Object.values(files).forEach(add);
+	return n;
+}
+
 async function addImportBlock({ id, name, format, data, files, transform }) {
 	if (!window.gsSessionCode?.add) throw new Error('GS is still starting; try again in a moment');
-	const code = buildCodeBlock({ id, name, format, data, files, transform });
-	const embedded = (data?.base64?.length || 0) + (files ? Object.values(files).reduce((n, v) => n + (v?.base64?.length || (typeof v === 'string' ? v.length : 0)), 0) : 0);
-	// base64 is 4/3 of bytes; compare roughly against the byte cap.
-	if (embedded * 0.75 > MAX_EMBED_BYTES) throw new Error(`This model is too large to embed in the scene (limit ${MAX_EMBED_BYTES / 1048576} MB).`);
+	if (embeddedRawBytes(data, files) > MAX_PERSIST_BYTES) {
+		throw new Error(`This model is too large to embed in the scene (limit ${MAX_PERSIST_BYTES / 1048576} MB).`);
+	}
+	const persistData = data ? persistableRecord(data) : undefined;
+	const persistFiles = files ? persistableFiles(files) : undefined;
+	const code = buildCodeBlock({ id, name, format, data: persistData, files: persistFiles, transform });
 	await window.gsSessionCode.add(code);
 }
 
@@ -938,17 +1099,37 @@ async function importUserFiles(fileList) {
 				else notify('Use “Import .vrscene.json” on the Scenes tab for scene files.', 'error');
 				continue;
 			}
+			const totalBytes = group.files.reduce((s, f) => s + (f.size || 0), 0);
+			const showProgress = totalBytes >= PROGRESS_MIN_BYTES;
 			notify(`Importing ${group.files[0].name}…`, 'connecting');
-			const { recs, primary, format } = await recordsFromGroup(group);
+			if (showProgress) showImportProgress(`Importing ${group.files[0].name}`, 0, totalBytes);
+			const { recs, primary, format } = await recordsFromGroup(group, showProgress ? showImportProgress : null);
 			const id = newId();
-			if (format === 'obj' || (format === 'gltf' && group.files.length > 1)) {
-				await addImportBlock({ id, name: primary.name, format, files: recs });
+			const rawSize = rawSizeOf(recs);
+			const multi = format === 'obj' || (format === 'gltf' && group.files.length > 1);
+			if (rawSize <= MAX_PERSIST_BYTES) {
+				if (multi) await addImportBlock({ id, name: primary.name, format, files: recs });
+				else await addImportBlock({ id, name: primary.name, format, data: recs[primary.name] });
 			} else {
-				await addImportBlock({ id, name: primary.name, format, data: recs[primary.name] });
+				const blob = !multi && group.files.length === 1 ? group.files[0] : (primary.file || null);
+				await gsImportModel({
+					id,
+					name: primary.name,
+					format,
+					data: recs[primary.name],
+					files: multi ? recs : undefined,
+					blob,
+					onProgress: showProgress ? showImportProgress : null,
+					sessionOnly: true
+				});
 			}
 		} catch (err) {
+			lastError = err;
+			const msg = (err && (err.message || String(err))) || 'Unknown import error';
 			console.error('[gs import]', err);
-			notify(`Import failed: ${err.message}`, 'error');
+			notify(`Import failed: ${msg}`, 'error');
+		} finally {
+			hideImportProgress();
 		}
 	}
 }
@@ -1113,6 +1294,9 @@ function api() {
 		openPicker,
 		importFiles: importUserFiles,
 		list: gsImportModel.list,
+		MAX_PERSIST_BYTES,
+		get lastNotice() { return lastNotice; },
+		get lastError() { return lastError ? String(lastError.message || lastError) : ''; },
 		select: selectModel,
 		get selectedId() { return selectedId; },
 		setMode,
