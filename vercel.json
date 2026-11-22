@@ -21,6 +21,7 @@
           "site-source/sceneThumbnail.js",
           "site-source/sceneDescription.js",
           "site-source/sceneName.js",
+          "site-source/sceneGenre.js",
           "site-source/webglGuard.js",
           "site-source/creationContext.js",
           "site-source/communityMerge.js",
